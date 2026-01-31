@@ -16,6 +16,8 @@ class IntegrationSetting extends Model
         'omniful_api_key',
         'omniful_api_secret',
         'omniful_webhook_secret',
+        'omniful_access_token',
+        'omniful_refresh_token',
     ];
 
     protected $casts = [
@@ -24,5 +26,7 @@ class IntegrationSetting extends Model
         'omniful_api_key' => 'encrypted',
         'omniful_api_secret' => 'encrypted',
         'omniful_webhook_secret' => 'encrypted',
+        'omniful_access_token' => 'encrypted',
+        'omniful_refresh_token' => 'encrypted',
     ];
 }

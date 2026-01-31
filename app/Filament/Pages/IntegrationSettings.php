@@ -12,6 +12,7 @@ use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
+use Illuminate\Support\Facades\Http;
 
 class IntegrationSettings extends Page implements HasForms
 {
@@ -72,15 +73,24 @@ class IntegrationSettings extends Page implements HasForms
                             ->url()
                             ->columnSpanFull(),
                         TextInput::make('omniful_api_key')
-                            ->label('API Key')
+                            ->label('Client Id')
                             ->password()
                             ->revealable(),
                         TextInput::make('omniful_api_secret')
-                            ->label('API Secret')
+                            ->label('Client Secret')
                             ->password()
                             ->revealable(),
                         TextInput::make('omniful_webhook_secret')
-                            ->label('Webhook Secret')
+                            ->label('Webhook Secret Key')
+                            ->password()
+                            ->revealable()
+                            ->columnSpanFull(),
+                        TextInput::make('omniful_refresh_token')
+                            ->label('Refresh Token')
+                            ->password()
+                            ->revealable(),
+                        TextInput::make('omniful_access_token')
+                            ->label('Access Token')
                             ->password()
                             ->revealable()
                             ->columnSpanFull(),
@@ -102,6 +112,108 @@ class IntegrationSettings extends Page implements HasForms
             ->send();
     }
 
+    public function testConnection(): void
+    {
+        $state = $this->form->getState();
+
+        $sapResult = $this->testSapConnection($state);
+        $omnifulResult = $this->testOmnifulConnection($state);
+
+        $lines = [
+            'SAP: ' . $sapResult['message'],
+            'Omniful: ' . $omnifulResult['message'],
+        ];
+
+        $ok = $sapResult['ok'] && $omnifulResult['ok'];
+
+        Notification::make()
+            ->title('Connection test')
+            ->body(implode("\n", $lines))
+            ->{$ok ? 'success' : 'danger'}()
+            ->send();
+    }
+
+    private function testSapConnection(array $state): array
+    {
+        $baseUrl = trim((string) ($state['sap_service_layer_url'] ?? ''));
+        $companyDb = trim((string) ($state['sap_company_db'] ?? ''));
+        $username = trim((string) ($state['sap_username'] ?? ''));
+        $password = (string) ($state['sap_password'] ?? '');
+
+        if ($baseUrl === '' || $companyDb === '' || $username === '' || $password === '') {
+            return ['ok' => false, 'message' => 'Missing SAP credentials'];
+        }
+
+        $baseUrl = rtrim($baseUrl, '/');
+        $loginUrl = $baseUrl . '/Login';
+
+        $client = Http::timeout(15)->acceptJson();
+        if (array_key_exists('sap_ssl_verify', $state) && $state['sap_ssl_verify'] === false) {
+            $client = $client->withoutVerifying();
+        }
+
+        try {
+            $response = $client->post($loginUrl, [
+                'CompanyDB' => $companyDb,
+                'UserName' => $username,
+                'Password' => $password,
+            ]);
+        } catch (\Throwable $e) {
+            return ['ok' => false, 'message' => 'Request failed: ' . $e->getMessage()];
+        }
+
+        if (!$response->successful()) {
+            return ['ok' => false, 'message' => 'Login failed (HTTP ' . $response->status() . ')'];
+        }
+
+        $payload = $response->json();
+        $sessionId = $payload['SessionId'] ?? null;
+        $routeId = $payload['RouteId'] ?? null;
+
+        if ($sessionId) {
+            $cookie = 'B1SESSION=' . $sessionId;
+            if ($routeId) {
+                $cookie .= '; ROUTEID=' . $routeId;
+            }
+
+            try {
+                $client->withHeaders(['Cookie' => $cookie])->post($baseUrl . '/Logout');
+            } catch (\Throwable) {
+                // Ignore logout errors; login success is enough for connectivity.
+            }
+        }
+
+        return ['ok' => true, 'message' => 'Connected'];
+    }
+
+    private function testOmnifulConnection(array $state): array
+    {
+        $baseUrl = trim((string) ($state['omniful_api_url'] ?? ''));
+        if ($baseUrl === '') {
+            return ['ok' => false, 'message' => 'Missing API base URL'];
+        }
+
+        $baseUrl = rtrim($baseUrl, '/');
+        $token = trim((string) ($state['omniful_access_token'] ?? ''));
+
+        $client = Http::timeout(15)->acceptJson();
+        if ($token !== '') {
+            $client = $client->withToken($token);
+        }
+
+        try {
+            $response = $client->get($baseUrl);
+        } catch (\Throwable $e) {
+            return ['ok' => false, 'message' => 'Request failed: ' . $e->getMessage()];
+        }
+
+        if ($response->successful()) {
+            return ['ok' => true, 'message' => 'Connected'];
+        }
+
+        return ['ok' => false, 'message' => 'Request failed (HTTP ' . $response->status() . ')'];
+    }
+
     protected function getHeaderActions(): array
     {
         return [
@@ -113,6 +225,10 @@ class IntegrationSettings extends Page implements HasForms
                     'style' => 'background-color: #226d64; color: #ffffff;',
                 ])
                 ->keyBindings(['mod+s']),
+            Action::make('testConnection')
+                ->label('Test Connection')
+                ->action('testConnection')
+                ->color('gray'),
         ];
     }
 }
