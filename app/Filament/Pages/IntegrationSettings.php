@@ -24,6 +24,8 @@ class IntegrationSettings extends Page implements HasForms
 
     protected static string | \UnitEnum | null $navigationGroup = 'Settings';
 
+    protected static ?int $navigationSort = 999;
+
     protected string $view = 'filament.pages.integration-settings';
 
     public ?array $data = [];
