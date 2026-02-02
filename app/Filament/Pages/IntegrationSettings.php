@@ -65,8 +65,8 @@ class IntegrationSettings extends Page implements HasForms
                             ->default(true),
                     ])
                     ->columns(2),
-                Section::make('Omniful')
-                    ->description('Omniful API and webhook settings')
+                Section::make('Omniful (Tenant)')
+                    ->description('Tenant API and webhook settings')
                     ->schema([
                         TextInput::make('omniful_api_url')
                             ->label('API Base URL')
@@ -98,6 +98,33 @@ class IntegrationSettings extends Page implements HasForms
                             ->columnSpanFull(),
                     ])
                     ->columns(2),
+                Section::make('Omniful (Seller)')
+                    ->description('Seller API and webhook settings')
+                    ->schema([
+                        TextInput::make('omniful_seller_api_key')
+                            ->label('Client Id')
+                            ->password()
+                            ->revealable(),
+                        TextInput::make('omniful_seller_api_secret')
+                            ->label('Client Secret')
+                            ->password()
+                            ->revealable(),
+                        TextInput::make('omniful_seller_webhook_secret')
+                            ->label('Webhook Secret Key')
+                            ->password()
+                            ->revealable()
+                            ->columnSpanFull(),
+                        TextInput::make('omniful_seller_refresh_token')
+                            ->label('Refresh Token')
+                            ->password()
+                            ->revealable(),
+                        TextInput::make('omniful_seller_access_token')
+                            ->label('Access Token')
+                            ->password()
+                            ->revealable()
+                            ->columnSpanFull(),
+                    ])
+                    ->columns(2),
             ])
             ->statePath('data');
     }
@@ -107,6 +134,7 @@ class IntegrationSettings extends Page implements HasForms
         $state = $this->form->getState();
 
         IntegrationSetting::updateOrCreate(['id' => 1], $state);
+        $this->form->fill(IntegrationSetting::first()?->toArray() ?? []);
 
         Notification::make()
             ->title('Connections saved')
@@ -116,17 +144,19 @@ class IntegrationSettings extends Page implements HasForms
 
     public function testConnection(): void
     {
-        $state = $this->form->getState();
+        $state = $this->getTestState();
 
         $sapResult = $this->testSapConnection($state);
-        $omnifulResult = $this->testOmnifulConnection($state);
+        $omnifulTenantResult = $this->testOmnifulTenantConnection($state);
+        $omnifulSellerResult = $this->testOmnifulSellerConnection($state);
 
         $lines = [
             'SAP: ' . $sapResult['message'],
-            'Omniful: ' . $omnifulResult['message'],
+            'Omniful (Tenant): ' . $omnifulTenantResult['message'],
+            'Omniful (Seller): ' . $omnifulSellerResult['message'],
         ];
 
-        $ok = $sapResult['ok'] && $omnifulResult['ok'];
+        $ok = $sapResult['ok'] && $omnifulTenantResult['ok'] && $omnifulSellerResult['ok'];
 
         Notification::make()
             ->title('Connection test')
@@ -188,7 +218,7 @@ class IntegrationSettings extends Page implements HasForms
         return ['ok' => true, 'message' => 'Connected'];
     }
 
-    private function testOmnifulConnection(array $state): array
+    private function testOmnifulTenantConnection(array $state): array
     {
         $baseUrl = trim((string) ($state['omniful_api_url'] ?? ''));
         if ($baseUrl === '') {
@@ -196,24 +226,130 @@ class IntegrationSettings extends Page implements HasForms
         }
 
         $baseUrl = rtrim($baseUrl, '/');
-        $token = trim((string) ($state['omniful_access_token'] ?? ''));
+        return $this->refreshOmnifulTokens(
+            $baseUrl,
+            trim((string) ($state['omniful_api_key'] ?? '')),
+            trim((string) ($state['omniful_api_secret'] ?? '')),
+            trim((string) ($state['omniful_refresh_token'] ?? '')),
+            trim((string) ($state['omniful_access_token'] ?? '')),
+            [
+                'access' => 'omniful_access_token',
+                'refresh' => 'omniful_refresh_token',
+                'expires_in' => 'omniful_token_expires_in',
+                'expires_at' => 'omniful_access_token_expires_at',
+            ],
+            'Omniful tenant',
+            (string) config('omniful.tenant_token_endpoint', '/sales-channel/public/v1/tenants/token')
+        );
+    }
 
-        $client = Http::timeout(15)->acceptJson();
-        if ($token !== '') {
-            $client = $client->withToken($token);
+    private function testOmnifulSellerConnection(array $state): array
+    {
+        $baseUrl = trim((string) ($state['omniful_api_url'] ?? ''));
+        if ($baseUrl === '') {
+            return ['ok' => false, 'message' => 'Missing API base URL'];
+        }
+
+        $baseUrl = rtrim($baseUrl, '/');
+
+        return $this->refreshOmnifulTokens(
+            $baseUrl,
+            trim((string) ($state['omniful_seller_api_key'] ?? '')),
+            trim((string) ($state['omniful_seller_api_secret'] ?? '')),
+            trim((string) ($state['omniful_seller_refresh_token'] ?? '')),
+            trim((string) ($state['omniful_seller_access_token'] ?? '')),
+            [
+                'access' => 'omniful_seller_access_token',
+                'refresh' => 'omniful_seller_refresh_token',
+                'expires_in' => 'omniful_seller_token_expires_in',
+                'expires_at' => 'omniful_seller_access_token_expires_at',
+            ],
+            'Omniful seller',
+            (string) config('omniful.seller_token_endpoint', '/sales-channel/public/v1/token')
+        );
+    }
+
+    private function refreshOmnifulTokens(
+        string $baseUrl,
+        string $clientId,
+        string $clientSecret,
+        string $refreshToken,
+        string $accessToken,
+        array $columns,
+        string $label,
+        string $tokenEndpoint
+    ): array {
+        if ($clientId === '' || $clientSecret === '' || $refreshToken === '') {
+            return ['ok' => false, 'message' => "Missing {$label} client_id/secret/refresh_token"];
+        }
+
+        $tokenUrl = $baseUrl . '/' . ltrim($tokenEndpoint, '/');
+
+        $client = Http::timeout(20)->acceptJson();
+        if ($accessToken !== '') {
+            $client = $client->withToken($accessToken);
         }
 
         try {
-            $response = $client->get($baseUrl);
+            $response = $client->post($tokenUrl, [
+                'refresh_token' => $refreshToken,
+                'grant_type' => 'refresh_token',
+                'client_id' => $clientId,
+                'client_secret' => $clientSecret,
+            ]);
         } catch (\Throwable $e) {
             return ['ok' => false, 'message' => 'Request failed: ' . $e->getMessage()];
         }
 
-        if ($response->successful()) {
-            return ['ok' => true, 'message' => 'Connected'];
+        if (!$response->successful()) {
+            return ['ok' => false, 'message' => 'Token refresh failed (HTTP ' . $response->status() . '): ' . $response->body()];
         }
 
-        return ['ok' => false, 'message' => 'Request failed (HTTP ' . $response->status() . ')'];
+        $payload = $response->json() ?? [];
+        $data = $payload['data'] ?? [];
+        $newAccess = $data['access_token'] ?? null;
+        $newRefresh = $data['refresh_token'] ?? null;
+        $expiresIn = $data['expires_in'] ?? null;
+
+        if (!$newAccess) {
+            return ['ok' => false, 'message' => 'Token refresh failed: missing access_token'];
+        }
+
+        $expiresAt = null;
+        if (is_numeric($expiresIn)) {
+            $seconds = (int) $expiresIn;
+            if ($seconds >= 100000000000000) {
+                $seconds = (int) floor($seconds / 1000000000);
+            } elseif ($seconds >= 100000000000) {
+                $seconds = (int) floor($seconds / 1000000);
+            } elseif ($seconds >= 1000000000) {
+                $seconds = (int) floor($seconds / 1000);
+            }
+            $expiresAt = now()->addSeconds($seconds);
+        }
+
+        IntegrationSetting::updateOrCreate(['id' => 1], [
+            $columns['access'] => (string) $newAccess,
+            $columns['refresh'] => $newRefresh ? (string) $newRefresh : $refreshToken,
+            $columns['expires_in'] => is_numeric($expiresIn) ? (int) $expiresIn : null,
+            $columns['expires_at'] => $expiresAt,
+        ]);
+
+        return ['ok' => true, 'message' => 'Token refreshed'];
+    }
+
+    private function getTestState(): array
+    {
+        $state = $this->form->getState();
+        $stored = IntegrationSetting::first()?->toArray() ?? [];
+
+        foreach ($state as $key => $value) {
+            if (is_string($value) && trim($value) === '') {
+                unset($state[$key]);
+            }
+        }
+
+        return array_merge($stored, $state);
     }
 
     protected function getHeaderActions(): array
