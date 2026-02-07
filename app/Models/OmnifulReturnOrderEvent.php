@@ -12,6 +12,10 @@ class OmnifulReturnOrderEvent extends Model
         'headers',
         'signature_valid',
         'received_at',
+        'sap_status',
+        'sap_doc_entry',
+        'sap_doc_num',
+        'sap_error',
     ];
 
     protected $casts = [
