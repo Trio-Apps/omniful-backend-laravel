@@ -65,6 +65,7 @@ abstract class OmnifulWebhookBase
                 'header' => $signatureHeader,
                 'event_type' => $eventType,
             ]);
+            return ['response' => response()->json(['message' => 'Missing signature'], 401)];
         }
 
         try {
