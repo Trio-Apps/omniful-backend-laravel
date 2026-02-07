@@ -50,22 +50,30 @@ abstract class OmnifulWebhookBase
         $settings = IntegrationSetting::first();
         $secret = $settings?->omniful_webhook_secret;
         $signatureHeader = config('omniful.webhook_signature_header', 'X-Omniful-Signature');
+        $tokenHeader = config('omniful.webhook_token_header', 'X-Omniful-Token');
         $signature = $signatureHeader ? $request->headers->get($signatureHeader) : null;
+        $token = $tokenHeader ? $request->headers->get($tokenHeader) : null;
 
         $signatureValid = null;
-        if ($secret && $signature) {
-            $signatureValid = $this->verifySignature($raw, $secret, $signature);
-            if (!$signatureValid) {
-                return ['response' => response()->json(['message' => 'Invalid signature'], 401)];
+        if ($secret) {
+            if ($signature) {
+                $signatureValid = $this->verifySignature($raw, $secret, $signature);
+                if (!$signatureValid) {
+                    return ['response' => response()->json(['message' => 'Invalid signature'], 401)];
+                }
+            } elseif ($token) {
+                $signatureValid = hash_equals($secret, trim((string) $token));
+                if (!$signatureValid) {
+                    return ['response' => response()->json(['message' => 'Invalid token'], 401)];
+                }
+            } else {
+                Log::warning('Omniful webhook missing signature header', [
+                    'header' => $signatureHeader,
+                    'token_header' => $tokenHeader,
+                    'event_type' => $eventType,
+                ]);
+                return ['response' => response()->json(['message' => 'Missing signature'], 401)];
             }
-        }
-
-        if ($secret && !$signature) {
-            Log::warning('Omniful webhook missing signature header', [
-                'header' => $signatureHeader,
-                'event_type' => $eventType,
-            ]);
-            return ['response' => response()->json(['message' => 'Missing signature'], 401)];
         }
 
         try {
