@@ -48,21 +48,23 @@ abstract class OmnifulWebhookBase
         }
 
         $settings = IntegrationSetting::first();
-        $secret = $settings?->omniful_webhook_secret;
+        $tenantSecret = $settings?->omniful_webhook_secret;
+        $sellerSecret = $settings?->omniful_seller_webhook_secret;
         $signatureHeader = config('omniful.webhook_signature_header', 'X-Omniful-Signature');
         $tokenHeader = config('omniful.webhook_token_header', 'X-Omniful-Token');
         $signature = $signatureHeader ? $request->headers->get($signatureHeader) : null;
         $token = $tokenHeader ? $request->headers->get($tokenHeader) : null;
 
         $signatureValid = null;
-        if ($secret) {
+        $hasAnySecret = (bool) ($tenantSecret || $sellerSecret);
+        if ($hasAnySecret) {
             if ($signature) {
-                $signatureValid = $this->verifySignature($raw, $secret, $signature);
+                $signatureValid = $this->verifySignatureAgainstSecrets($raw, $signature, $tenantSecret, $sellerSecret);
                 if (!$signatureValid) {
                     return ['response' => response()->json(['message' => 'Invalid signature'], 401)];
                 }
             } elseif ($token) {
-                $signatureValid = hash_equals($secret, trim((string) $token));
+                $signatureValid = $this->verifyTokenAgainstSecrets($token, $tenantSecret, $sellerSecret);
                 if (!$signatureValid) {
                     return ['response' => response()->json(['message' => 'Invalid token'], 401)];
                 }
@@ -120,6 +122,37 @@ abstract class OmnifulWebhookBase
         }
 
         return hash_equals($expected, $normalized);
+    }
+
+    private function verifySignatureAgainstSecrets(string $raw, string $signature, ?string $tenantSecret, ?string $sellerSecret): bool
+    {
+        if ($tenantSecret && $this->verifySignature($raw, $tenantSecret, $signature)) {
+            return true;
+        }
+
+        if ($sellerSecret && $this->verifySignature($raw, $sellerSecret, $signature)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    private function verifyTokenAgainstSecrets(string $token, ?string $tenantSecret, ?string $sellerSecret): bool
+    {
+        $token = trim((string) $token);
+        if ($token === '') {
+            return false;
+        }
+
+        if ($tenantSecret && hash_equals($tenantSecret, $token)) {
+            return true;
+        }
+
+        if ($sellerSecret && hash_equals($sellerSecret, $token)) {
+            return true;
+        }
+
+        return false;
     }
 
     protected function extractExternalId(array $payload): ?string
