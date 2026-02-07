@@ -17,6 +17,8 @@ return [
     'webhook_signature_header' => env('OMNIFUL_WEBHOOK_SIGNATURE_HEADER', 'X-Omniful-Signature'),
     'webhook_signature_algo' => env('OMNIFUL_WEBHOOK_SIGNATURE_ALGO', 'sha256'),
     'webhook_token_header' => env('OMNIFUL_WEBHOOK_TOKEN_HEADER', 'X-Omniful-Token'),
+    'webhook_static_header' => env('OMNIFUL_WEBHOOK_STATIC_HEADER', 'X-Omniful-Auth'),
+    'webhook_static_token' => env('OMNIFUL_WEBHOOK_STATIC_TOKEN'),
     'hub_defaults' => [
         'type' => env('OMNIFUL_HUB_TYPE', 'warehouse'),
         'email' => env('OMNIFUL_HUB_EMAIL'),

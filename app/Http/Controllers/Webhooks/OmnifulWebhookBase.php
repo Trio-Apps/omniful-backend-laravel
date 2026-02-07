@@ -52,12 +52,20 @@ abstract class OmnifulWebhookBase
         $sellerSecret = $settings?->omniful_seller_webhook_secret;
         $signatureHeader = config('omniful.webhook_signature_header', 'X-Omniful-Signature');
         $tokenHeader = config('omniful.webhook_token_header', 'X-Omniful-Token');
+        $staticHeader = config('omniful.webhook_static_header', 'X-Omniful-Auth');
+        $staticToken = config('omniful.webhook_static_token');
         $signature = $signatureHeader ? $request->headers->get($signatureHeader) : null;
         $token = $tokenHeader ? $request->headers->get($tokenHeader) : null;
+        $staticValue = $staticHeader ? $request->headers->get($staticHeader) : null;
 
         $signatureValid = null;
-        $hasAnySecret = (bool) ($tenantSecret || $sellerSecret);
-        if ($hasAnySecret) {
+        if ($staticToken) {
+            if (!$staticValue || !hash_equals((string) $staticToken, trim((string) $staticValue))) {
+                return ['response' => response()->json(['message' => 'Invalid static token'], 401)];
+            }
+        } else {
+            $hasAnySecret = (bool) ($tenantSecret || $sellerSecret);
+            if ($hasAnySecret) {
             if ($signature) {
                 $signatureValid = $this->verifySignatureAgainstSecrets($raw, $signature, $tenantSecret, $sellerSecret);
                 if (!$signatureValid) {
@@ -75,6 +83,7 @@ abstract class OmnifulWebhookBase
                     'event_type' => $eventType,
                 ]);
                 return ['response' => response()->json(['message' => 'Missing signature'], 401)];
+            }
             }
         }
 
