@@ -2,13 +2,16 @@
 
 namespace App\Filament\Widgets;
 
+use App\Models\OmnifulOrder;
+use Carbon\Carbon;
+use Carbon\CarbonPeriod;
 use Filament\Widgets\ChartWidget;
 
 class OrdersChart extends ChartWidget
 {
     protected ?string $heading = 'Orders (Last 14 Days)';
 
-    protected ?string $description = 'Sample data for the dashboard';
+    protected ?string $description = 'Actual order events stored in Omniful Orders';
 
     protected string $color = 'primary';
 
@@ -25,18 +28,37 @@ class OrdersChart extends ChartWidget
 
     protected function getData(): array
     {
+        $start = now()->startOfDay()->subDays(13);
+        $end = now()->endOfDay();
+
+        $rows = OmnifulOrder::query()
+            ->whereBetween('last_event_at', [$start, $end])
+            ->get(['last_event_at']);
+
+        $daily = [];
+        foreach (CarbonPeriod::create($start, '1 day', $end) as $day) {
+            $daily[$day->toDateString()] = 0;
+        }
+
+        foreach ($rows as $row) {
+            if (!$row->last_event_at) {
+                continue;
+            }
+            $key = $row->last_event_at->toDateString();
+            if (array_key_exists($key, $daily)) {
+                $daily[$key]++;
+            }
+        }
+
         return [
-            'labels' => [
-                'Day 1', 'Day 2', 'Day 3', 'Day 4', 'Day 5', 'Day 6', 'Day 7',
-                'Day 8', 'Day 9', 'Day 10', 'Day 11', 'Day 12', 'Day 13', 'Day 14',
-            ],
+            'labels' => array_map(
+                fn (string $date) => Carbon::parse($date)->format('M d'),
+                array_keys($daily)
+            ),
             'datasets' => [
                 [
                     'label' => 'Orders',
-                    'data' => [
-                        42, 58, 51, 67, 80, 73, 92,
-                        88, 95, 110, 104, 120, 133, 128,
-                    ],
+                    'data' => array_values($daily),
                     'fill' => true,
                     'tension' => 0.35,
                 ],
