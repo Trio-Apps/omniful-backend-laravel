@@ -14,6 +14,7 @@ class InventoryWebhookService
     {
         $eventKey = null;
         try {
+            $mapper = app(WebhookStatusMapper::class);
             $payload = $event->payload ?? [];
             $eventName = strtolower(trim((string) data_get($payload, 'event_name', '')));
             $action = strtolower(trim((string) data_get($payload, 'action', '')));
@@ -21,8 +22,9 @@ class InventoryWebhookService
             $data = data_get($payload, 'data', []);
             $items = data_get($data, 'hub_inventory_items', data_get($data, 'items', []));
             $hubCode = data_get($data, 'hub_code');
+            $route = $mapper->mapInventoryRoute($eventName, $action, $entity);
 
-            if ($eventName === 'inventory.update.event' && $action === 'receiving' && $entity === 'purchase_order') {
+            if (($route['sap_action'] ?? null) === 'grpo') {
                 $displayId = $this->extractPurchaseOrderDisplayId($payload);
                 $poEvent = null;
                 $eventKey = $this->buildInventoryEventKey($payload, $items, $displayId);
@@ -82,7 +84,7 @@ class InventoryWebhookService
                     }
                     $sync->save();
                 }
-            } elseif ($eventName === 'inventory.update.event' && $action === 'manual_edit' && $entity === 'hub_inventory') {
+            } elseif (($route['sap_action'] ?? null) === 'manual_inventory_adjustment') {
                 $items = is_array($items) ? $items : [];
                 $client = app(SapServiceLayerClient::class);
                 $deltas = $this->calculateInventoryAdjustmentsFromSap($items, $hubCode, $client);
@@ -179,9 +181,9 @@ class InventoryWebhookService
                     }
                 }
             } else {
-                $reason = 'Ignored: not mapped to SAP action';
+                $reason = (string) ($route['reason'] ?? 'Ignored: not mapped to SAP action');
                 $event->sap_status = 'ignored';
-                $event->sap_error = $reason . ' (event=' . ($eventName ?: '-') . ', action=' . ($action ?: '-') . ', entity=' . ($entity ?: '-') . ')';
+                $event->sap_error = $reason . ' (route=' . ($route['key'] ?? '-') . ')';
                 $event->save();
             }
 

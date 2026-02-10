@@ -19,6 +19,42 @@ return [
     'webhook_token_header' => env('OMNIFUL_WEBHOOK_TOKEN_HEADER', 'X-Omniful-Token'),
     'webhook_static_header' => env('OMNIFUL_WEBHOOK_STATIC_HEADER', 'X-Omniful-Auth'),
     'webhook_static_token' => env('OMNIFUL_WEBHOOK_STATIC_TOKEN'),
+    'status_mapping' => [
+        'purchase_order' => [
+            'rules' => [
+                [
+                    'name' => 'updated',
+                    'event_contains' => ['update'],
+                    'statuses' => [],
+                    'sap_status' => 'updated',
+                ],
+                [
+                    'name' => 'received',
+                    'event_contains' => ['receive'],
+                    'statuses' => ['received'],
+                    'sap_status' => 'received_logged',
+                ],
+                [
+                    'name' => 'cancelled',
+                    'event_contains' => ['cancel'],
+                    'statuses' => ['cancelled', 'canceled'],
+                    'sap_status' => 'cancel_logged',
+                ],
+            ],
+            'default_sap_status' => 'logged',
+        ],
+        'inventory' => [
+            'routes' => [
+                'inventory.update.event|receiving|purchase_order' => 'grpo',
+                'inventory.update.event|manual_edit|hub_inventory' => 'manual_inventory_adjustment',
+            ],
+        ],
+        'return_order' => [
+            // Empty arrays mean allow all payload statuses/event names.
+            'allowed_statuses' => [],
+            'allowed_event_contains' => [],
+        ],
+    ],
     'hub_defaults' => [
         'type' => env('OMNIFUL_HUB_TYPE', 'warehouse'),
         'email' => env('OMNIFUL_HUB_EMAIL'),

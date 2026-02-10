@@ -9,10 +9,18 @@ class ReturnOrderWebhookService
 {
     public function process(OmnifulReturnOrderEvent $event): void
     {
+        $mapper = app(WebhookStatusMapper::class);
         $payload = $event->payload ?? [];
         $data = data_get($payload, 'data', []);
         $eventName = (string) data_get($payload, 'event_name', '');
         $status = (string) data_get($data, 'status', '');
+
+        if (!$mapper->canProcessReturnOrder($eventName, $status)) {
+            $event->sap_status = 'ignored';
+            $event->sap_error = 'Ignored: return-order status/event not allowed by mapping';
+            $event->save();
+            return;
+        }
 
         $returnOrderId = data_get($data, 'return_order_id')
             ?? data_get($data, 'id')
@@ -125,4 +133,3 @@ class ReturnOrderWebhookService
         return implode(' | ', $parts);
     }
 }
-

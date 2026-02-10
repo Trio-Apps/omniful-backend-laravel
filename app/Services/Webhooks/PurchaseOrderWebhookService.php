@@ -9,6 +9,7 @@ class PurchaseOrderWebhookService
 {
     public function process(OmnifulPurchaseOrderEvent $event): void
     {
+        $mapper = app(WebhookStatusMapper::class);
         $payload = $event->payload ?? [];
         $data = data_get($payload, 'data', []);
         $eventName = (string) data_get($payload, 'event_name', '');
@@ -44,19 +45,9 @@ class PurchaseOrderWebhookService
                 $status ?: ''
             ));
             $client->appendPurchaseOrderComment((int) $event->sap_doc_entry, $comment);
-
-            if (str_contains($eventName, 'update')) {
-                $event->sap_status = 'updated';
-            } elseif (str_contains($eventName, 'receive') || $status === 'received') {
-                $event->sap_status = 'received_logged';
-            } elseif (str_contains($eventName, 'cancel') || $status === 'cancelled' || $status === 'canceled') {
-                $event->sap_status = 'cancel_logged';
-            } else {
-                $event->sap_status = $event->sap_status ?: 'logged';
-            }
+            $event->sap_status = $mapper->mapPurchaseOrderStatus($eventName, $status, $event->sap_status);
 
             $event->save();
         }
     }
 }
-
