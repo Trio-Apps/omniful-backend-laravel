@@ -2,6 +2,7 @@
 
 namespace App\Services\Webhooks;
 
+use App\Models\OmnifulOrder;
 use App\Models\OmnifulReturnOrderEvent;
 use App\Services\SapServiceLayerClient;
 
@@ -57,12 +58,24 @@ class ReturnOrderWebhookService
                 return;
             }
 
-            $hubCode = data_get($data, 'hub_code');
-            $remarks = $this->buildReturnOrderRemarks($data, $eventName, $status);
+            $orderReferenceId = $this->extractOrderReferenceId($data, $payload);
+            $order = $orderReferenceId
+                ? OmnifulOrder::where('external_id', (string) $orderReferenceId)->first()
+                : null;
 
             $client = app(SapServiceLayerClient::class);
-            $client->syncInventoryItems($items);
-            $result = $client->createInventoryGoodsReceipt($items, $hubCode, $remarks);
+            $result = $client->createArCreditMemoFromReturnOrder($data, [
+                'external_id' => (string) ($event->external_id ?? ''),
+                'base_delivery_doc_entry' => (int) ($order->sap_delivery_doc_entry ?? 0),
+                'base_order_doc_entry' => (int) ($order->sap_doc_entry ?? 0),
+            ]);
+
+            if (($result['ignored'] ?? false) === true) {
+                $event->sap_status = 'ignored';
+                $event->sap_error = (string) ($result['reason'] ?? 'Ignored: return cannot be converted to AR credit memo');
+                $event->save();
+                return;
+            }
 
             $event->sap_status = 'created';
             $event->sap_doc_entry = $result['DocEntry'] ?? null;
@@ -132,5 +145,28 @@ class ReturnOrderWebhookService
         }
 
         return implode(' | ', $parts);
+    }
+
+    private function extractOrderReferenceId(array $data, array $payload): ?string
+    {
+        $candidates = [
+            data_get($data, 'order_reference_id'),
+            data_get($data, 'order_id'),
+            data_get($data, 'reference_id'),
+            data_get($payload, 'order_reference_id'),
+            data_get($payload, 'order_id'),
+            data_get($payload, 'reference_id'),
+        ];
+
+        foreach ($candidates as $value) {
+            if (is_string($value) && trim($value) !== '') {
+                return trim($value);
+            }
+            if (is_numeric($value)) {
+                return (string) $value;
+            }
+        }
+
+        return null;
     }
 }

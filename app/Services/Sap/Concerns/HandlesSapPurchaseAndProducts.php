@@ -365,6 +365,94 @@ trait HandlesSapPurchaseAndProducts
         return $payload;
     }
 
+    public function createArCreditMemoFromReturnOrder(array $data, array $options = []): array
+    {
+        $externalId = (string) ($options['external_id'] ?? '');
+        $hubCode = (string) (data_get($data, 'hub_code') ?? '');
+        $baseDeliveryDocEntry = (int) ($options['base_delivery_doc_entry'] ?? 0);
+        $baseOrderDocEntry = (int) ($options['base_order_doc_entry'] ?? 0);
+
+        $items = $this->buildReturnCreditLinesFromPayload($data);
+        if ($items === []) {
+            return [
+                'ignored' => true,
+                'reason' => 'No return lines found for AR credit memo',
+            ];
+        }
+
+        $docDate = $this->formatDate((string) (data_get($data, 'updated_at') ?? data_get($data, 'created_at') ?? null));
+        $seriesInfo = $this->resolveSeriesForDocument('14', $docDate);
+        $docDate = $seriesInfo['docDate'];
+
+        $cardCode = '';
+        $documentLines = [];
+        if ($baseDeliveryDocEntry > 0) {
+            $delivery = $this->getDeliveryNote($baseDeliveryDocEntry);
+            $cardCode = (string) ($delivery['CardCode'] ?? '');
+            $documentLines = $this->buildCreditLinesFromDelivery($items, $delivery, $hubCode, $baseDeliveryDocEntry);
+        }
+
+        if ($documentLines === [] && $baseOrderDocEntry > 0) {
+            $order = $this->getSalesOrder($baseOrderDocEntry);
+            if ($cardCode === '') {
+                $cardCode = (string) ($order['CardCode'] ?? '');
+            }
+            $documentLines = $this->buildDirectCreditLines($items, $hubCode);
+        }
+
+        if ($documentLines === []) {
+            $documentLines = $this->buildDirectCreditLines($items, $hubCode);
+        }
+
+        if ($cardCode === '') {
+            $customerCode = data_get($data, 'customer.code');
+            if ($customerCode) {
+                $cardCode = (string) $customerCode;
+            } else {
+                $seedId = (string) (
+                    data_get($data, 'order_reference_id')
+                    ?? data_get($data, 'return_order_id')
+                    ?? data_get($data, 'id')
+                    ?? $externalId
+                );
+                $cardCode = $this->buildCustomerCode($data, $seedId);
+            }
+            $this->ensureCustomerExists($cardCode, $data, $externalId !== '' ? $externalId : $cardCode);
+        }
+
+        if ($documentLines === []) {
+            return [
+                'ignored' => true,
+                'reason' => 'No SAP credit memo lines could be built',
+            ];
+        }
+
+        $body = [
+            'CardCode' => $cardCode,
+            'DocDate' => $docDate,
+            'DocDueDate' => $docDate,
+            'DocumentLines' => $documentLines,
+            'Comments' => 'AR Credit Memo from Omniful return ' . ($externalId !== '' ? $externalId : 'event'),
+        ];
+
+        if ($seriesInfo['series']) {
+            $body['Series'] = $seriesInfo['series'];
+        }
+
+        if ($externalId !== '') {
+            $body['NumAtCard'] = $externalId;
+        }
+
+        $response = $this->post('/CreditNotes', $body);
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP AR credit memo create failed: ' . $response->status() . ' ' . $response->body());
+        }
+
+        $payload = $response->json() ?? [];
+        $payload['ignored'] = false;
+        return $payload;
+    }
+
     public function createPurchaseOrderFromOmniful(array $data): array
     {
         $docDate = $this->formatDate(data_get($data, 'created_at'));
@@ -945,6 +1033,163 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return round($total, 6);
+    }
+
+    /**
+     * @return array<int,array{item_code:string,quantity:float,unit_price:float}>
+     */
+    private function buildReturnCreditLinesFromPayload(array $data): array
+    {
+        $items = data_get($data, 'order_items', []);
+        $lines = [];
+
+        foreach ((array) $items as $item) {
+            $itemCode = data_get($item, 'seller_sku.seller_sku_code')
+                ?? data_get($item, 'seller_sku.seller_sku_id')
+                ?? data_get($item, 'seller_sku_code')
+                ?? data_get($item, 'sku_code');
+            if (!$itemCode) {
+                continue;
+            }
+
+            $qty = data_get($item, 'return_quantity');
+            if ($qty === null) {
+                $qty = data_get($item, 'returned_quantity');
+            }
+            if ($qty === null) {
+                $qty = data_get($item, 'delivered_quantity');
+            }
+
+            $qty = (float) ($qty ?? 0);
+            if ($qty <= 0) {
+                continue;
+            }
+
+            $unitPrice = data_get($item, 'unit_price');
+            if ($unitPrice === null) {
+                $unitPrice = data_get($item, 'price');
+            }
+
+            $lines[] = [
+                'item_code' => (string) $itemCode,
+                'quantity' => $qty,
+                'unit_price' => (float) ($unitPrice ?? 0),
+            ];
+        }
+
+        return $lines;
+    }
+
+    /**
+     * @param array<int,array{item_code:string,quantity:float,unit_price:float}> $items
+     * @return array<int,array<string,mixed>>
+     */
+    private function buildCreditLinesFromDelivery(array $items, array $delivery, string $hubCode, int $deliveryDocEntry): array
+    {
+        $deliveryByItem = [];
+        foreach ((array) ($delivery['DocumentLines'] ?? []) as $line) {
+            $itemCode = (string) ($line['ItemCode'] ?? '');
+            $lineNum = $line['LineNum'] ?? null;
+            if ($itemCode === '' || !is_numeric($lineNum)) {
+                continue;
+            }
+
+            $lineQty = (float) ($line['Quantity'] ?? 0);
+            if ($lineQty <= 0) {
+                continue;
+            }
+
+            $deliveryByItem[$itemCode][] = [
+                'line_num' => (int) $lineNum,
+                'open_qty' => $lineQty,
+                'warehouse' => (string) ($line['WarehouseCode'] ?? ''),
+            ];
+        }
+
+        $creditLines = [];
+        foreach ($items as $item) {
+            $itemCode = $item['item_code'];
+            $remaining = (float) $item['quantity'];
+            if (!isset($deliveryByItem[$itemCode]) || $remaining <= 0) {
+                continue;
+            }
+
+            foreach ($deliveryByItem[$itemCode] as &$deliveryLine) {
+                if ($remaining <= 0) {
+                    break;
+                }
+
+                if ($hubCode !== '' && $deliveryLine['warehouse'] !== '' && $deliveryLine['warehouse'] !== $hubCode) {
+                    continue;
+                }
+
+                $openQty = (float) $deliveryLine['open_qty'];
+                if ($openQty <= 0) {
+                    continue;
+                }
+
+                $applyQty = min($remaining, $openQty);
+                if ($applyQty <= 0) {
+                    continue;
+                }
+
+                $line = [
+                    'BaseType' => 15,
+                    'BaseEntry' => $deliveryDocEntry,
+                    'BaseLine' => (int) $deliveryLine['line_num'],
+                    'Quantity' => $applyQty,
+                ];
+
+                if ($hubCode !== '') {
+                    $line['WarehouseCode'] = $hubCode;
+                }
+
+                $creditLines[] = $line;
+                $deliveryLine['open_qty'] = max(0.0, $openQty - $applyQty);
+                $remaining -= $applyQty;
+            }
+            unset($deliveryLine);
+        }
+
+        return $creditLines;
+    }
+
+    /**
+     * @param array<int,array{item_code:string,quantity:float,unit_price:float}> $items
+     * @return array<int,array<string,mixed>>
+     */
+    private function buildDirectCreditLines(array $items, string $hubCode): array
+    {
+        $lines = [];
+        $lineIndex = 0;
+        foreach ($items as $item) {
+            $lineIndex++;
+            $itemCode = $item['item_code'];
+            $qty = (float) $item['quantity'];
+            if ($itemCode === '' || $qty <= 0) {
+                continue;
+            }
+
+            $this->ensureItemExists($itemCode, [
+                'sku_code' => $itemCode,
+                'unit_price' => $item['unit_price'],
+            ], $lineIndex);
+
+            $line = [
+                'ItemCode' => $itemCode,
+                'Quantity' => $qty,
+                'UnitPrice' => (float) $item['unit_price'],
+            ];
+
+            if ($hubCode !== '') {
+                $this->ensureWarehouseExists($hubCode, $lineIndex);
+                $line['WarehouseCode'] = $hubCode;
+            }
+
+            $lines[] = $line;
+        }
+
+        return $lines;
     }
 
 }
