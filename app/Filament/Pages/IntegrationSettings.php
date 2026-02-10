@@ -163,6 +163,9 @@ class IntegrationSettings extends Page implements HasForms
             ->body(implode("\n", $lines))
             ->{$ok ? 'success' : 'danger'}()
             ->send();
+
+        // Refresh form state so rotated refresh tokens are reused on next test click.
+        $this->form->fill(IntegrationSetting::first()?->toArray() ?? []);
     }
 
     private function testSapConnection(array $state): array
