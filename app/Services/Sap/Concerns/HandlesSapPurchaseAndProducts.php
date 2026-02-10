@@ -769,6 +769,61 @@ trait HandlesSapPurchaseAndProducts
         return ['status' => 'created', 'item_code' => $itemCode];
     }
 
+    public function syncBundleFromOmniful(array $data, string $eventName = ''): array
+    {
+        $bundleCode = data_get($data, 'bundle_code')
+            ?? data_get($data, 'seller_sku_code')
+            ?? data_get($data, 'sku_code')
+            ?? data_get($data, 'code')
+            ?? data_get($data, 'id');
+
+        if (!$bundleCode) {
+            throw new \RuntimeException('Missing bundle code for SAP bundle sync');
+        }
+
+        $components = $this->extractBundleComponents($data);
+        if ($components === []) {
+            return ['status' => 'ignored', 'bundle_code' => (string) $bundleCode];
+        }
+
+        $this->ensureBundleParentItemExists((string) $bundleCode, $data);
+
+        foreach ($components as $index => $component) {
+            $this->ensureItemExists(
+                (string) $component['item_code'],
+                ['sku_code' => $component['item_code'], 'name' => $component['item_code']],
+                $index + 1
+            );
+        }
+
+        $treeItems = array_map(fn ($component) => [
+            'ItemCode' => (string) $component['item_code'],
+            'Quantity' => (float) $component['quantity'],
+            'Warehouse' => (string) ($component['warehouse'] ?? ''),
+        ], $components);
+
+        $existing = $this->getProductTree((string) $bundleCode);
+        $isUpdate = str_contains(strtolower($eventName), 'update');
+        $isDelete = str_contains(strtolower($eventName), 'delete');
+
+        if ($existing) {
+            if ($isDelete) {
+                $this->deleteProductTree((string) $bundleCode);
+                return ['status' => 'deleted', 'bundle_code' => (string) $bundleCode];
+            }
+
+            $this->updateProductTree((string) $bundleCode, $treeItems);
+            return ['status' => 'updated', 'bundle_code' => (string) $bundleCode];
+        }
+
+        if ($isDelete) {
+            return ['status' => 'skipped', 'bundle_code' => (string) $bundleCode];
+        }
+
+        $this->createProductTree((string) $bundleCode, $treeItems);
+        return ['status' => $isUpdate ? 'created' : 'created', 'bundle_code' => (string) $bundleCode];
+    }
+
 
     private function updateSapItem(string $itemCode, array $data): void
     {
@@ -949,6 +1004,145 @@ trait HandlesSapPurchaseAndProducts
         $payload['ignored'] = false;
 
         return $payload;
+    }
+
+    /**
+     * @return array<int,array{item_code:string,quantity:float,warehouse:?string}>
+     */
+    private function extractBundleComponents(array $data): array
+    {
+        $sources = [
+            data_get($data, 'bundle_items', []),
+            data_get($data, 'bundle_components', []),
+            data_get($data, 'components', []),
+            data_get($data, 'bom_items', []),
+            data_get($data, 'kit_items', []),
+        ];
+
+        $components = [];
+        foreach ($sources as $source) {
+            foreach ((array) $source as $row) {
+                $itemCode = data_get($row, 'item_code')
+                    ?? data_get($row, 'sku_code')
+                    ?? data_get($row, 'seller_sku_code')
+                    ?? data_get($row, 'seller_sku.seller_sku_code');
+                if (!$itemCode) {
+                    continue;
+                }
+
+                $qty = (float) (data_get($row, 'quantity') ?? data_get($row, 'qty') ?? 0);
+                if ($qty <= 0) {
+                    continue;
+                }
+
+                $components[] = [
+                    'item_code' => (string) $itemCode,
+                    'quantity' => $qty,
+                    'warehouse' => data_get($row, 'hub_code') ?? data_get($row, 'warehouse') ?? null,
+                ];
+            }
+
+            if ($components !== []) {
+                break;
+            }
+        }
+
+        return $components;
+    }
+
+    private function ensureBundleParentItemExists(string $bundleCode, array $data): void
+    {
+        if ($this->isValidItem($bundleCode)) {
+            return;
+        }
+
+        $name = (string) (data_get($data, 'name') ?? data_get($data, 'bundle_name') ?? $bundleCode);
+        $body = [
+            'ItemCode' => $bundleCode,
+            'ItemName' => $name,
+            'InventoryItem' => 'tNO',
+            'PurchaseItem' => 'tNO',
+            'SalesItem' => 'tYES',
+        ];
+
+        $response = $this->post('/Items', $body);
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP bundle item create failed: ' . $response->status() . ' ' . $response->body());
+        }
+    }
+
+    private function getProductTree(string $treeCode): ?array
+    {
+        $encoded = str_replace("'", "''", $treeCode);
+        $response = $this->get("/ProductTrees('{$encoded}')");
+
+        if ($response->status() === 404) {
+            return null;
+        }
+
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP product tree lookup failed: ' . $response->status() . ' ' . $response->body());
+        }
+
+        return $response->json() ?? null;
+    }
+
+    /**
+     * @param array<int,array{ItemCode:string,Quantity:float,Warehouse:string}> $items
+     */
+    private function createProductTree(string $treeCode, array $items): void
+    {
+        $treeItems = array_map(fn ($item) => array_filter([
+            'ItemCode' => $item['ItemCode'],
+            'Quantity' => $item['Quantity'],
+            'Warehouse' => $item['Warehouse'] ?: null,
+        ], fn ($value) => $value !== null), $items);
+
+        $body = [
+            'TreeCode' => $treeCode,
+            'TreeType' => 'iSalesTree',
+            'ProductTreeLines' => $treeItems,
+        ];
+
+        $response = $this->post('/ProductTrees', $body);
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP product tree create failed: ' . $response->status() . ' ' . $response->body());
+        }
+    }
+
+    /**
+     * @param array<int,array{ItemCode:string,Quantity:float,Warehouse:string}> $items
+     */
+    private function updateProductTree(string $treeCode, array $items): void
+    {
+        $treeItems = array_map(fn ($item) => array_filter([
+            'ItemCode' => $item['ItemCode'],
+            'Quantity' => $item['Quantity'],
+            'Warehouse' => $item['Warehouse'] ?: null,
+        ], fn ($value) => $value !== null), $items);
+
+        $encoded = str_replace("'", "''", $treeCode);
+        $body = [
+            'TreeType' => 'iSalesTree',
+            'ProductTreeLines' => $treeItems,
+        ];
+
+        $response = $this->patch("/ProductTrees('{$encoded}')", $body);
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP product tree update failed: ' . $response->status() . ' ' . $response->body());
+        }
+    }
+
+    private function deleteProductTree(string $treeCode): void
+    {
+        $encoded = str_replace("'", "''", $treeCode);
+        $response = $this->delete("/ProductTrees('{$encoded}')");
+        if ($response->status() === 404) {
+            return;
+        }
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP product tree delete failed: ' . $response->status() . ' ' . $response->body());
+        }
     }
 
     private function getSalesOrder(int $docEntry): array

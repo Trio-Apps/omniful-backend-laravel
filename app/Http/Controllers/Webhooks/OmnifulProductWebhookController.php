@@ -30,10 +30,15 @@ class OmnifulProductWebhookController extends OmnifulWebhookBase
             $data = is_array($rawData) ? ($rawData[0] ?? []) : $rawData;
 
             $client = app(SapServiceLayerClient::class);
-            $sync = $client->syncProductFromOmniful($data, (string) data_get($event->payload, 'event_name', ''));
+            $eventName = (string) data_get($event->payload, 'event_name', '');
+            if ($this->isBundlePayload($data, $eventName)) {
+                $sync = $client->syncBundleFromOmniful($data, $eventName);
+            } else {
+                $sync = $client->syncProductFromOmniful($data, $eventName);
+            }
 
             $event->sap_status = $sync['status'] ?? 'created';
-            $event->sap_item_code = $sync['item_code'] ?? null;
+            $event->sap_item_code = $sync['item_code'] ?? $sync['bundle_code'] ?? null;
             $event->sap_error = null;
             $event->save();
         } catch (\Throwable $e) {
@@ -48,5 +53,29 @@ class OmnifulProductWebhookController extends OmnifulWebhookBase
         }
 
         return response()->json(['status' => 'ok', 'id' => $event->id]);
+    }
+
+    private function isBundlePayload(array $data, string $eventName): bool
+    {
+        $eventName = strtolower(trim($eventName));
+        if (str_contains($eventName, 'bundle') || str_contains($eventName, 'bom') || str_contains($eventName, 'kit')) {
+            return true;
+        }
+
+        $componentCandidates = [
+            data_get($data, 'bundle_items'),
+            data_get($data, 'bundle_components'),
+            data_get($data, 'components'),
+            data_get($data, 'bom_items'),
+            data_get($data, 'kit_items'),
+        ];
+
+        foreach ($componentCandidates as $value) {
+            if (is_array($value) && $value !== []) {
+                return true;
+            }
+        }
+
+        return (bool) data_get($data, 'is_bundle', false);
     }
 }

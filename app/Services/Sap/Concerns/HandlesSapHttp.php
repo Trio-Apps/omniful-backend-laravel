@@ -63,6 +63,25 @@ trait HandlesSapHttp
     }
 
 
+    private function delete(string $path)
+    {
+        $cookies = $this->login();
+
+        $client = Http::timeout(30)->acceptJson();
+        if (!$this->verifySsl) {
+            $client = $client->withoutVerifying();
+        }
+
+        $response = $client->withHeaders([
+            'Cookie' => $cookies,
+        ])->delete($this->baseUrl . $path);
+
+        $this->logout($cookies);
+
+        return $response;
+    }
+
+
     private function login(): string
     {
         if ($this->baseUrl === '' || $this->companyDb === '' || $this->username === '' || $this->password === '') {
