@@ -3,82 +3,131 @@
 namespace App\Services\Sap\Concerns;
 
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 trait HandlesSapHttp
 {
     private function get(string $path)
     {
         $cookies = $this->login();
+        $startedAt = microtime(true);
+        $response = null;
 
-        $client = Http::timeout(30)->acceptJson();
-        if (!$this->verifySsl) {
-            $client = $client->withoutVerifying();
+        try {
+            $client = Http::timeout(30)->acceptJson();
+            if (!$this->verifySsl) {
+                $client = $client->withoutVerifying();
+            }
+
+            $response = $client->withHeaders([
+                'Cookie' => $cookies,
+            ])->get($this->baseUrl . $path);
+
+            return $response;
+        } finally {
+            $durationMs = (int) round((microtime(true) - $startedAt) * 1000);
+            Log::info('SAP HTTP request', [
+                'method' => 'GET',
+                'path' => $path,
+                'duration_ms' => $durationMs,
+                'status' => $response?->status(),
+            ]);
+
+            $this->logout($cookies);
         }
-
-        $response = $client->withHeaders([
-            'Cookie' => $cookies,
-        ])->get($this->baseUrl . $path);
-
-        $this->logout($cookies);
-
-        return $response;
     }
 
 
     private function post(string $path, array|object $body)
     {
         $cookies = $this->login();
+        $startedAt = microtime(true);
+        $response = null;
 
-        $client = Http::timeout(30)->acceptJson();
-        if (!$this->verifySsl) {
-            $client = $client->withoutVerifying();
+        try {
+            $client = Http::timeout(30)->acceptJson();
+            if (!$this->verifySsl) {
+                $client = $client->withoutVerifying();
+            }
+
+            $response = $client->withHeaders([
+                'Cookie' => $cookies,
+            ])->post($this->baseUrl . $path, $body);
+
+            return $response;
+        } finally {
+            $durationMs = (int) round((microtime(true) - $startedAt) * 1000);
+            Log::info('SAP HTTP request', [
+                'method' => 'POST',
+                'path' => $path,
+                'duration_ms' => $durationMs,
+                'status' => $response?->status(),
+            ]);
+
+            $this->logout($cookies);
         }
-
-        $response = $client->withHeaders([
-            'Cookie' => $cookies,
-        ])->post($this->baseUrl . $path, $body);
-
-        $this->logout($cookies);
-
-        return $response;
     }
 
 
     private function patch(string $path, array $body)
     {
         $cookies = $this->login();
+        $startedAt = microtime(true);
+        $response = null;
 
-        $client = Http::timeout(30)->acceptJson();
-        if (!$this->verifySsl) {
-            $client = $client->withoutVerifying();
+        try {
+            $client = Http::timeout(30)->acceptJson();
+            if (!$this->verifySsl) {
+                $client = $client->withoutVerifying();
+            }
+
+            $response = $client->withHeaders([
+                'Cookie' => $cookies,
+            ])->patch($this->baseUrl . $path, $body);
+
+            return $response;
+        } finally {
+            $durationMs = (int) round((microtime(true) - $startedAt) * 1000);
+            Log::info('SAP HTTP request', [
+                'method' => 'PATCH',
+                'path' => $path,
+                'duration_ms' => $durationMs,
+                'status' => $response?->status(),
+            ]);
+
+            $this->logout($cookies);
         }
-
-        $response = $client->withHeaders([
-            'Cookie' => $cookies,
-        ])->patch($this->baseUrl . $path, $body);
-
-        $this->logout($cookies);
-
-        return $response;
     }
 
 
     private function delete(string $path)
     {
         $cookies = $this->login();
+        $startedAt = microtime(true);
+        $response = null;
 
-        $client = Http::timeout(30)->acceptJson();
-        if (!$this->verifySsl) {
-            $client = $client->withoutVerifying();
+        try {
+            $client = Http::timeout(30)->acceptJson();
+            if (!$this->verifySsl) {
+                $client = $client->withoutVerifying();
+            }
+
+            $response = $client->withHeaders([
+                'Cookie' => $cookies,
+            ])->delete($this->baseUrl . $path);
+
+            return $response;
+        } finally {
+            $durationMs = (int) round((microtime(true) - $startedAt) * 1000);
+            Log::info('SAP HTTP request', [
+                'method' => 'DELETE',
+                'path' => $path,
+                'duration_ms' => $durationMs,
+                'status' => $response?->status(),
+            ]);
+
+            $this->logout($cookies);
         }
-
-        $response = $client->withHeaders([
-            'Cookie' => $cookies,
-        ])->delete($this->baseUrl . $path);
-
-        $this->logout($cookies);
-
-        return $response;
     }
 
 
