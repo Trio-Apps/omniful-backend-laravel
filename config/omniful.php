@@ -107,6 +107,11 @@ return [
         'inventory_offset_account' => env('OMNIFUL_COGS_INVENTORY_OFFSET_ACCOUNT', ''),
         'return_cogs_reversal_enabled' => (bool) env('OMNIFUL_RETURN_COGS_REVERSAL_ENABLED', false),
     ],
+    'stock_transfer' => [
+        'in_transit_enabled' => (bool) env('OMNIFUL_IN_TRANSIT_ENABLED', false),
+        'in_transit_warehouse' => env('OMNIFUL_IN_TRANSIT_WAREHOUSE', ''),
+        'force_in_transit' => (bool) env('OMNIFUL_IN_TRANSIT_FORCE', false),
+    ],
     'hub_defaults' => [
         'type' => env('OMNIFUL_HUB_TYPE', 'warehouse'),
         'email' => env('OMNIFUL_HUB_EMAIL'),

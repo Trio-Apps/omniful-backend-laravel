@@ -171,6 +171,63 @@ trait HandlesSapInventoryDocs
         return $payload;
     }
 
+    /**
+     * @param array<int,array{seller_sku_code:string,quantity:float}> $items
+     */
+    public function createStockTransferViaTransit(
+        array $items,
+        string $fromWarehouse,
+        string $toWarehouse,
+        string $inTransitWarehouse,
+        string $remarks = ''
+    ): array {
+        $inTransitWarehouse = trim($inTransitWarehouse);
+        if ($inTransitWarehouse === '') {
+            throw new \RuntimeException('In-transit warehouse is required for two-step stock transfer');
+        }
+
+        if ($inTransitWarehouse === $fromWarehouse || $inTransitWarehouse === $toWarehouse) {
+            throw new \RuntimeException('In-transit warehouse must be different from source and destination');
+        }
+
+        $first = $this->createStockTransfer(
+            $items,
+            $fromWarehouse,
+            $inTransitWarehouse,
+            trim($remarks . ' | leg-1 source->transit')
+        );
+
+        if (($first['ignored'] ?? false) === true) {
+            return $first;
+        }
+
+        $second = $this->createStockTransfer(
+            $items,
+            $inTransitWarehouse,
+            $toWarehouse,
+            trim($remarks . ' | leg-2 transit->destination')
+        );
+
+        if (($second['ignored'] ?? false) === true) {
+            return $second;
+        }
+
+        return [
+            'ignored' => false,
+            'mode' => 'two_step_in_transit',
+            'leg1' => [
+                'DocEntry' => $first['DocEntry'] ?? null,
+                'DocNum' => $first['DocNum'] ?? null,
+            ],
+            'leg2' => [
+                'DocEntry' => $second['DocEntry'] ?? null,
+                'DocNum' => $second['DocNum'] ?? null,
+            ],
+            'DocEntry' => $second['DocEntry'] ?? null,
+            'DocNum' => $second['DocNum'] ?? null,
+        ];
+    }
+
 
     private function buildInventoryLinesForInventoryDoc(array $items, ?string $hubCode, bool $isIssue): array
     {

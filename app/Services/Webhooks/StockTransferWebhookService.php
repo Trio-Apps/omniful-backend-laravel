@@ -41,12 +41,26 @@ class StockTransferWebhookService
         $client->syncInventoryItems($lines);
 
         $eventName = (string) data_get($payload, 'event_name', 'stock_transfer');
-        $result = $client->createStockTransfer(
-            $lines,
-            $fromWarehouse,
-            $toWarehouse,
-            trim('Omniful stock transfer | ' . $eventName . ' | ' . (string) ($event->external_id ?? ''))
-        );
+        $remarks = trim('Omniful stock transfer | ' . $eventName . ' | ' . (string) ($event->external_id ?? ''));
+        $inTransitWarehouse = $this->extractInTransitWarehouse($data, $payload);
+        $useInTransit = $this->shouldUseInTransit($data, $payload, $inTransitWarehouse);
+
+        if ($useInTransit) {
+            $result = $client->createStockTransferViaTransit(
+                $lines,
+                $fromWarehouse,
+                $toWarehouse,
+                $inTransitWarehouse,
+                $remarks
+            );
+        } else {
+            $result = $client->createStockTransfer(
+                $lines,
+                $fromWarehouse,
+                $toWarehouse,
+                $remarks
+            );
+        }
 
         if (($result['ignored'] ?? false) === true) {
             $event->sap_status = 'ignored';
@@ -55,10 +69,18 @@ class StockTransferWebhookService
             return;
         }
 
-        $event->sap_status = 'created';
+        $event->sap_status = (($result['mode'] ?? '') === 'two_step_in_transit') ? 'created_via_transit' : 'created';
         $event->sap_doc_entry = (string) ($result['DocEntry'] ?? '');
         $event->sap_doc_num = (string) ($result['DocNum'] ?? '');
-        $event->sap_error = null;
+        if (($result['mode'] ?? '') === 'two_step_in_transit') {
+            $event->sap_error = json_encode([
+                'mode' => 'two_step_in_transit',
+                'leg1' => $result['leg1'] ?? null,
+                'leg2' => $result['leg2'] ?? null,
+            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        } else {
+            $event->sap_error = null;
+        }
         $event->save();
     }
 
@@ -160,5 +182,64 @@ class StockTransferWebhookService
 
         return [];
     }
-}
 
+    private function extractInTransitWarehouse(array $data, array $payload): string
+    {
+        $candidates = [
+            data_get($data, 'in_transit_hub_code'),
+            data_get($data, 'transit_hub_code'),
+            data_get($data, 'in_transit_warehouse_code'),
+            data_get($payload, 'in_transit_hub_code'),
+            data_get($payload, 'transit_hub_code'),
+            config('omniful.stock_transfer.in_transit_warehouse', ''),
+        ];
+
+        foreach ($candidates as $value) {
+            if (is_string($value) && trim($value) !== '') {
+                return trim($value);
+            }
+            if (is_numeric($value)) {
+                return (string) $value;
+            }
+        }
+
+        return '';
+    }
+
+    private function shouldUseInTransit(array $data, array $payload, string $inTransitWarehouse): bool
+    {
+        if (!(bool) config('omniful.stock_transfer.in_transit_enabled', false)) {
+            return false;
+        }
+
+        if ($inTransitWarehouse === '') {
+            return false;
+        }
+
+        if ((bool) config('omniful.stock_transfer.force_in_transit', false)) {
+            return true;
+        }
+
+        $flags = [
+            data_get($data, 'use_in_transit'),
+            data_get($data, 'via_in_transit'),
+            data_get($payload, 'use_in_transit'),
+            data_get($payload, 'via_in_transit'),
+        ];
+
+        foreach ($flags as $flag) {
+            if (is_bool($flag) && $flag === true) {
+                return true;
+            }
+            if (is_string($flag) && in_array(strtolower(trim($flag)), ['1', 'true', 'yes', 'y'], true)) {
+                return true;
+            }
+            if (is_numeric($flag) && (int) $flag === 1) {
+                return true;
+            }
+        }
+
+        $transferType = strtolower(trim((string) (data_get($data, 'transfer_type') ?? data_get($payload, 'transfer_type') ?? '')));
+        return in_array($transferType, ['main_to_branch_via_transit', 'branch_to_branch_via_transit', 'via_transit'], true);
+    }
+}
