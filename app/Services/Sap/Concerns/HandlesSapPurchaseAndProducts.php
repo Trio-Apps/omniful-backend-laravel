@@ -316,24 +316,37 @@ trait HandlesSapPurchaseAndProducts
     public function createGoodsReceiptPOFromInventory(int $poDocEntry, array $items, ?string $hubCode, ?string $displayId = null): array
     {
         $po = $this->getPurchaseOrder($poDocEntry);
-        $lineMap = [];
+        $linesByItem = [];
         foreach ($po['DocumentLines'] ?? [] as $line) {
             $code = $line['ItemCode'] ?? null;
             $lineNum = $line['LineNum'] ?? null;
             if ($code !== null && $lineNum !== null) {
-                $lineMap[$code] = $lineNum;
+                $openQty = $line['RemainingOpenQuantity'] ?? $line['OpenQuantity'] ?? null;
+                if ($openQty === null) {
+                    $orderedQty = (float) ($line['Quantity'] ?? 0);
+                    $receivedQty = (float) ($line['ReceivedQuantity'] ?? 0);
+                    $openQty = max(0.0, $orderedQty - $receivedQty);
+                }
+                $linesByItem[$code][] = [
+                    'line_num' => (int) $lineNum,
+                    'open_qty' => max(0.0, (float) $openQty),
+                    'warehouse' => (string) ($line['WarehouseCode'] ?? ''),
+                ];
             }
         }
 
         $lines = [];
+        $matchedItems = 0;
+        $fullyReceivedItems = 0;
         foreach ($items as $item) {
             $itemCode = data_get($item, 'seller_sku_code')
                 ?? data_get($item, 'sku_code')
                 ?? data_get($item, 'seller_sku_id');
 
-            if (!$itemCode || !array_key_exists($itemCode, $lineMap)) {
+            if (!$itemCode || !array_key_exists($itemCode, $linesByItem)) {
                 continue;
             }
+            $matchedItems++;
 
             $qty = data_get($item, 'quantity_location_pass_inventory_sum');
             if ($qty === null) {
@@ -348,22 +361,59 @@ trait HandlesSapPurchaseAndProducts
                 continue;
             }
 
-            $line = [
-                'BaseType' => 22,
-                'BaseEntry' => $poDocEntry,
-                'BaseLine' => $lineMap[$itemCode],
-                'Quantity' => $qty,
-            ];
+            $remainingToAllocate = $qty;
+            $allocatedAny = false;
+            foreach ($linesByItem[$itemCode] as &$poLine) {
+                if ($remainingToAllocate <= 0) {
+                    break;
+                }
 
-            if ($hubCode) {
-                $line['WarehouseCode'] = $hubCode;
+                if ($hubCode && $poLine['warehouse'] !== '' && $poLine['warehouse'] !== $hubCode) {
+                    continue;
+                }
+
+                $lineOpenQty = (float) ($poLine['open_qty'] ?? 0);
+                if ($lineOpenQty <= 0) {
+                    continue;
+                }
+
+                $allocQty = min($remainingToAllocate, $lineOpenQty);
+                if ($allocQty <= 0) {
+                    continue;
+                }
+
+                $line = [
+                    'BaseType' => 22,
+                    'BaseEntry' => $poDocEntry,
+                    'BaseLine' => (int) $poLine['line_num'],
+                    'Quantity' => $allocQty,
+                ];
+
+                if ($hubCode) {
+                    $line['WarehouseCode'] = $hubCode;
+                }
+
+                $lines[] = $line;
+                $poLine['open_qty'] = max(0.0, $lineOpenQty - $allocQty);
+                $remainingToAllocate -= $allocQty;
+                $allocatedAny = true;
             }
+            unset($poLine);
 
-            $lines[] = $line;
+            if (!$allocatedAny) {
+                $fullyReceivedItems++;
+            }
         }
 
         if ($lines === []) {
-            throw new \RuntimeException('No matching PO lines found for GRPO');
+            $reason = 'No matching PO lines found for GRPO';
+            if ($matchedItems > 0 && $fullyReceivedItems === $matchedItems) {
+                $reason = 'PO lines already fully received';
+            }
+            return [
+                'ignored' => true,
+                'reason' => $reason,
+            ];
         }
 
         $comments = 'GRPO from Omniful inventory';
@@ -384,7 +434,10 @@ trait HandlesSapPurchaseAndProducts
             throw new \RuntimeException('SAP GRPO create failed: ' . $response->status() . ' ' . $response->body());
         }
 
-        return $response->json() ?? [];
+        $payload = $response->json() ?? [];
+        $payload['ignored'] = false;
+
+        return $payload;
     }
 
 }

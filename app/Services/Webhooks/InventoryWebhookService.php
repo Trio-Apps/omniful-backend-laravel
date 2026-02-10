@@ -62,15 +62,24 @@ class InventoryWebhookService
                     $client = app(SapServiceLayerClient::class);
                     $result = $client->createGoodsReceiptPOFromInventory((int) $poEvent->sap_doc_entry, is_array($items) ? $items : [], $hubCode, $displayId);
 
-                    $event->sap_status = 'created';
-                    $event->sap_doc_entry = $result['DocEntry'] ?? null;
-                    $event->sap_doc_num = $result['DocNum'] ?? null;
-                    $event->sap_error = null;
-                    $event->save();
+                    if (($result['ignored'] ?? false) === true) {
+                        $event->sap_status = 'ignored';
+                        $event->sap_error = (string) ($result['reason'] ?? 'Ignored: no receivable PO quantity');
+                        $event->save();
 
-                    $sync->sap_status = 'created';
-                    $sync->sap_doc_entry = $event->sap_doc_entry;
-                    $sync->sap_doc_num = $event->sap_doc_num;
+                        $sync->sap_status = 'ignored';
+                        $sync->sap_error = $event->sap_error;
+                    } else {
+                        $event->sap_status = 'created';
+                        $event->sap_doc_entry = $result['DocEntry'] ?? null;
+                        $event->sap_doc_num = $result['DocNum'] ?? null;
+                        $event->sap_error = null;
+                        $event->save();
+
+                        $sync->sap_status = 'created';
+                        $sync->sap_doc_entry = $event->sap_doc_entry;
+                        $sync->sap_doc_num = $event->sap_doc_num;
+                    }
                     $sync->save();
                 }
             } elseif ($eventName === 'inventory.update.event' && $action === 'manual_edit' && $entity === 'hub_inventory') {
