@@ -102,6 +102,78 @@ trait HandlesSapPurchaseAndProducts
         return $payload;
     }
 
+    public function createIncomingPaymentForInvoice(array $data): array
+    {
+        $invoiceDocEntry = (int) ($data['invoice_doc_entry'] ?? 0);
+        if ($invoiceDocEntry <= 0) {
+            throw new \RuntimeException('Missing invoice doc entry for incoming payment');
+        }
+
+        $transferAccount = trim((string) ($data['transfer_account'] ?? config('omniful.order_payment.transfer_account', '')));
+        if ($transferAccount === '') {
+            return [
+                'ignored' => true,
+                'reason' => 'Missing incoming payment transfer account',
+            ];
+        }
+
+        $invoiceTypeCandidates = $this->normalizeInvoiceTypeCandidates(
+            $data['invoice_type_candidates'] ?? config('omniful.order_payment.invoice_type_candidates', [17, 13])
+        );
+        if ($invoiceTypeCandidates === []) {
+            $invoiceTypeCandidates = [17, 13];
+        }
+
+        $salesDoc = $this->getSalesOrder($invoiceDocEntry);
+        $cardCode = (string) ($data['card_code'] ?? ($salesDoc['CardCode'] ?? ''));
+        if ($cardCode === '') {
+            throw new \RuntimeException('Missing CardCode for incoming payment');
+        }
+
+        $sumApplied = (float) ($data['sum_applied'] ?? ($salesDoc['DocTotal'] ?? 0));
+        if ($sumApplied <= 0) {
+            return [
+                'ignored' => true,
+                'reason' => 'Incoming payment skipped: non-positive amount',
+            ];
+        }
+
+        $transferDate = $this->formatDate((string) ($data['transfer_date'] ?? now()->format('Y-m-d')));
+        $attemptErrors = [];
+
+        foreach ($invoiceTypeCandidates as $invoiceType) {
+            $body = [
+                'CardCode' => $cardCode,
+                'DocType' => 'rCustomer',
+                'TransferAccount' => $transferAccount,
+                'TransferDate' => $transferDate,
+                'TransferSum' => $sumApplied,
+                'PaymentInvoices' => [
+                    [
+                        'DocEntry' => $invoiceDocEntry,
+                        'InvoiceType' => $invoiceType,
+                        'SumApplied' => $sumApplied,
+                    ],
+                ],
+                'Remarks' => 'Incoming payment from Omniful prepaid order',
+            ];
+
+            $response = $this->post('/IncomingPayments', $body);
+            if ($response->successful()) {
+                $payload = $response->json() ?? [];
+                $payload['ignored'] = false;
+                $payload['invoice_type_used'] = $invoiceType;
+                return $payload;
+            }
+
+            $attemptErrors[] = 'invoice_type=' . $invoiceType . ': ' . $response->status() . ' ' . $response->body();
+        }
+
+        throw new \RuntimeException(
+            'SAP incoming payment create failed for all invoice types: ' . implode(' | ', $attemptErrors)
+        );
+    }
+
     public function createPurchaseOrderFromOmniful(array $data): array
     {
         $docDate = $this->formatDate(data_get($data, 'created_at'));
@@ -538,6 +610,17 @@ trait HandlesSapPurchaseAndProducts
         return $payload;
     }
 
+    private function getSalesOrder(int $docEntry): array
+    {
+        $response = $this->get('/Orders(' . $docEntry . ')');
+
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP order fetch failed: ' . $response->status() . ' ' . $response->body());
+        }
+
+        return $response->json() ?? [];
+    }
+
     private function ensureCustomerExists(string $cardCode, array $data, string $externalId): void
     {
         $existing = $this->getBusinessPartner($cardCode);
@@ -586,6 +669,24 @@ trait HandlesSapPurchaseAndProducts
         );
         $hash = strtoupper(substr(sha1($seed), 0, 10));
         return 'OMNC' . $hash;
+    }
+
+    /**
+     * @param mixed $candidates
+     * @return array<int,int>
+     */
+    private function normalizeInvoiceTypeCandidates(mixed $candidates): array
+    {
+        $values = is_array($candidates) ? $candidates : [$candidates];
+        $normalized = [];
+
+        foreach ($values as $value) {
+            if (is_numeric($value)) {
+                $normalized[] = (int) $value;
+            }
+        }
+
+        return array_values(array_unique($normalized));
     }
 
 }

@@ -70,6 +70,14 @@ return [
             'cod_indicators' => ['cod', 'cash_on_delivery', 'cash on delivery'],
         ],
     ],
+    'order_payment' => [
+        'enabled' => (bool) env('OMNIFUL_ORDER_PAYMENT_ENABLED', true),
+        'transfer_account' => env('OMNIFUL_INCOMING_PAYMENT_TRANSFER_ACCOUNT', ''),
+        'invoice_type_candidates' => array_values(array_filter(array_map(
+            fn ($v) => is_numeric(trim((string) $v)) ? (int) trim((string) $v) : null,
+            explode(',', (string) env('OMNIFUL_INCOMING_PAYMENT_INVOICE_TYPES', '17,13'))
+        ))),
+    ],
     'hub_defaults' => [
         'type' => env('OMNIFUL_HUB_TYPE', 'warehouse'),
         'email' => env('OMNIFUL_HUB_EMAIL'),
