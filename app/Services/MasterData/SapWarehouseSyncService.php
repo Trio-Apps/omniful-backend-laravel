@@ -16,6 +16,7 @@ class SapWarehouseSyncService
             if (!$code) {
                 continue;
             }
+            $enabled = $client->isWarehouseIntegrationEnabled((string) $code);
             SapWarehouse::updateOrCreate(
                 ['code' => $code],
                 [
@@ -27,9 +28,18 @@ class SapWarehouseSyncService
                 ]
             );
             $record = SapWarehouse::where('code', $code)->first();
-            if ($record && !$record->omniful_status) {
-                $record->omniful_status = 'pending';
-                $record->save();
+            if ($record) {
+                if ($enabled) {
+                    if (!$record->omniful_status || $record->omniful_status === 'skipped') {
+                        $record->omniful_status = 'pending';
+                        $record->omniful_error = null;
+                        $record->save();
+                    }
+                } else {
+                    $record->omniful_status = 'skipped';
+                    $record->omniful_error = 'Skipped by warehouse integration UDF control';
+                    $record->save();
+                }
             }
         }
     }
@@ -52,6 +62,14 @@ class SapWarehouseSyncService
             $record->save();
 
             try {
+                $sapClient = app(SapServiceLayerClient::class);
+                if (!$sapClient->isWarehouseIntegrationEnabled((string) $record->code)) {
+                    $record->omniful_status = 'skipped';
+                    $record->omniful_error = 'Skipped by warehouse integration UDF control';
+                    $record->save();
+                    continue;
+                }
+
                 $defaults = config('omniful.hub_defaults', []);
                 $email = (string) ($defaults['email'] ?? '');
                 if ($email === '') {
@@ -124,4 +142,3 @@ class SapWarehouseSyncService
         return ['ok' => $ok, 'failed' => $failed, 'errors' => $errors];
     }
 }
-

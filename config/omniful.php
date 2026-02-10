@@ -17,6 +17,11 @@ return [
             fn ($v) => strtolower(trim((string) $v)),
             explode(',', (string) env('SAP_ITEM_INTEGRATION_ALLOWED_VALUES', 'Y,YES,TRUE,1,ENABLED'))
         ))),
+        'warehouse_udf_field' => env('SAP_WAREHOUSE_INTEGRATION_UDF_FIELD', 'U_OmnifulSync'),
+        'warehouse_allowed_values' => array_values(array_filter(array_map(
+            fn ($v) => strtolower(trim((string) $v)),
+            explode(',', (string) env('SAP_WAREHOUSE_INTEGRATION_ALLOWED_VALUES', 'Y,YES,TRUE,1,ENABLED'))
+        ))),
     ],
     'sync_timeout' => (int) env('OMNIFUL_TIMEOUT', 20),
     'tenant_token_endpoint' => env('OMNIFUL_TENANT_TOKEN_ENDPOINT', '/sales-channel/public/v1/tenants/token'),
