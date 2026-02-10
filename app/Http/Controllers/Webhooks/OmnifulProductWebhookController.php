@@ -19,6 +19,11 @@ class OmnifulProductWebhookController extends OmnifulWebhookBase
 
         /** @var OmnifulProductEvent $event */
         $event = $result['event'];
+        $isDuplicate = (bool) ($result['duplicate'] ?? false);
+
+        if ($isDuplicate && $event->sap_status !== null && $event->sap_status !== 'failed') {
+            return response()->json(['status' => 'ok', 'id' => $event->id, 'duplicate' => true]);
+        }
 
         try {
             $rawData = data_get($event->payload, 'data', []);

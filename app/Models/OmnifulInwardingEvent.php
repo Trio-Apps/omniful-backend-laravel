@@ -9,6 +9,7 @@ class OmnifulInwardingEvent extends Model
     protected $fillable = [
         'external_id',
         'payload',
+        'payload_hash',
         'headers',
         'signature_valid',
         'received_at',

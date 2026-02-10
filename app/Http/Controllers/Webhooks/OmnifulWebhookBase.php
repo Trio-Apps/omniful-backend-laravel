@@ -27,7 +27,7 @@ abstract class OmnifulWebhookBase
 
     /**
      * @param class-string<\Illuminate\Database\Eloquent\Model> $eventModel
-     * @return array{event?:\Illuminate\Database\Eloquent\Model,response?:\Illuminate\Http\JsonResponse}
+     * @return array{event?:\Illuminate\Database\Eloquent\Model,response?:\Illuminate\Http\JsonResponse,duplicate?:bool}
      */
     protected function storeEvent(Request $request, string $eventType, string $eventModel, bool $updateOrders): array
     {
@@ -44,7 +44,7 @@ abstract class OmnifulWebhookBase
         $payloadHash = hash('sha256', $raw);
         $existing = $eventModel::where('payload_hash', $payloadHash)->first();
         if ($existing) {
-            return ['event' => $existing];
+            return ['event' => $existing, 'duplicate' => true];
         }
 
         $settings = IntegrationSetting::first();
@@ -116,7 +116,7 @@ abstract class OmnifulWebhookBase
             );
         }
 
-        return ['event' => $event];
+        return ['event' => $event, 'duplicate' => false];
     }
 
     protected function verifySignature(string $raw, string $secret, string $signature): bool

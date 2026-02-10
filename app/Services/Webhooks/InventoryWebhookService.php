@@ -6,6 +6,7 @@ use App\Models\OmnifulInventoryEvent;
 use App\Models\OmnifulPurchaseOrderEvent;
 use App\Models\SapSyncEvent;
 use App\Services\SapServiceLayerClient;
+use Illuminate\Database\QueryException;
 
 class InventoryWebhookService
 {
@@ -26,148 +27,148 @@ class InventoryWebhookService
                 $poEvent = null;
                 $eventKey = $this->buildInventoryEventKey($payload, $items, $displayId);
 
-            $sync = SapSyncEvent::firstOrCreate(
-                ['event_key' => $eventKey],
-                [
-                    'source_type' => 'omniful_inventory_event',
-                    'source_id' => $event->id,
-                    'sap_action' => 'grpo',
-                    'sap_status' => 'pending',
-                    'payload' => $payload,
-                ]
-            );
+                $sync = $this->firstOrCreateSyncEvent(
+                    $eventKey,
+                    [
+                        'source_type' => 'omniful_inventory_event',
+                        'source_id' => $event->id,
+                        'sap_action' => 'grpo',
+                        'sap_status' => 'pending',
+                        'payload' => $payload,
+                    ]
+                );
 
-            if ($sync->wasRecentlyCreated || $sync->sap_status === 'pending') {
-                if ($displayId) {
-                    $poEvent = OmnifulPurchaseOrderEvent::where('external_id', $displayId)
-                        ->whereNotNull('sap_doc_entry')
-                        ->latest()
-                        ->first();
-                } else {
-                    $matches = $this->findMatchingPurchaseOrders($items, $hubCode);
-                    if (count($matches) === 1) {
-                        $poEvent = $matches[0];
-                        $displayId = $poEvent->external_id;
-                    } elseif (count($matches) > 1) {
-                        $ids = array_map(fn ($match) => $match->external_id, $matches);
-                        throw new \RuntimeException('Multiple matching SAP POs found for GRPO: ' . implode(', ', $ids));
+                if ($sync->wasRecentlyCreated || $sync->sap_status === 'pending') {
+                    if ($displayId) {
+                        $poEvent = OmnifulPurchaseOrderEvent::where('external_id', $displayId)
+                            ->whereNotNull('sap_doc_entry')
+                            ->latest()
+                            ->first();
+                    } else {
+                        $matches = $this->findMatchingPurchaseOrders($items, $hubCode);
+                        if (count($matches) === 1) {
+                            $poEvent = $matches[0];
+                            $displayId = $poEvent->external_id;
+                        } elseif (count($matches) > 1) {
+                            $ids = array_map(fn ($match) => $match->external_id, $matches);
+                            throw new \RuntimeException('Multiple matching SAP POs found for GRPO: ' . implode(', ', $ids));
+                        }
                     }
+
+                    if (!$poEvent || !$poEvent->sap_doc_entry) {
+                        throw new \RuntimeException('SAP PO not found for GRPO (missing sap_doc_entry)');
+                    }
+
+                    $client = app(SapServiceLayerClient::class);
+                    $result = $client->createGoodsReceiptPOFromInventory((int) $poEvent->sap_doc_entry, is_array($items) ? $items : [], $hubCode, $displayId);
+
+                    $event->sap_status = 'created';
+                    $event->sap_doc_entry = $result['DocEntry'] ?? null;
+                    $event->sap_doc_num = $result['DocNum'] ?? null;
+                    $event->sap_error = null;
+                    $event->save();
+
+                    $sync->sap_status = 'created';
+                    $sync->sap_doc_entry = $event->sap_doc_entry;
+                    $sync->sap_doc_num = $event->sap_doc_num;
+                    $sync->save();
                 }
-
-                if (!$poEvent || !$poEvent->sap_doc_entry) {
-                    throw new \RuntimeException('SAP PO not found for GRPO (missing sap_doc_entry)');
-                }
-
-                $client = app(SapServiceLayerClient::class);
-                $result = $client->createGoodsReceiptPOFromInventory((int) $poEvent->sap_doc_entry, is_array($items) ? $items : [], $hubCode, $displayId);
-
-                $event->sap_status = 'created';
-                $event->sap_doc_entry = $result['DocEntry'] ?? null;
-                $event->sap_doc_num = $result['DocNum'] ?? null;
-                $event->sap_error = null;
-                $event->save();
-
-                $sync->sap_status = 'created';
-                $sync->sap_doc_entry = $event->sap_doc_entry;
-                $sync->sap_doc_num = $event->sap_doc_num;
-                $sync->save();
-            }
             } elseif ($eventName === 'inventory.update.event' && $action === 'manual_edit' && $entity === 'hub_inventory') {
                 $items = is_array($items) ? $items : [];
                 $client = app(SapServiceLayerClient::class);
                 $deltas = $this->calculateInventoryAdjustmentsFromSap($items, $hubCode, $client);
 
-            if ($deltas['receipt'] === [] && $deltas['issue'] === []) {
-                $event->sap_status = 'ignored';
-                $event->sap_error = $deltas['reason'] ?? 'Ignored: no quantity change detected';
-                $event->save();
-            } else {
-                $summary = [];
-                $skipped = [];
-                $existingErrors = [];
-                $existingDocs = [];
-
-                if ($deltas['receipt'] !== []) {
-                    $eventKey = $this->buildInventoryEventKey($payload, $deltas['receipt'], null, 'gr', (string) $event->id);
-                    $sync = SapSyncEvent::firstOrCreate(
-                        ['event_key' => $eventKey],
-                        [
-                            'source_type' => 'omniful_inventory_event',
-                            'source_id' => $event->id,
-                            'sap_action' => 'goods_receipt',
-                            'sap_status' => 'pending',
-                            'payload' => $payload,
-                        ]
-                    );
-                    if ($sync->wasRecentlyCreated || $sync->sap_status === 'pending') {
-                        $client->syncInventoryItems($deltas['receipt']);
-                        $result = $client->createInventoryGoodsReceipt($deltas['receipt'], $hubCode, 'Omniful manual edit');
-                        $summary['gr'] = $result['DocNum'] ?? null;
-                        $sync->sap_status = 'created';
-                        $sync->sap_doc_entry = $result['DocEntry'] ?? null;
-                        $sync->sap_doc_num = $result['DocNum'] ?? null;
-                        $sync->save();
-                    } else {
-                        $skipped[] = 'gr';
-                        if ($sync->sap_status === 'failed' && $sync->sap_error) {
-                            $existingErrors[] = $sync->sap_error;
-                        }
-                        if ($sync->sap_doc_num) {
-                            $existingDocs[] = $sync->sap_doc_num;
-                        }
-                    }
-                }
-
-                if ($deltas['issue'] !== []) {
-                    $eventKey = $this->buildInventoryEventKey($payload, $deltas['issue'], null, 'gi', (string) $event->id);
-                    $sync = SapSyncEvent::firstOrCreate(
-                        ['event_key' => $eventKey],
-                        [
-                            'source_type' => 'omniful_inventory_event',
-                            'source_id' => $event->id,
-                            'sap_action' => 'goods_issue',
-                            'sap_status' => 'pending',
-                            'payload' => $payload,
-                        ]
-                    );
-                    if ($sync->wasRecentlyCreated || $sync->sap_status === 'pending') {
-                        $client->syncInventoryItems($deltas['issue']);
-                        $result = $client->createInventoryGoodsIssue($deltas['issue'], $hubCode, 'Omniful manual edit');
-                        $summary['gi'] = $result['DocNum'] ?? null;
-                        $sync->sap_status = 'created';
-                        $sync->sap_doc_entry = $result['DocEntry'] ?? null;
-                        $sync->sap_doc_num = $result['DocNum'] ?? null;
-                        $sync->save();
-                    } else {
-                        $skipped[] = 'gi';
-                        if ($sync->sap_status === 'failed' && $sync->sap_error) {
-                            $existingErrors[] = $sync->sap_error;
-                        }
-                        if ($sync->sap_doc_num) {
-                            $existingDocs[] = $sync->sap_doc_num;
-                        }
-                    }
-                }
-
-                if ($summary !== []) {
-                    $event->sap_status = count($summary) > 1 ? 'created_mixed' : 'created';
-                    $event->sap_doc_num = $summary['gr'] ?? $summary['gi'] ?? null;
-                    $event->sap_error = $summary ? json_encode($summary, JSON_UNESCAPED_UNICODE) : null;
-                    $event->save();
-                } elseif ($existingErrors !== []) {
-                    $event->sap_status = 'failed';
-                    $event->sap_error = $existingErrors[0];
-                    $event->sap_doc_num = $existingDocs[0] ?? null;
+                if ($deltas['receipt'] === [] && $deltas['issue'] === []) {
+                    $event->sap_status = 'ignored';
+                    $event->sap_error = $deltas['reason'] ?? 'Ignored: no quantity change detected';
                     $event->save();
                 } else {
-                    $event->sap_status = 'ignored';
-                    $event->sap_error = $skipped !== []
-                        ? 'Ignored: duplicate event already synced'
-                        : ($deltas['reason'] ?? 'Ignored: no inventory delta found');
-                    $event->sap_doc_num = $existingDocs[0] ?? null;
-                    $event->save();
+                    $summary = [];
+                    $skipped = [];
+                    $existingErrors = [];
+                    $existingDocs = [];
+
+                    if ($deltas['receipt'] !== []) {
+                        $eventKey = $this->buildInventoryEventKey($payload, $deltas['receipt'], null, 'gr', (string) $event->id);
+                        $sync = $this->firstOrCreateSyncEvent(
+                            $eventKey,
+                            [
+                                'source_type' => 'omniful_inventory_event',
+                                'source_id' => $event->id,
+                                'sap_action' => 'goods_receipt',
+                                'sap_status' => 'pending',
+                                'payload' => $payload,
+                            ]
+                        );
+                        if ($sync->wasRecentlyCreated || $sync->sap_status === 'pending') {
+                            $client->syncInventoryItems($deltas['receipt']);
+                            $result = $client->createInventoryGoodsReceipt($deltas['receipt'], $hubCode, 'Omniful manual edit');
+                            $summary['gr'] = $result['DocNum'] ?? null;
+                            $sync->sap_status = 'created';
+                            $sync->sap_doc_entry = $result['DocEntry'] ?? null;
+                            $sync->sap_doc_num = $result['DocNum'] ?? null;
+                            $sync->save();
+                        } else {
+                            $skipped[] = 'gr';
+                            if ($sync->sap_status === 'failed' && $sync->sap_error) {
+                                $existingErrors[] = $sync->sap_error;
+                            }
+                            if ($sync->sap_doc_num) {
+                                $existingDocs[] = $sync->sap_doc_num;
+                            }
+                        }
+                    }
+
+                    if ($deltas['issue'] !== []) {
+                        $eventKey = $this->buildInventoryEventKey($payload, $deltas['issue'], null, 'gi', (string) $event->id);
+                        $sync = $this->firstOrCreateSyncEvent(
+                            $eventKey,
+                            [
+                                'source_type' => 'omniful_inventory_event',
+                                'source_id' => $event->id,
+                                'sap_action' => 'goods_issue',
+                                'sap_status' => 'pending',
+                                'payload' => $payload,
+                            ]
+                        );
+                        if ($sync->wasRecentlyCreated || $sync->sap_status === 'pending') {
+                            $client->syncInventoryItems($deltas['issue']);
+                            $result = $client->createInventoryGoodsIssue($deltas['issue'], $hubCode, 'Omniful manual edit');
+                            $summary['gi'] = $result['DocNum'] ?? null;
+                            $sync->sap_status = 'created';
+                            $sync->sap_doc_entry = $result['DocEntry'] ?? null;
+                            $sync->sap_doc_num = $result['DocNum'] ?? null;
+                            $sync->save();
+                        } else {
+                            $skipped[] = 'gi';
+                            if ($sync->sap_status === 'failed' && $sync->sap_error) {
+                                $existingErrors[] = $sync->sap_error;
+                            }
+                            if ($sync->sap_doc_num) {
+                                $existingDocs[] = $sync->sap_doc_num;
+                            }
+                        }
+                    }
+
+                    if ($summary !== []) {
+                        $event->sap_status = count($summary) > 1 ? 'created_mixed' : 'created';
+                        $event->sap_doc_num = $summary['gr'] ?? $summary['gi'] ?? null;
+                        $event->sap_error = $summary ? json_encode($summary, JSON_UNESCAPED_UNICODE) : null;
+                        $event->save();
+                    } elseif ($existingErrors !== []) {
+                        $event->sap_status = 'failed';
+                        $event->sap_error = $existingErrors[0];
+                        $event->sap_doc_num = $existingDocs[0] ?? null;
+                        $event->save();
+                    } else {
+                        $event->sap_status = 'ignored';
+                        $event->sap_error = $skipped !== []
+                            ? 'Ignored: duplicate event already synced'
+                            : ($deltas['reason'] ?? 'Ignored: no inventory delta found');
+                        $event->sap_doc_num = $existingDocs[0] ?? null;
+                        $event->save();
+                    }
                 }
-            }
             } else {
                 $reason = 'Ignored: not mapped to SAP action';
                 $event->sap_status = 'ignored';
@@ -385,5 +386,22 @@ class InventoryWebhookService
         }
 
         return array_values(array_unique($codes));
+    }
+
+    private function firstOrCreateSyncEvent(string $eventKey, array $defaults): SapSyncEvent
+    {
+        try {
+            return SapSyncEvent::firstOrCreate(
+                ['event_key' => $eventKey],
+                $defaults
+            );
+        } catch (QueryException $e) {
+            $existing = SapSyncEvent::where('event_key', $eventKey)->first();
+            if ($existing) {
+                return $existing;
+            }
+
+            throw $e;
+        }
     }
 }

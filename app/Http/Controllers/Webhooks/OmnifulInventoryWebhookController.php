@@ -19,6 +19,11 @@ class OmnifulInventoryWebhookController extends OmnifulWebhookBase
 
         /** @var OmnifulInventoryEvent $event */
         $event = $result['event'];
+        $isDuplicate = (bool) ($result['duplicate'] ?? false);
+
+        if ($isDuplicate && $event->sap_status !== null && $event->sap_status !== 'failed') {
+            return response()->json(['status' => 'ok', 'id' => $event->id, 'duplicate' => true]);
+        }
 
         try {
             $service->process($event);
@@ -37,4 +42,3 @@ class OmnifulInventoryWebhookController extends OmnifulWebhookBase
         return response()->json(['status' => 'ok', 'id' => $event->id]);
     }
 }
-

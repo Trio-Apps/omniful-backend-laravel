@@ -19,6 +19,11 @@ class OmnifulPurchaseOrderWebhookController extends OmnifulWebhookBase
 
         /** @var OmnifulPurchaseOrderEvent $event */
         $event = $result['event'];
+        $isDuplicate = (bool) ($result['duplicate'] ?? false);
+
+        if ($isDuplicate && $event->sap_status !== null && $event->sap_status !== 'failed') {
+            return response()->json(['status' => 'ok', 'id' => $event->id, 'duplicate' => true]);
+        }
 
         try {
             $service->process($event);
@@ -36,4 +41,3 @@ class OmnifulPurchaseOrderWebhookController extends OmnifulWebhookBase
         return response()->json(['status' => 'ok', 'id' => $event->id]);
     }
 }
-
