@@ -174,6 +174,63 @@ trait HandlesSapPurchaseAndProducts
         );
     }
 
+    public function createCardFeeJournalEntryForOrder(array $data): array
+    {
+        $amount = (float) ($data['amount'] ?? 0);
+        if ($amount <= 0) {
+            return [
+                'ignored' => true,
+                'reason' => 'Card fee amount is not positive',
+            ];
+        }
+
+        $expenseAccount = trim((string) ($data['expense_account'] ?? config('omniful.order_payment.card_fee_expense_account', '')));
+        $offsetAccount = trim((string) ($data['offset_account'] ?? config('omniful.order_payment.card_fee_offset_account', '')));
+        if ($expenseAccount === '' || $offsetAccount === '') {
+            return [
+                'ignored' => true,
+                'reason' => 'Missing card fee journal accounts',
+            ];
+        }
+
+        $referenceDate = $this->formatDate((string) ($data['posting_date'] ?? now()->format('Y-m-d')));
+        $reference = trim((string) ($data['reference'] ?? ''));
+        $memo = trim((string) ($data['memo'] ?? 'Card fee journal from Omniful prepaid order'));
+
+        $body = [
+            'ReferenceDate' => $referenceDate,
+            'DueDate' => $referenceDate,
+            'TaxDate' => $referenceDate,
+            'Memo' => $memo,
+            'JournalEntryLines' => [
+                [
+                    'AccountCode' => $expenseAccount,
+                    'Debit' => $amount,
+                ],
+                [
+                    'AccountCode' => $offsetAccount,
+                    'Credit' => $amount,
+                ],
+            ],
+        ];
+
+        if ($reference !== '') {
+            $body['Reference'] = $reference;
+            $body['Reference2'] = $reference;
+            $body['Reference3'] = $reference;
+        }
+
+        $response = $this->post('/JournalEntries', $body);
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP card-fee journal create failed: ' . $response->status() . ' ' . $response->body());
+        }
+
+        $payload = $response->json() ?? [];
+        $payload['ignored'] = false;
+
+        return $payload;
+    }
+
     public function createPurchaseOrderFromOmniful(array $data): array
     {
         $docDate = $this->formatDate(data_get($data, 'created_at'));

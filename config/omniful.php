@@ -77,6 +77,10 @@ return [
             fn ($v) => is_numeric(trim((string) $v)) ? (int) trim((string) $v) : null,
             explode(',', (string) env('OMNIFUL_INCOMING_PAYMENT_INVOICE_TYPES', '17,13'))
         ))),
+        'card_fee_journal_enabled' => (bool) env('OMNIFUL_CARD_FEE_JOURNAL_ENABLED', false),
+        'card_fee_expense_account' => env('OMNIFUL_CARD_FEE_EXPENSE_ACCOUNT', ''),
+        'card_fee_offset_account' => env('OMNIFUL_CARD_FEE_OFFSET_ACCOUNT', ''),
+        'card_fee_percent' => (float) env('OMNIFUL_CARD_FEE_PERCENT', 0),
     ],
     'hub_defaults' => [
         'type' => env('OMNIFUL_HUB_TYPE', 'warehouse'),

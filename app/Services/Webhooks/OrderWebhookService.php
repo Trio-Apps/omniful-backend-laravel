@@ -54,6 +54,7 @@ class OrderWebhookService
         }
 
         $this->createIncomingPaymentIfEligible($order, $data, $invoiceResult);
+        $this->createCardFeeJournalIfEligible($order, $data);
     }
 
     /**
@@ -113,5 +114,91 @@ class OrderWebhookService
         $order->sap_payment_doc_num = (string) ($result['DocNum'] ?? '');
         $order->sap_payment_error = null;
         $order->save();
+    }
+
+    private function createCardFeeJournalIfEligible(OmnifulOrder $order, array $data): void
+    {
+        if (!(bool) config('omniful.order_payment.card_fee_journal_enabled', false)) {
+            return;
+        }
+
+        if (!empty($order->sap_card_fee_journal_entry)) {
+            if ((string) $order->sap_card_fee_status === '') {
+                $order->sap_card_fee_status = 'created';
+                $order->save();
+            }
+            return;
+        }
+
+        if ((string) $order->sap_payment_status !== 'created') {
+            return;
+        }
+
+        $feeAmount = $this->extractCardFeeAmount($data);
+        if ($feeAmount <= 0) {
+            $order->sap_card_fee_status = 'ignored';
+            $order->sap_card_fee_error = 'Ignored: card fee amount missing';
+            $order->save();
+            return;
+        }
+
+        $client = app(SapServiceLayerClient::class);
+        $result = $client->createCardFeeJournalEntryForOrder([
+            'amount' => $feeAmount,
+            'posting_date' => data_get($data, 'order_created_at') ?? data_get($data, 'created_at'),
+            'reference' => (string) ($order->external_id ?? ''),
+            'memo' => 'Card fee from Omniful order ' . (string) ($order->external_id ?? ''),
+            'expense_account' => config('omniful.order_payment.card_fee_expense_account'),
+            'offset_account' => config('omniful.order_payment.card_fee_offset_account'),
+        ]);
+
+        if (($result['ignored'] ?? false) === true) {
+            $order->sap_card_fee_status = 'ignored';
+            $order->sap_card_fee_error = (string) ($result['reason'] ?? 'Card fee journal ignored');
+            $order->save();
+            return;
+        }
+
+        $order->sap_card_fee_status = 'created';
+        $order->sap_card_fee_journal_entry = (string) ($result['TransId'] ?? '');
+        $order->sap_card_fee_journal_num = (string) ($result['Number'] ?? $result['JdtNum'] ?? '');
+        $order->sap_card_fee_error = null;
+        $order->save();
+    }
+
+    private function extractCardFeeAmount(array $data): float
+    {
+        $candidates = [
+            data_get($data, 'payment.card_fee_amount'),
+            data_get($data, 'payment.card_fee'),
+            data_get($data, 'invoice.card_fee_amount'),
+            data_get($data, 'invoice.card_fee'),
+            data_get($data, 'card_fee_amount'),
+            data_get($data, 'card_fee'),
+            data_get($data, 'payment.gateway_fee'),
+            data_get($data, 'payment.fee_amount'),
+        ];
+
+        foreach ($candidates as $value) {
+            if (is_numeric($value) && (float) $value > 0) {
+                return (float) $value;
+            }
+        }
+
+        $percent = (float) config('omniful.order_payment.card_fee_percent', 0);
+        if ($percent <= 0) {
+            return 0.0;
+        }
+
+        $total = data_get($data, 'invoice.grand_total');
+        if ($total === null) {
+            $total = data_get($data, 'total_amount');
+        }
+
+        if (!is_numeric($total) || (float) $total <= 0) {
+            return 0.0;
+        }
+
+        return round(((float) $total) * ($percent / 100), 2);
     }
 }
