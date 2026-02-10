@@ -302,6 +302,69 @@ trait HandlesSapPurchaseAndProducts
         return $payload;
     }
 
+    public function createCogsJournalEntryForDelivery(array $data): array
+    {
+        $deliveryDocEntry = (int) ($data['delivery_doc_entry'] ?? 0);
+        if ($deliveryDocEntry <= 0) {
+            throw new \RuntimeException('Missing SAP delivery doc entry for COGS journal');
+        }
+
+        $expenseAccount = trim((string) ($data['expense_account'] ?? config('omniful.order_accounting.cogs_expense_account', '')));
+        $offsetAccount = trim((string) ($data['offset_account'] ?? config('omniful.order_accounting.inventory_offset_account', '')));
+        if ($expenseAccount === '' || $offsetAccount === '') {
+            return [
+                'ignored' => true,
+                'reason' => 'Missing COGS journal accounts',
+            ];
+        }
+
+        $delivery = $this->getDeliveryNote($deliveryDocEntry);
+        $amount = (float) ($data['amount'] ?? $this->extractDeliveryCogsAmount($delivery));
+        if ($amount <= 0) {
+            return [
+                'ignored' => true,
+                'reason' => 'COGS amount is not available from delivery lines',
+            ];
+        }
+
+        $referenceDate = $this->formatDate((string) (($delivery['DocDate'] ?? null) ?: now()->format('Y-m-d')));
+        $reference = trim((string) ($data['reference'] ?? ($delivery['NumAtCard'] ?? '')));
+        $memo = trim((string) ($data['memo'] ?? ('COGS journal for Delivery ' . ($delivery['DocNum'] ?? $deliveryDocEntry))));
+
+        $body = [
+            'ReferenceDate' => $referenceDate,
+            'DueDate' => $referenceDate,
+            'TaxDate' => $referenceDate,
+            'Memo' => $memo,
+            'JournalEntryLines' => [
+                [
+                    'AccountCode' => $expenseAccount,
+                    'Debit' => $amount,
+                ],
+                [
+                    'AccountCode' => $offsetAccount,
+                    'Credit' => $amount,
+                ],
+            ],
+        ];
+
+        if ($reference !== '') {
+            $body['Reference'] = $reference;
+            $body['Reference2'] = (string) ($delivery['DocNum'] ?? $reference);
+            $body['Reference3'] = $reference;
+        }
+
+        $response = $this->post('/JournalEntries', $body);
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP COGS journal create failed: ' . $response->status() . ' ' . $response->body());
+        }
+
+        $payload = $response->json() ?? [];
+        $payload['ignored'] = false;
+
+        return $payload;
+    }
+
     public function createPurchaseOrderFromOmniful(array $data): array
     {
         $docDate = $this->formatDate(data_get($data, 'created_at'));
@@ -749,6 +812,17 @@ trait HandlesSapPurchaseAndProducts
         return $response->json() ?? [];
     }
 
+    private function getDeliveryNote(int $docEntry): array
+    {
+        $response = $this->get('/DeliveryNotes(' . $docEntry . ')');
+
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP delivery fetch failed: ' . $response->status() . ' ' . $response->body());
+        }
+
+        return $response->json() ?? [];
+    }
+
     private function ensureCustomerExists(string $cardCode, array $data, string $externalId): void
     {
         $existing = $this->getBusinessPartner($cardCode);
@@ -839,6 +913,38 @@ trait HandlesSapPurchaseAndProducts
         $openQty = $orderedQty - $deliveredQty;
 
         return $openQty > 0 ? $openQty : 0.0;
+    }
+
+    private function extractDeliveryCogsAmount(array $delivery): float
+    {
+        $total = 0.0;
+        foreach ((array) ($delivery['DocumentLines'] ?? []) as $line) {
+            $qty = (float) ($line['Quantity'] ?? 0);
+            if ($qty <= 0) {
+                continue;
+            }
+
+            $unitCost = null;
+            $candidates = [
+                $line['StockPrice'] ?? null,
+                $line['GrossBuyPrice'] ?? null,
+                $line['GrossBase'] ?? null,
+            ];
+            foreach ($candidates as $candidate) {
+                if (is_numeric($candidate) && (float) $candidate > 0) {
+                    $unitCost = (float) $candidate;
+                    break;
+                }
+            }
+
+            if ($unitCost === null || $unitCost <= 0) {
+                continue;
+            }
+
+            $total += $qty * $unitCost;
+        }
+
+        return round($total, 6);
     }
 
 }

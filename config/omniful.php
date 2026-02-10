@@ -84,6 +84,11 @@ return [
         'card_fee_offset_account' => env('OMNIFUL_CARD_FEE_OFFSET_ACCOUNT', ''),
         'card_fee_percent' => (float) env('OMNIFUL_CARD_FEE_PERCENT', 0),
     ],
+    'order_accounting' => [
+        'cogs_journal_enabled' => (bool) env('OMNIFUL_COGS_JOURNAL_ENABLED', false),
+        'cogs_expense_account' => env('OMNIFUL_COGS_EXPENSE_ACCOUNT', ''),
+        'inventory_offset_account' => env('OMNIFUL_COGS_INVENTORY_OFFSET_ACCOUNT', ''),
+    ],
     'hub_defaults' => [
         'type' => env('OMNIFUL_HUB_TYPE', 'warehouse'),
         'email' => env('OMNIFUL_HUB_EMAIL'),

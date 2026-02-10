@@ -67,6 +67,8 @@ class OrderWebhookService
         if (($deliveryEligibility['eligible'] ?? false)) {
             $this->createDeliveryIfEligible($order, $data);
         }
+
+        $this->createCogsJournalIfEligible($order);
     }
 
     /**
@@ -250,6 +252,48 @@ class OrderWebhookService
         $order->sap_delivery_doc_entry = (string) ($result['DocEntry'] ?? '');
         $order->sap_delivery_doc_num = (string) ($result['DocNum'] ?? '');
         $order->sap_delivery_error = null;
+        $order->save();
+    }
+
+    private function createCogsJournalIfEligible(OmnifulOrder $order): void
+    {
+        if (!(bool) config('omniful.order_accounting.cogs_journal_enabled', false)) {
+            return;
+        }
+
+        if (!empty($order->sap_cogs_journal_entry)) {
+            if ((string) $order->sap_cogs_status === '') {
+                $order->sap_cogs_status = 'created';
+                $order->save();
+            }
+            return;
+        }
+
+        $deliveryDocEntry = (int) ($order->sap_delivery_doc_entry ?? 0);
+        if ($deliveryDocEntry <= 0) {
+            return;
+        }
+
+        $client = app(SapServiceLayerClient::class);
+        $result = $client->createCogsJournalEntryForDelivery([
+            'delivery_doc_entry' => $deliveryDocEntry,
+            'reference' => (string) ($order->external_id ?? ''),
+            'memo' => 'COGS journal from Omniful order ' . (string) ($order->external_id ?? ''),
+            'expense_account' => config('omniful.order_accounting.cogs_expense_account'),
+            'offset_account' => config('omniful.order_accounting.inventory_offset_account'),
+        ]);
+
+        if (($result['ignored'] ?? false) === true) {
+            $order->sap_cogs_status = 'ignored';
+            $order->sap_cogs_error = (string) ($result['reason'] ?? 'COGS journal ignored');
+            $order->save();
+            return;
+        }
+
+        $order->sap_cogs_status = 'created';
+        $order->sap_cogs_journal_entry = (string) ($result['TransId'] ?? '');
+        $order->sap_cogs_journal_num = (string) ($result['Number'] ?? $result['JdtNum'] ?? '');
+        $order->sap_cogs_error = null;
         $order->save();
     }
 }
