@@ -3,6 +3,7 @@
 namespace App\Filament\Pages;
 
 use App\Models\SapSupplier;
+use App\Services\IntegrationDirectionService;
 use App\Services\MasterData\SapSupplierSyncService;
 use App\Services\OmnifulApiClient;
 use App\Services\SapServiceLayerClient;
@@ -92,7 +93,9 @@ class SapSuppliers extends Page implements HasTable
     {
         return [
             Action::make('syncSuppliers')
-                ->label('Sync SAP Suppliers')
+                ->label(fn () => app(IntegrationDirectionService::class)->isSapToOmniful('suppliers')
+                    ? 'Sync SAP Suppliers'
+                    : 'Sync Omniful Suppliers to SAP')
                 ->icon('heroicon-o-arrow-path')
                 ->extraAttributes([
                     'wire:loading.attr' => 'disabled',
@@ -103,6 +106,7 @@ class SapSuppliers extends Page implements HasTable
                 ->label('Push to Omniful')
                 ->icon('heroicon-o-cloud-arrow-up')
                 ->color('primary')
+                ->disabled(fn () => app(IntegrationDirectionService::class)->isOmnifulToSap('suppliers'))
                 ->extraAttributes([
                     'wire:loading.attr' => 'disabled',
                     'wire:loading.class' => 'opacity-70',
@@ -116,7 +120,12 @@ class SapSuppliers extends Page implements HasTable
         @ini_set('max_execution_time', '0');
         @set_time_limit(0);
         try {
-            app(SapSupplierSyncService::class)->syncFromSap($client);
+            $direction = app(IntegrationDirectionService::class);
+            if ($direction->isSapToOmniful('suppliers')) {
+                app(SapSupplierSyncService::class)->syncFromSap($client);
+            } else {
+                app(SapSupplierSyncService::class)->syncFromOmniful(app(OmnifulApiClient::class), $client);
+            }
 
             Notification::make()
                 ->title('Suppliers synced')
@@ -135,6 +144,15 @@ class SapSuppliers extends Page implements HasTable
     {
         @ini_set('max_execution_time', '0');
         @set_time_limit(0);
+        if (app(IntegrationDirectionService::class)->isOmnifulToSap('suppliers')) {
+            Notification::make()
+                ->title('Action blocked')
+                ->body('Suppliers direction is Omniful -> SAP. Use Sync action instead.')
+                ->warning()
+                ->send();
+            return;
+        }
+
         $result = app(SapSupplierSyncService::class)->pushToOmniful($client);
         $ok = (int) ($result['ok'] ?? 0);
         $failed = (int) ($result['failed'] ?? 0);

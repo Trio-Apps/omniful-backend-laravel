@@ -115,4 +115,37 @@ class SapSupplierSyncService
 
         return ['ok' => $ok, 'failed' => $failed, 'errors' => $errors];
     }
+
+    public function syncFromOmniful(OmnifulApiClient $omnifulClient, SapServiceLayerClient $sapClient): array
+    {
+        $rows = $omnifulClient->fetchList('suppliers');
+
+        $ok = 0;
+        $failed = 0;
+        $errors = [];
+
+        foreach ($rows as $row) {
+            try {
+                $payload = [
+                    'code' => data_get($row, 'code') ?? data_get($row, 'supplier_code') ?? data_get($row, 'id'),
+                    'name' => data_get($row, 'name'),
+                    'email' => data_get($row, 'email'),
+                    'phone' => data_get($row, 'phone') ?? data_get($row, 'phone_number'),
+                ];
+
+                $result = $sapClient->syncSupplierFromOmniful($payload);
+                if (($result['status'] ?? '') === 'skipped_by_udf') {
+                    continue;
+                }
+                $ok++;
+            } catch (\Throwable $e) {
+                $failed++;
+                $errors[] = ($row['code'] ?? $row['id'] ?? 'unknown') . ': ' . $e->getMessage();
+            }
+        }
+
+        $this->syncFromSap($sapClient);
+
+        return ['ok' => $ok, 'failed' => $failed, 'errors' => $errors];
+    }
 }

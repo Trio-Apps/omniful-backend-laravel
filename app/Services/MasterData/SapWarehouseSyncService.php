@@ -141,4 +141,35 @@ class SapWarehouseSyncService
 
         return ['ok' => $ok, 'failed' => $failed, 'errors' => $errors];
     }
+
+    public function syncFromOmniful(OmnifulApiClient $omnifulClient, SapServiceLayerClient $sapClient): array
+    {
+        $rows = $omnifulClient->fetchList('warehouses');
+
+        $ok = 0;
+        $failed = 0;
+        $errors = [];
+
+        foreach ($rows as $row) {
+            try {
+                $payload = [
+                    'code' => data_get($row, 'code') ?? data_get($row, 'hub_code') ?? data_get($row, 'id'),
+                    'name' => data_get($row, 'name') ?? data_get($row, 'hub_name'),
+                ];
+
+                $result = $sapClient->syncWarehouseFromOmniful($payload);
+                if (($result['status'] ?? '') === 'skipped_by_udf') {
+                    continue;
+                }
+                $ok++;
+            } catch (\Throwable $e) {
+                $failed++;
+                $errors[] = ($row['code'] ?? $row['id'] ?? 'unknown') . ': ' . $e->getMessage();
+            }
+        }
+
+        $this->syncFromSap($sapClient);
+
+        return ['ok' => $ok, 'failed' => $failed, 'errors' => $errors];
+    }
 }

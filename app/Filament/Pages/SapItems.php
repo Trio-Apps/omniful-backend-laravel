@@ -3,6 +3,7 @@
 namespace App\Filament\Pages;
 
 use App\Models\SapItem;
+use App\Services\IntegrationDirectionService;
 use App\Services\MasterData\SapItemSyncService;
 use App\Services\OmnifulApiClient;
 use App\Services\SapServiceLayerClient;
@@ -91,7 +92,9 @@ class SapItems extends Page implements HasTable
     {
         return [
             Action::make('syncItems')
-                ->label('Sync SAP Items')
+                ->label(fn () => app(IntegrationDirectionService::class)->isSapToOmniful('items')
+                    ? 'Sync SAP Items'
+                    : 'Sync Omniful Items to SAP')
                 ->icon('heroicon-o-arrow-path')
                 ->extraAttributes([
                     'wire:loading.attr' => 'disabled',
@@ -102,6 +105,7 @@ class SapItems extends Page implements HasTable
                 ->label('Push to Omniful')
                 ->icon('heroicon-o-cloud-arrow-up')
                 ->color('primary')
+                ->disabled(fn () => app(IntegrationDirectionService::class)->isOmnifulToSap('items'))
                 ->extraAttributes([
                     'wire:loading.attr' => 'disabled',
                     'wire:loading.class' => 'opacity-70',
@@ -115,7 +119,12 @@ class SapItems extends Page implements HasTable
         @ini_set('max_execution_time', '0');
         @set_time_limit(0);
         try {
-            app(SapItemSyncService::class)->syncFromSap($client);
+            $direction = app(IntegrationDirectionService::class);
+            if ($direction->isSapToOmniful('items')) {
+                app(SapItemSyncService::class)->syncFromSap($client);
+            } else {
+                app(SapItemSyncService::class)->syncFromOmniful(app(OmnifulApiClient::class), $client);
+            }
 
             Notification::make()
                 ->title('Items synced')
@@ -134,6 +143,15 @@ class SapItems extends Page implements HasTable
     {
         @ini_set('max_execution_time', '0');
         @set_time_limit(0);
+        if (app(IntegrationDirectionService::class)->isOmnifulToSap('items')) {
+            Notification::make()
+                ->title('Action blocked')
+                ->body('Items direction is Omniful -> SAP. Use Sync action instead.')
+                ->warning()
+                ->send();
+            return;
+        }
+
         $result = app(SapItemSyncService::class)->pushToOmniful($client);
         $ok = (int) ($result['ok'] ?? 0);
         $failed = (int) ($result['failed'] ?? 0);

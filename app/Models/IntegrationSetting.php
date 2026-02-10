@@ -29,6 +29,10 @@ class IntegrationSetting extends Model
         'omniful_seller_refresh_token',
         'omniful_seller_token_expires_in',
         'omniful_seller_access_token_expires_at',
+        'sync_direction_items',
+        'sync_direction_suppliers',
+        'sync_direction_warehouses',
+        'sync_direction_inventory',
     ];
 
     protected $casts = [
@@ -48,5 +52,9 @@ class IntegrationSetting extends Model
         'omniful_seller_refresh_token' => 'encrypted',
         'omniful_seller_token_expires_in' => 'integer',
         'omniful_seller_access_token_expires_at' => 'datetime',
+        'sync_direction_items' => 'string',
+        'sync_direction_suppliers' => 'string',
+        'sync_direction_warehouses' => 'string',
+        'sync_direction_inventory' => 'string',
     ];
 }

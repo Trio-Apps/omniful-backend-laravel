@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Services\MasterData\SapItemSyncService;
 use App\Services\MasterData\SapSupplierSyncService;
 use App\Services\MasterData\SapWarehouseSyncService;
+use App\Services\IntegrationDirectionService;
 use App\Services\OmnifulApiClient;
 use App\Services\SapServiceLayerClient;
 use Illuminate\Console\Command;
@@ -20,7 +21,8 @@ class SyncSapMasterData extends Command
         OmnifulApiClient $omnifulClient,
         SapWarehouseSyncService $warehouseService,
         SapSupplierSyncService $supplierService,
-        SapItemSyncService $itemService
+        SapItemSyncService $itemService,
+        IntegrationDirectionService $directionService
     ): int {
         $syncWarehouses = (bool) $this->option('warehouses');
         $syncSuppliers = (bool) $this->option('suppliers');
@@ -35,32 +37,47 @@ class SyncSapMasterData extends Command
 
         try {
             if ($syncWarehouses) {
-                $this->info('Syncing SAP warehouses...');
-                $warehouseService->syncFromSap($sapClient);
+                if ($directionService->isSapToOmniful('warehouses')) {
+                    $this->info('Syncing SAP warehouses...');
+                    $warehouseService->syncFromSap($sapClient);
+                } else {
+                    $this->info('Syncing Omniful warehouses to SAP...');
+                    $this->printPushSummary($warehouseService->syncFromOmniful($omnifulClient, $sapClient));
+                }
             }
 
             if ($syncSuppliers) {
-                $this->info('Syncing SAP suppliers...');
-                $supplierService->syncFromSap($sapClient);
+                if ($directionService->isSapToOmniful('suppliers')) {
+                    $this->info('Syncing SAP suppliers...');
+                    $supplierService->syncFromSap($sapClient);
+                } else {
+                    $this->info('Syncing Omniful suppliers to SAP...');
+                    $this->printPushSummary($supplierService->syncFromOmniful($omnifulClient, $sapClient));
+                }
             }
 
             if ($syncItems) {
-                $this->info('Syncing SAP items...');
-                $itemService->syncFromSap($sapClient);
+                if ($directionService->isSapToOmniful('items')) {
+                    $this->info('Syncing SAP items...');
+                    $itemService->syncFromSap($sapClient);
+                } else {
+                    $this->info('Syncing Omniful items to SAP...');
+                    $this->printPushSummary($itemService->syncFromOmniful($omnifulClient, $sapClient));
+                }
             }
 
             if ($pushToOmniful) {
-                if ($syncWarehouses) {
+                if ($syncWarehouses && $directionService->isSapToOmniful('warehouses')) {
                     $this->info('Pushing warehouses to Omniful...');
                     $this->printPushSummary($warehouseService->pushToOmniful($omnifulClient));
                 }
 
-                if ($syncSuppliers) {
+                if ($syncSuppliers && $directionService->isSapToOmniful('suppliers')) {
                     $this->info('Pushing suppliers to Omniful...');
                     $this->printPushSummary($supplierService->pushToOmniful($omnifulClient));
                 }
 
-                if ($syncItems) {
+                if ($syncItems && $directionService->isSapToOmniful('items')) {
                     $this->info('Pushing items to Omniful...');
                     $this->printPushSummary($itemService->pushToOmniful($omnifulClient));
                 }
@@ -87,4 +104,3 @@ class SyncSapMasterData extends Command
         }
     }
 }
-

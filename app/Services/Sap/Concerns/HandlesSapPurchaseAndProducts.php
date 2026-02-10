@@ -735,6 +735,106 @@ trait HandlesSapPurchaseAndProducts
         return true;
     }
 
+    public function syncSupplierFromOmniful(array $data): array
+    {
+        $cardCode = (string) (
+            data_get($data, 'code')
+            ?? data_get($data, 'supplier_code')
+            ?? data_get($data, 'id')
+        );
+
+        if ($cardCode === '') {
+            throw new \RuntimeException('Missing supplier code for SAP supplier sync');
+        }
+
+        if (!$this->isSupplierIntegrationEnabled($cardCode)) {
+            return ['status' => 'skipped_by_udf', 'supplier_code' => $cardCode];
+        }
+
+        $cardName = (string) (data_get($data, 'name') ?? $cardCode);
+        $email = data_get($data, 'email');
+        $phone = data_get($data, 'phone') ?? data_get($data, 'phone_number');
+        $existing = $this->getBusinessPartner($cardCode);
+
+        $payload = array_filter([
+            'CardCode' => $cardCode,
+            'CardName' => $cardName,
+            'CardType' => 'S',
+            'EmailAddress' => $email ?: null,
+            'Phone1' => $phone ?: null,
+        ], fn ($value) => $value !== null && $value !== '');
+
+        if ($existing) {
+            $updatePayload = $payload;
+            unset($updatePayload['CardCode'], $updatePayload['CardType']);
+
+            if ($updatePayload !== []) {
+                $encoded = str_replace("'", "''", $cardCode);
+                $response = $this->patch("/BusinessPartners('{$encoded}')", $updatePayload);
+                if (!$response->successful()) {
+                    throw new \RuntimeException('SAP supplier update failed: ' . $response->status() . ' ' . $response->body());
+                }
+            }
+
+            return ['status' => 'updated', 'supplier_code' => $cardCode];
+        }
+
+        $response = $this->post('/BusinessPartners', $payload);
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP supplier create failed: ' . $response->status() . ' ' . $response->body());
+        }
+
+        return ['status' => 'created', 'supplier_code' => $cardCode];
+    }
+
+    public function syncWarehouseFromOmniful(array $data): array
+    {
+        $warehouseCode = (string) (
+            data_get($data, 'code')
+            ?? data_get($data, 'hub_code')
+            ?? data_get($data, 'warehouse_code')
+            ?? data_get($data, 'id')
+        );
+
+        if ($warehouseCode === '') {
+            throw new \RuntimeException('Missing warehouse code for SAP warehouse sync');
+        }
+
+        if (!$this->isWarehouseIntegrationEnabled($warehouseCode)) {
+            return ['status' => 'skipped_by_udf', 'warehouse_code' => $warehouseCode];
+        }
+
+        $warehouseName = (string) (
+            data_get($data, 'name')
+            ?? data_get($data, 'hub_name')
+            ?? $warehouseCode
+        );
+
+        if ($this->isValidWarehouse($warehouseCode)) {
+            $encoded = str_replace("'", "''", $warehouseCode);
+            $response = $this->patch("/Warehouses('{$encoded}')", [
+                'WarehouseName' => $warehouseName,
+            ]);
+
+            if (!$response->successful()) {
+                throw new \RuntimeException('SAP warehouse update failed: ' . $response->status() . ' ' . $response->body());
+            }
+
+            return ['status' => 'updated', 'warehouse_code' => $warehouseCode];
+        }
+
+        $response = $this->post('/Warehouses', [
+            'WarehouseCode' => $warehouseCode,
+            'WarehouseName' => $warehouseName,
+        ]);
+
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP warehouse create failed: ' . $response->status() . ' ' . $response->body());
+        }
+
+        return ['status' => 'created', 'warehouse_code' => $warehouseCode];
+    }
+
 
     public function syncProductFromOmniful(array $data, string $eventName = ''): array
     {

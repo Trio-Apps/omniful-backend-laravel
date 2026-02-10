@@ -3,6 +3,7 @@
 namespace App\Filament\Pages;
 
 use App\Models\SapWarehouse;
+use App\Services\IntegrationDirectionService;
 use App\Services\MasterData\SapWarehouseSyncService;
 use App\Services\OmnifulApiClient;
 use App\Services\SapServiceLayerClient;
@@ -90,7 +91,9 @@ class SapWarehouses extends Page implements HasTable
     {
         return [
             Action::make('syncWarehouses')
-                ->label('Sync SAP Warehouses')
+                ->label(fn () => app(IntegrationDirectionService::class)->isSapToOmniful('warehouses')
+                    ? 'Sync SAP Warehouses'
+                    : 'Sync Omniful Warehouses to SAP')
                 ->icon('heroicon-o-arrow-path')
                 ->extraAttributes([
                     'wire:loading.attr' => 'disabled',
@@ -101,6 +104,7 @@ class SapWarehouses extends Page implements HasTable
                 ->label('Push to Omniful')
                 ->icon('heroicon-o-cloud-arrow-up')
                 ->color('primary')
+                ->disabled(fn () => app(IntegrationDirectionService::class)->isOmnifulToSap('warehouses'))
                 ->extraAttributes([
                     'wire:loading.attr' => 'disabled',
                     'wire:loading.class' => 'opacity-70',
@@ -114,7 +118,12 @@ class SapWarehouses extends Page implements HasTable
         @ini_set('max_execution_time', '0');
         @set_time_limit(0);
         try {
-            app(SapWarehouseSyncService::class)->syncFromSap($client);
+            $direction = app(IntegrationDirectionService::class);
+            if ($direction->isSapToOmniful('warehouses')) {
+                app(SapWarehouseSyncService::class)->syncFromSap($client);
+            } else {
+                app(SapWarehouseSyncService::class)->syncFromOmniful(app(OmnifulApiClient::class), $client);
+            }
 
             Notification::make()
                 ->title('Warehouses synced')
@@ -133,6 +142,15 @@ class SapWarehouses extends Page implements HasTable
     {
         @ini_set('max_execution_time', '0');
         @set_time_limit(0);
+        if (app(IntegrationDirectionService::class)->isOmnifulToSap('warehouses')) {
+            Notification::make()
+                ->title('Action blocked')
+                ->body('Warehouses direction is Omniful -> SAP. Use Sync action instead.')
+                ->warning()
+                ->send();
+            return;
+        }
+
         $result = app(SapWarehouseSyncService::class)->pushToOmniful($client);
         $ok = (int) ($result['ok'] ?? 0);
         $failed = (int) ($result['failed'] ?? 0);

@@ -7,6 +7,55 @@ use Illuminate\Support\Facades\Http;
 trait HandlesOmnifulUpsert
 {
     /**
+     * @param array<string,mixed> $query
+     * @return array<int,array<string,mixed>>
+     */
+    public function fetchList(string $resource, array $query = []): array
+    {
+        if ($this->baseUrl === '') {
+            throw new \RuntimeException('Omniful base URL is not configured');
+        }
+
+        $this->selectAuthContext($resource);
+
+        $endpoint = (string) config('omniful.sync_endpoints.' . $resource, '');
+        if ($endpoint === '') {
+            throw new \RuntimeException('Omniful endpoint is not configured for ' . $resource);
+        }
+
+        $url = $this->baseUrl . '/' . ltrim($endpoint, '/');
+        $rows = [];
+        $maxPages = 20;
+        $page = 0;
+
+        while ($url !== '' && $page < $maxPages) {
+            $response = $this->request('get', $url, $query);
+            if (!$response['ok']) {
+                throw new \RuntimeException('Omniful fetch list failed: HTTP ' . $response['status'] . ' ' . $response['body']);
+            }
+
+            $json = $response['json'];
+            if (!is_array($json)) {
+                break;
+            }
+
+            $pageRows = $this->extractRowsFromListResponse($json);
+            foreach ($pageRows as $row) {
+                if (is_array($row)) {
+                    $rows[] = $row;
+                }
+            }
+
+            $next = $this->extractNextUrlFromListResponse($json, $url);
+            $url = $next ?? '';
+            $query = [];
+            $page++;
+        }
+
+        return $rows;
+    }
+
+    /**
      * @param array<string,mixed> $payload
      */
     public function upsert(string $resource, string $code, array $payload): array
@@ -114,6 +163,75 @@ trait HandlesOmnifulUpsert
             'body' => $body,
             'json' => $response->json(),
         ];
+    }
+
+    /**
+     * @param array<string,mixed> $json
+     * @return array<int,mixed>
+     */
+    private function extractRowsFromListResponse(array $json): array
+    {
+        $candidates = [
+            data_get($json, 'data.items'),
+            data_get($json, 'data.results'),
+            data_get($json, 'data.data'),
+            data_get($json, 'data.value'),
+            data_get($json, 'data'),
+            data_get($json, 'items'),
+            data_get($json, 'results'),
+            data_get($json, 'value'),
+        ];
+
+        foreach ($candidates as $candidate) {
+            if (is_array($candidate)) {
+                $isList = array_keys($candidate) === range(0, count($candidate) - 1);
+                if ($isList) {
+                    return $candidate;
+                }
+            }
+        }
+
+        return [];
+    }
+
+    /**
+     * @param array<string,mixed> $json
+     */
+    private function extractNextUrlFromListResponse(array $json, string $currentUrl): ?string
+    {
+        $next = data_get($json, 'data.next')
+            ?? data_get($json, 'data.next_url')
+            ?? data_get($json, 'data.next_page_url')
+            ?? data_get($json, 'next')
+            ?? data_get($json, 'next_url')
+            ?? data_get($json, 'next_page_url')
+            ?? data_get($json, 'links.next')
+            ?? data_get($json, 'pagination.next')
+            ?? data_get($json, 'pagination.next_url');
+
+        if (!is_string($next) || trim($next) === '') {
+            return null;
+        }
+
+        $next = trim($next);
+        if (str_starts_with($next, 'http://') || str_starts_with($next, 'https://')) {
+            return $next;
+        }
+
+        $baseUrl = preg_replace('/\/+$/', '', $this->baseUrl);
+        if (!$baseUrl) {
+            return null;
+        }
+
+        if (str_starts_with($next, '/')) {
+            return $baseUrl . $next;
+        }
+
+        $parsed = parse_url($currentUrl);
+        $path = $parsed['path'] ?? '';
+        $prefix = rtrim(str_replace(basename($path), '', $path), '/');
+
+        return $baseUrl . $prefix . '/' . ltrim($next, '/');
     }
 
 }

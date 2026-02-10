@@ -88,4 +88,48 @@ class SapItemSyncService
 
         return ['ok' => $ok, 'failed' => $failed, 'errors' => $errors];
     }
+
+    public function syncFromOmniful(OmnifulApiClient $omnifulClient, SapServiceLayerClient $sapClient): array
+    {
+        $rows = $omnifulClient->fetchList('items');
+
+        $ok = 0;
+        $failed = 0;
+        $errors = [];
+
+        foreach ($rows as $row) {
+            try {
+                $payload = $this->normalizeOmnifulItemPayload($row);
+                $result = $sapClient->syncProductFromOmniful($payload, 'item.update');
+                if (($result['status'] ?? '') === 'skipped_by_udf') {
+                    continue;
+                }
+                $ok++;
+            } catch (\Throwable $e) {
+                $failed++;
+                $errors[] = ($row['code'] ?? $row['seller_sku_code'] ?? 'unknown') . ': ' . $e->getMessage();
+            }
+        }
+
+        $this->syncFromSap($sapClient);
+
+        return ['ok' => $ok, 'failed' => $failed, 'errors' => $errors];
+    }
+
+    /**
+     * @param array<string,mixed> $row
+     * @return array<string,mixed>
+     */
+    private function normalizeOmnifulItemPayload(array $row): array
+    {
+        $code = data_get($row, 'seller_sku_code')
+            ?? data_get($row, 'sku_code')
+            ?? data_get($row, 'code')
+            ?? data_get($row, 'id');
+
+        return [
+            'seller_sku_code' => is_scalar($code) ? (string) $code : null,
+            'name' => data_get($row, 'name') ?? data_get($row, 'product.name'),
+        ];
+    }
 }

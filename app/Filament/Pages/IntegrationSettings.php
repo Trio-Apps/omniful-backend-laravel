@@ -4,7 +4,9 @@ namespace App\Filament\Pages;
 
 use App\Models\IntegrationSetting;
 use App\Services\Connections\IntegrationConnectionTester;
+use App\Services\IntegrationDirectionService;
 use Filament\Actions\Action;
+use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Forms\Concerns\InteractsWithForms;
@@ -123,6 +125,31 @@ class IntegrationSettings extends Page implements HasForms
                             ->password()
                             ->revealable()
                             ->columnSpanFull(),
+                    ])
+                    ->columns(2),
+                Section::make('Sync Direction')
+                    ->description('Choose the source of truth per domain to prevent sync collisions')
+                    ->schema([
+                        Select::make('sync_direction_items')
+                            ->label('Items')
+                            ->options(app(IntegrationDirectionService::class)->options())
+                            ->default(IntegrationDirectionService::SAP_TO_OMNIFUL)
+                            ->required(),
+                        Select::make('sync_direction_suppliers')
+                            ->label('Suppliers')
+                            ->options(app(IntegrationDirectionService::class)->options())
+                            ->default(IntegrationDirectionService::SAP_TO_OMNIFUL)
+                            ->required(),
+                        Select::make('sync_direction_warehouses')
+                            ->label('Warehouses / Hubs')
+                            ->options(app(IntegrationDirectionService::class)->options())
+                            ->default(IntegrationDirectionService::SAP_TO_OMNIFUL)
+                            ->required(),
+                        Select::make('sync_direction_inventory')
+                            ->label('Inventory')
+                            ->options(app(IntegrationDirectionService::class)->options())
+                            ->default(IntegrationDirectionService::OMNIFUL_TO_SAP)
+                            ->required(),
                     ])
                     ->columns(2),
             ])
