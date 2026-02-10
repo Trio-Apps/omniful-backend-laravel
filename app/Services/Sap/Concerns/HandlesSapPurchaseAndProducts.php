@@ -532,7 +532,7 @@ trait HandlesSapPurchaseAndProducts
             throw new \RuntimeException('Missing supplier code for SAP PO (supplier.code)');
         }
 
-        $this->ensureSupplierExists($supplierCode, $data);
+        $supplierCode = $this->ensureSupplierExists((string) $supplierCode, $data);
 
         $lines = [];
         $lineIndex = 0;
@@ -623,11 +623,11 @@ trait HandlesSapPurchaseAndProducts
 
 
 
-    private function ensureSupplierExists(string $cardCode, array $data): void
+    private function ensureSupplierExists(string $cardCode, array $data): string
     {
         $existing = $this->getBusinessPartner($cardCode);
         if ($existing) {
-            return;
+            return $cardCode;
         }
 
         $supplier = (array) data_get($data, 'supplier', []);
@@ -650,10 +650,26 @@ trait HandlesSapPurchaseAndProducts
         }
 
         $response = $this->post('/BusinessPartners', $body);
-
-        if (!$response->successful()) {
-            throw new \RuntimeException('SAP vendor create failed: ' . $response->status() . ' ' . $response->body());
+        if ($response->successful()) {
+            return $cardCode;
         }
+
+        if (array_key_exists('Phone1', $body) && $this->isSapMobileDuplicationError($response->body())) {
+            $existingByPhone = $this->findSupplierByPhone((string) $body['Phone1']);
+            if ($existingByPhone) {
+                return $existingByPhone;
+            }
+
+            unset($body['Phone1']);
+            $retry = $this->post('/BusinessPartners', $body);
+            if ($retry->successful()) {
+                return $cardCode;
+            }
+
+            throw new \RuntimeException('SAP vendor create failed (retry without phone): ' . $retry->status() . ' ' . $retry->body());
+        }
+
+        throw new \RuntimeException('SAP vendor create failed: ' . $response->status() . ' ' . $response->body());
     }
 
 
@@ -780,11 +796,26 @@ trait HandlesSapPurchaseAndProducts
         }
 
         $response = $this->post('/BusinessPartners', $payload);
-        if (!$response->successful()) {
-            throw new \RuntimeException('SAP supplier create failed: ' . $response->status() . ' ' . $response->body());
+        if ($response->successful()) {
+            return ['status' => 'created', 'supplier_code' => $cardCode];
         }
 
-        return ['status' => 'created', 'supplier_code' => $cardCode];
+        if (array_key_exists('Phone1', $payload) && $this->isSapMobileDuplicationError($response->body())) {
+            $existingByPhone = $this->findSupplierByPhone((string) $payload['Phone1']);
+            if ($existingByPhone) {
+                return ['status' => 'linked_existing_by_phone', 'supplier_code' => $existingByPhone];
+            }
+
+            unset($payload['Phone1']);
+            $retry = $this->post('/BusinessPartners', $payload);
+            if ($retry->successful()) {
+                return ['status' => 'created', 'supplier_code' => $cardCode];
+            }
+
+            throw new \RuntimeException('SAP supplier create failed (retry without phone): ' . $retry->status() . ' ' . $retry->body());
+        }
+
+        throw new \RuntimeException('SAP supplier create failed: ' . $response->status() . ' ' . $response->body());
     }
 
     public function syncWarehouseFromOmniful(array $data): array
@@ -1368,6 +1399,46 @@ trait HandlesSapPurchaseAndProducts
         );
         $hash = strtoupper(substr(sha1($seed), 0, 10));
         return 'OMNC' . $hash;
+    }
+
+    private function findSupplierByPhone(string $phone): ?string
+    {
+        $target = $this->normalizePhone($phone);
+        if ($target === '') {
+            return null;
+        }
+
+        foreach ($this->fetchSuppliers() as $supplier) {
+            $candidate = (string) ($supplier['Phone1'] ?? '');
+            if ($candidate === '') {
+                continue;
+            }
+
+            if ($this->normalizePhone($candidate) === $target) {
+                $cardCode = (string) ($supplier['CardCode'] ?? '');
+                if ($cardCode !== '') {
+                    return $cardCode;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function normalizePhone(string $value): string
+    {
+        return preg_replace('/\D+/', '', $value) ?? '';
+    }
+
+    private function isSapMobileDuplicationError(string $body): bool
+    {
+        $normalized = strtolower($body);
+
+        return str_contains($normalized, '"code" : -1116')
+            || str_contains($normalized, '"code":-1116')
+            || str_contains($normalized, '"code": -1116')
+            || str_contains($normalized, 'mobile no. duplication')
+            || str_contains($normalized, 'mobile number related customer already available');
     }
 
     /**
