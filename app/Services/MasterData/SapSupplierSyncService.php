@@ -16,6 +16,7 @@ class SapSupplierSyncService
             if (!$code) {
                 continue;
             }
+            $enabled = $client->isSupplierIntegrationEnabled((string) $code);
             SapSupplier::updateOrCreate(
                 ['code' => $code],
                 [
@@ -29,9 +30,18 @@ class SapSupplierSyncService
                 ]
             );
             $record = SapSupplier::where('code', $code)->first();
-            if ($record && !$record->omniful_status) {
-                $record->omniful_status = 'pending';
-                $record->save();
+            if ($record) {
+                if ($enabled) {
+                    if (!$record->omniful_status || $record->omniful_status === 'skipped') {
+                        $record->omniful_status = 'pending';
+                        $record->omniful_error = null;
+                        $record->save();
+                    }
+                } else {
+                    $record->omniful_status = 'skipped';
+                    $record->omniful_error = 'Skipped by supplier integration UDF control';
+                    $record->save();
+                }
             }
         }
     }
@@ -54,6 +64,14 @@ class SapSupplierSyncService
             $record->save();
 
             try {
+                $sapClient = app(SapServiceLayerClient::class);
+                if (!$sapClient->isSupplierIntegrationEnabled((string) $record->code)) {
+                    $record->omniful_status = 'skipped';
+                    $record->omniful_error = 'Skipped by supplier integration UDF control';
+                    $record->save();
+                    continue;
+                }
+
                 $usedFallbacks = [];
                 $name = $record->name ?: $record->code;
                 if (!$record->name) {
@@ -98,4 +116,3 @@ class SapSupplierSyncService
         return ['ok' => $ok, 'failed' => $failed, 'errors' => $errors];
     }
 }
-

@@ -65,6 +65,43 @@ trait HandlesSapMasterDataFetch
         ]);
     }
 
+    public function isSupplierIntegrationEnabled(string $supplierCode): bool
+    {
+        $udfField = trim((string) config('omniful.integration_control.supplier_udf_field', ''));
+        if ($udfField === '') {
+            return true;
+        }
+
+        $allowedValues = (array) config('omniful.integration_control.supplier_allowed_values', ['y', 'yes', 'true', '1', 'enabled']);
+        $allowed = array_values(array_filter(array_map(
+            fn ($v) => strtolower(trim((string) $v)),
+            $allowedValues
+        ), fn ($v) => $v !== ''));
+        if ($allowed === []) {
+            return true;
+        }
+
+        $encodedCode = str_replace("'", "''", $supplierCode);
+        $encodedField = str_replace("'", "''", $udfField);
+        $response = $this->get("/BusinessPartners('{$encodedCode}')?\$select=CardCode,{$encodedField}");
+
+        if ($response->status() === 404) {
+            return true;
+        }
+
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP supplier integration-udf lookup failed: ' . $response->status() . ' ' . $response->body());
+        }
+
+        $payload = $response->json() ?? [];
+        $value = strtolower(trim((string) ($payload[$udfField] ?? '')));
+        if ($value === '') {
+            return true;
+        }
+
+        return in_array($value, $allowed, true);
+    }
+
     /**
      * @return array<int,array>
      */
