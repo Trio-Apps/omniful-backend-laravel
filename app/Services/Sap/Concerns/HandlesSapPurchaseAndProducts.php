@@ -4,6 +4,104 @@ namespace App\Services\Sap\Concerns;
 
 trait HandlesSapPurchaseAndProducts
 {
+    public function createArReserveInvoiceFromOmnifulOrder(array $data, string $externalId): array
+    {
+        $docDate = $this->formatDate((string) (data_get($data, 'order_created_at') ?? data_get($data, 'created_at') ?? null));
+        $currency = data_get($data, 'invoice.currency') ?? data_get($data, 'currency');
+        $hubCode = data_get($data, 'hub_code');
+        $seriesInfo = $this->resolveSeriesForDocument('17', $docDate);
+        $docDate = $seriesInfo['docDate'];
+
+        $customerCode = data_get($data, 'customer.code');
+        if (!$customerCode) {
+            $customerCode = $this->buildCustomerCode($data, $externalId);
+        }
+        $this->ensureCustomerExists((string) $customerCode, $data, $externalId);
+
+        $lines = [];
+        $lineIndex = 0;
+        $items = data_get($data, 'order_items', data_get($data, 'items', []));
+        foreach ((array) $items as $item) {
+            $lineIndex++;
+            $itemCode = data_get($item, 'sku_code')
+                ?? data_get($item, 'seller_sku_code')
+                ?? data_get($item, 'seller_sku.seller_sku_code')
+                ?? data_get($item, 'seller_sku.seller_sku_id');
+
+            if (!$itemCode) {
+                continue;
+            }
+
+            $this->ensureItemExists((string) $itemCode, (array) $item, $lineIndex);
+
+            $qty = (float) (data_get($item, 'quantity') ?? 0);
+            if ($qty <= 0) {
+                continue;
+            }
+
+            $unitPrice = data_get($item, 'unit_price');
+            if ($unitPrice === null) {
+                $unitPrice = data_get($item, 'price');
+            }
+
+            $line = [
+                'ItemCode' => (string) $itemCode,
+                'Quantity' => $qty,
+                'UnitPrice' => (float) ($unitPrice ?? 0),
+            ];
+
+            if ($hubCode) {
+                $this->ensureWarehouseExists((string) $hubCode, $lineIndex);
+                $line['WarehouseCode'] = (string) $hubCode;
+            }
+
+            $lines[] = $line;
+        }
+
+        if ($lines === []) {
+            return [
+                'ignored' => true,
+                'reason' => 'No order lines found for AR reserve invoice',
+            ];
+        }
+
+        $comments = 'AR Reserve Invoice from Omniful order ' . $externalId;
+        if ($currency && !$this->isValidCurrency((string) $currency)) {
+            $comments .= ' | Currency ' . $currency . ' not found in SAP; using local currency';
+            $currency = null;
+        }
+
+        $body = [
+            'CardCode' => (string) $customerCode,
+            'DocDate' => $docDate,
+            'DocDueDate' => $docDate,
+            'DocumentLines' => $lines,
+            'NumAtCard' => $externalId,
+            'Comments' => $comments,
+            // SAP B1 AR Reserve Invoice via Orders with ReserveInvoice = tYES
+            'ReserveInvoice' => 'tYES',
+        ];
+
+        if ($seriesInfo['series']) {
+            $body['Series'] = $seriesInfo['series'];
+        }
+
+        if ($currency) {
+            $body['DocCurrency'] = $currency;
+        }
+
+        $response = $this->post('/Orders', $body);
+
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP AR reserve invoice create failed: ' . $response->status() . ' ' . $response->body());
+        }
+
+        $payload = $response->json() ?? [];
+        $payload['ignored'] = false;
+
+        return $payload;
+    }
+
     public function createPurchaseOrderFromOmniful(array $data): array
     {
         $docDate = $this->formatDate(data_get($data, 'created_at'));
@@ -438,6 +536,56 @@ trait HandlesSapPurchaseAndProducts
         $payload['ignored'] = false;
 
         return $payload;
+    }
+
+    private function ensureCustomerExists(string $cardCode, array $data, string $externalId): void
+    {
+        $existing = $this->getBusinessPartner($cardCode);
+        if ($existing) {
+            return;
+        }
+
+        $firstName = (string) (data_get($data, 'customer.first_name') ?? '');
+        $lastName = (string) (data_get($data, 'customer.last_name') ?? '');
+        $fullName = trim($firstName . ' ' . $lastName);
+        if ($fullName === '') {
+            $fullName = 'Omniful Customer ' . $externalId;
+        }
+
+        $body = [
+            'CardCode' => $cardCode,
+            'CardName' => $fullName,
+            'CardType' => 'C',
+        ];
+
+        $email = data_get($data, 'customer.email') ?? data_get($data, 'billing_address.email');
+        $phone = data_get($data, 'customer.phone')
+            ?? data_get($data, 'billing_address.phone')
+            ?? data_get($data, 'shipping_address.phone');
+
+        if ($email) {
+            $body['EmailAddress'] = (string) $email;
+        }
+        if ($phone) {
+            $body['Phone1'] = (string) $phone;
+        }
+
+        $response = $this->post('/BusinessPartners', $body);
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP customer create failed: ' . $response->status() . ' ' . $response->body());
+        }
+    }
+
+    private function buildCustomerCode(array $data, string $externalId): string
+    {
+        $seed = (string) (
+            data_get($data, 'customer.email')
+            ?? data_get($data, 'customer.phone')
+            ?? data_get($data, 'billing_address.phone')
+            ?? $externalId
+        );
+        $hash = strtoupper(substr(sha1($seed), 0, 10));
+        return 'OMNC' . $hash;
     }
 
 }

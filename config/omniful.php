@@ -62,6 +62,13 @@ return [
             'allowed_statuses' => ['created', 'pending', 'approved', 'received', 'completed', 'cancelled', 'canceled'],
             'allowed_event_contains' => ['return'],
         ],
+        'order' => [
+            'strict' => true,
+            'invoice_event_contains' => ['create', 'new'],
+            'invoice_statuses' => ['created', 'new', 'pending', 'confirmed'],
+            'prepaid_indicators' => ['prepaid', 'online', 'card', 'credit_card', 'paid'],
+            'cod_indicators' => ['cod', 'cash_on_delivery', 'cash on delivery'],
+        ],
     ],
     'hub_defaults' => [
         'type' => env('OMNIFUL_HUB_TYPE', 'warehouse'),

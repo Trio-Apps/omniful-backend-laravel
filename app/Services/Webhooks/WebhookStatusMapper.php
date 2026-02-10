@@ -101,6 +101,34 @@ class WebhookStatusMapper
         return ['allowed' => true, 'reason' => null];
     }
 
+    /**
+     * @param array<int,string> $paymentSignals
+     * @return array{eligible:bool,reason:?string}
+     */
+    public function resolveOrderInvoiceEligibility(string $eventName, string $status, array $paymentSignals): array
+    {
+        $eventName = $this->normalize($eventName);
+        $status = $this->normalize($status);
+        $strict = (bool) config('omniful.status_mapping.order.strict', false);
+
+        $eventRules = array_map([$this, 'normalize'], (array) config('omniful.status_mapping.order.invoice_event_contains', []));
+        $statusRules = array_map([$this, 'normalize'], (array) config('omniful.status_mapping.order.invoice_statuses', []));
+
+        $eventOk = $eventRules === [] || $this->containsAny($eventName, $eventRules);
+        $statusOk = $statusRules === [] || in_array($status, $statusRules, true);
+        $isPrepaid = $this->isPrepaid($paymentSignals);
+
+        if ($eventOk && $statusOk && $isPrepaid) {
+            return ['eligible' => true, 'reason' => null];
+        }
+
+        if ($strict) {
+            return ['eligible' => false, 'reason' => 'Unmapped order event/status/payment for AR reserve invoice'];
+        }
+
+        return ['eligible' => $isPrepaid, 'reason' => $isPrepaid ? null : 'Order is not prepaid'];
+    }
+
     private function defaultPurchaseOrderStatus(?string $fallback): string
     {
         if ($fallback && $fallback !== '') {
@@ -127,5 +155,32 @@ class WebhookStatusMapper
     private function normalize(string $value): string
     {
         return strtolower(trim($value));
+    }
+
+    /**
+     * @param array<int,string> $signals
+     */
+    private function isPrepaid(array $signals): bool
+    {
+        $normalized = array_filter(array_map([$this, 'normalize'], $signals), fn ($v) => $v !== '');
+        if ($normalized === []) {
+            return false;
+        }
+
+        $codIndicators = array_map([$this, 'normalize'], (array) config('omniful.status_mapping.order.cod_indicators', []));
+        foreach ($normalized as $value) {
+            if ($this->containsAny($value, $codIndicators)) {
+                return false;
+            }
+        }
+
+        $prepaidIndicators = array_map([$this, 'normalize'], (array) config('omniful.status_mapping.order.prepaid_indicators', []));
+        foreach ($normalized as $value) {
+            if ($this->containsAny($value, $prepaidIndicators)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
