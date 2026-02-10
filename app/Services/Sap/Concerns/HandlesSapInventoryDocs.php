@@ -101,6 +101,76 @@ trait HandlesSapInventoryDocs
         return $response->json() ?? [];
     }
 
+    /**
+     * @param array<int,array{seller_sku_code:string,quantity:float}> $items
+     */
+    public function createStockTransfer(array $items, string $fromWarehouse, string $toWarehouse, string $remarks = ''): array
+    {
+        $fromWarehouse = trim($fromWarehouse);
+        $toWarehouse = trim($toWarehouse);
+        if ($fromWarehouse === '' || $toWarehouse === '') {
+            throw new \RuntimeException('Stock transfer requires source and destination warehouses');
+        }
+
+        $this->ensureWarehouseExists($fromWarehouse, 1);
+        $this->ensureWarehouseExists($toWarehouse, 1);
+
+        $lines = [];
+        $lineIndex = 0;
+        foreach ($items as $item) {
+            $lineIndex++;
+            $itemCode = (string) ($item['seller_sku_code'] ?? '');
+            $qty = (float) ($item['quantity'] ?? 0);
+            if ($itemCode === '' || $qty <= 0) {
+                continue;
+            }
+
+            $this->ensureItemExists($itemCode, ['sku_code' => $itemCode], $lineIndex);
+            $this->ensureItemWarehouseExists($itemCode, $fromWarehouse);
+            $this->ensureItemWarehouseExists($itemCode, $toWarehouse);
+
+            $lines[] = [
+                'ItemCode' => $itemCode,
+                'Quantity' => $qty,
+                'FromWarehouseCode' => $fromWarehouse,
+                'WarehouseCode' => $toWarehouse,
+            ];
+        }
+
+        if ($lines === []) {
+            return [
+                'ignored' => true,
+                'reason' => 'No stock transfer lines found',
+            ];
+        }
+
+        $docDate = now()->format('Y-m-d');
+        $seriesInfo = $this->resolveSeriesForDocument('67', $docDate);
+        $docDate = $seriesInfo['docDate'];
+
+        $body = [
+            'DocDate' => $docDate,
+            'FromWarehouse' => $fromWarehouse,
+            'ToWarehouse' => $toWarehouse,
+            'Comments' => $remarks !== '' ? $remarks : 'Stock transfer from Omniful',
+            'StockTransferLines' => $lines,
+        ];
+
+        if ($seriesInfo['series']) {
+            $body['Series'] = $seriesInfo['series'];
+        }
+
+        $response = $this->post('/StockTransfers', $body);
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP stock transfer create failed: ' . $response->status() . ' ' . $response->body());
+        }
+
+        $payload = $response->json() ?? [];
+        $payload['ignored'] = false;
+
+        return $payload;
+    }
+
 
     private function buildInventoryLinesForInventoryDoc(array $items, ?string $hubCode, bool $isIssue): array
     {
