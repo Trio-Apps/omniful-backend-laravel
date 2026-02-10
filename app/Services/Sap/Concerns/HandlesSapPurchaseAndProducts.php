@@ -746,6 +746,10 @@ trait HandlesSapPurchaseAndProducts
             throw new \RuntimeException('Missing item code for SAP product sync');
         }
 
+        if (!$this->isItemIntegrationEnabled((string) $itemCode)) {
+            return ['status' => 'skipped_by_udf', 'item_code' => (string) $itemCode];
+        }
+
         $exists = $this->isValidItem($itemCode);
         $isUpdate = str_contains($eventName, 'update');
         $isDelete = str_contains($eventName, 'delete');
@@ -1143,6 +1147,44 @@ trait HandlesSapPurchaseAndProducts
         if (!$response->successful()) {
             throw new \RuntimeException('SAP product tree delete failed: ' . $response->status() . ' ' . $response->body());
         }
+    }
+
+    public function isItemIntegrationEnabled(string $itemCode): bool
+    {
+        $udfField = trim((string) config('omniful.integration_control.item_udf_field', ''));
+        if ($udfField === '') {
+            return true;
+        }
+
+        $allowedValues = (array) config('omniful.integration_control.item_allowed_values', ['y', 'yes', 'true', '1', 'enabled']);
+        $allowed = array_values(array_filter(array_map(
+            fn ($v) => strtolower(trim((string) $v)),
+            $allowedValues
+        ), fn ($v) => $v !== ''));
+
+        if ($allowed === []) {
+            return true;
+        }
+
+        $encodedCode = str_replace("'", "''", $itemCode);
+        $encodedField = str_replace("'", "''", $udfField);
+        $response = $this->get("/Items('{$encodedCode}')?\$select=ItemCode,{$encodedField}");
+
+        if ($response->status() === 404) {
+            return true;
+        }
+
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP item integration-udf lookup failed: ' . $response->status() . ' ' . $response->body());
+        }
+
+        $payload = $response->json() ?? [];
+        $value = strtolower(trim((string) ($payload[$udfField] ?? '')));
+        if ($value === '') {
+            return true;
+        }
+
+        return in_array($value, $allowed, true);
     }
 
     private function getSalesOrder(int $docEntry): array

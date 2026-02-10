@@ -53,6 +53,14 @@ class SapItemSyncService
             $record->save();
 
             try {
+                $sapClient = app(SapServiceLayerClient::class);
+                if (!$sapClient->isItemIntegrationEnabled((string) $record->code)) {
+                    $record->omniful_status = 'skipped';
+                    $record->omniful_error = 'Skipped by item integration UDF control';
+                    $record->save();
+                    continue;
+                }
+
                 $payload = [
                     'code' => $record->code,
                     'name' => $record->name,
@@ -81,4 +89,3 @@ class SapItemSyncService
         return ['ok' => $ok, 'failed' => $failed, 'errors' => $errors];
     }
 }
-

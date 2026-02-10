@@ -11,6 +11,13 @@ return [
         'suppliers' => env('OMNIFUL_SUPPLIERS_METHOD', 'post'),
         'items' => env('OMNIFUL_ITEMS_METHOD', 'put'),
     ],
+    'integration_control' => [
+        'item_udf_field' => env('SAP_ITEM_INTEGRATION_UDF_FIELD', 'U_OmnifulSync'),
+        'item_allowed_values' => array_values(array_filter(array_map(
+            fn ($v) => strtolower(trim((string) $v)),
+            explode(',', (string) env('SAP_ITEM_INTEGRATION_ALLOWED_VALUES', 'Y,YES,TRUE,1,ENABLED'))
+        ))),
+    ],
     'sync_timeout' => (int) env('OMNIFUL_TIMEOUT', 20),
     'tenant_token_endpoint' => env('OMNIFUL_TENANT_TOKEN_ENDPOINT', '/sales-channel/public/v1/tenants/token'),
     'seller_token_endpoint' => env('OMNIFUL_SELLER_TOKEN_ENDPOINT', '/sales-channel/public/v1/token'),
