@@ -129,6 +129,32 @@ class WebhookStatusMapper
         return ['eligible' => $isPrepaid, 'reason' => $isPrepaid ? null : 'Order is not prepaid'];
     }
 
+    /**
+     * @return array{eligible:bool,reason:?string}
+     */
+    public function resolveOrderDeliveryEligibility(string $eventName, string $status): array
+    {
+        $eventName = $this->normalize($eventName);
+        $status = $this->normalize($status);
+        $strict = (bool) config('omniful.status_mapping.order.strict', false);
+
+        $eventRules = array_map([$this, 'normalize'], (array) config('omniful.status_mapping.order.delivery_event_contains', []));
+        $statusRules = array_map([$this, 'normalize'], (array) config('omniful.status_mapping.order.delivery_statuses', []));
+
+        $eventOk = $eventRules === [] || $this->containsAny($eventName, $eventRules);
+        $statusOk = $statusRules === [] || in_array($status, $statusRules, true);
+
+        if ($eventOk && $statusOk) {
+            return ['eligible' => true, 'reason' => null];
+        }
+
+        if ($strict) {
+            return ['eligible' => false, 'reason' => 'Unmapped order event/status for delivery creation'];
+        }
+
+        return ['eligible' => $eventOk || $statusOk, 'reason' => null];
+    }
+
     private function defaultPurchaseOrderStatus(?string $fallback): string
     {
         if ($fallback && $fallback !== '') {

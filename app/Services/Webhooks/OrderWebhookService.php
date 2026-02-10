@@ -27,17 +27,23 @@ class OrderWebhookService
         $paymentSignals = $this->extractPaymentSignals($data);
 
         $mapper = app(WebhookStatusMapper::class);
-        $eligibility = $mapper->resolveOrderInvoiceEligibility($eventName, $status, $paymentSignals);
-        if (!($eligibility['eligible'] ?? false)) {
+        $invoiceEligibility = $mapper->resolveOrderInvoiceEligibility($eventName, $status, $paymentSignals);
+        $deliveryEligibility = $mapper->resolveOrderDeliveryEligibility($eventName, $status);
+
+        if (!($invoiceEligibility['eligible'] ?? false) && !($deliveryEligibility['eligible'] ?? false)) {
             $order->sap_status = 'ignored';
-            $order->sap_error = (string) ($eligibility['reason'] ?? 'Ignored: order is not eligible for AR reserve invoice');
+            $order->sap_error = (string) (
+                $invoiceEligibility['reason']
+                ?? $deliveryEligibility['reason']
+                ?? 'Ignored: order is not eligible for SAP action'
+            );
             $order->save();
             return;
         }
 
         $client = app(SapServiceLayerClient::class);
         $invoiceResult = null;
-        if (empty($order->sap_doc_entry)) {
+        if (($invoiceEligibility['eligible'] ?? false) && empty($order->sap_doc_entry)) {
             $invoiceResult = $client->createArReserveInvoiceFromOmnifulOrder($data, $externalId);
             if (($invoiceResult['ignored'] ?? false) === true) {
                 $order->sap_status = 'ignored';
@@ -53,8 +59,14 @@ class OrderWebhookService
             $order->save();
         }
 
-        $this->createIncomingPaymentIfEligible($order, $data, $invoiceResult);
-        $this->createCardFeeJournalIfEligible($order, $data);
+        if (($invoiceEligibility['eligible'] ?? false) || !empty($order->sap_doc_entry)) {
+            $this->createIncomingPaymentIfEligible($order, $data, $invoiceResult);
+            $this->createCardFeeJournalIfEligible($order, $data);
+        }
+
+        if (($deliveryEligibility['eligible'] ?? false)) {
+            $this->createDeliveryIfEligible($order, $data);
+        }
     }
 
     /**
@@ -200,5 +212,44 @@ class OrderWebhookService
         }
 
         return round(((float) $total) * ($percent / 100), 2);
+    }
+
+    private function createDeliveryIfEligible(OmnifulOrder $order, array $data): void
+    {
+        if (!empty($order->sap_delivery_doc_entry)) {
+            if ((string) $order->sap_delivery_status === '') {
+                $order->sap_delivery_status = 'created';
+                $order->save();
+            }
+            return;
+        }
+
+        $invoiceDocEntry = (int) ($order->sap_doc_entry ?? 0);
+        if ($invoiceDocEntry <= 0) {
+            $order->sap_delivery_status = 'blocked';
+            $order->sap_delivery_error = 'Delivery blocked: source order is missing in SAP';
+            $order->save();
+            return;
+        }
+
+        $client = app(SapServiceLayerClient::class);
+        $result = $client->createDeliveryFromReserveOrder([
+            'order_doc_entry' => $invoiceDocEntry,
+            'hub_code' => data_get($data, 'hub_code'),
+            'external_id' => (string) ($order->external_id ?? ''),
+        ]);
+
+        if (($result['ignored'] ?? false) === true) {
+            $order->sap_delivery_status = 'ignored';
+            $order->sap_delivery_error = (string) ($result['reason'] ?? 'Delivery ignored');
+            $order->save();
+            return;
+        }
+
+        $order->sap_delivery_status = 'created';
+        $order->sap_delivery_doc_entry = (string) ($result['DocEntry'] ?? '');
+        $order->sap_delivery_doc_num = (string) ($result['DocNum'] ?? '');
+        $order->sap_delivery_error = null;
+        $order->save();
     }
 }

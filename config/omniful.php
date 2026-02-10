@@ -66,6 +66,8 @@ return [
             'strict' => true,
             'invoice_event_contains' => ['create', 'new'],
             'invoice_statuses' => ['created', 'new', 'pending', 'confirmed'],
+            'delivery_event_contains' => ['ship', 'deliver'],
+            'delivery_statuses' => ['shipped', 'delivered', 'completed'],
             'prepaid_indicators' => ['prepaid', 'online', 'card', 'credit_card', 'paid'],
             'cod_indicators' => ['cod', 'cash_on_delivery', 'cash on delivery'],
         ],

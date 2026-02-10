@@ -231,6 +231,77 @@ trait HandlesSapPurchaseAndProducts
         return $payload;
     }
 
+    public function createDeliveryFromReserveOrder(array $data): array
+    {
+        $orderDocEntry = (int) ($data['order_doc_entry'] ?? 0);
+        if ($orderDocEntry <= 0) {
+            throw new \RuntimeException('Missing SAP order doc entry for delivery');
+        }
+
+        $salesDoc = $this->getSalesOrder($orderDocEntry);
+        $hubCode = (string) ($data['hub_code'] ?? '');
+        $externalId = (string) ($data['external_id'] ?? '');
+        $docDate = $this->formatDate((string) now()->format('Y-m-d'));
+        $seriesInfo = $this->resolveSeriesForDocument('15', $docDate);
+        $docDate = $seriesInfo['docDate'];
+
+        $lines = [];
+        foreach ((array) ($salesDoc['DocumentLines'] ?? []) as $line) {
+            $lineNum = $line['LineNum'] ?? null;
+            if (!is_numeric($lineNum)) {
+                continue;
+            }
+
+            $openQty = $this->extractOpenOrderLineQuantity($line);
+            if ($openQty <= 0) {
+                continue;
+            }
+
+            $deliveryLine = [
+                'BaseType' => 17,
+                'BaseEntry' => $orderDocEntry,
+                'BaseLine' => (int) $lineNum,
+                'Quantity' => $openQty,
+            ];
+
+            if ($hubCode !== '') {
+                $this->ensureWarehouseExists($hubCode, ((int) $lineNum) + 1);
+                $deliveryLine['WarehouseCode'] = $hubCode;
+            }
+
+            $lines[] = $deliveryLine;
+        }
+
+        if ($lines === []) {
+            return [
+                'ignored' => true,
+                'reason' => 'No open quantity found for delivery',
+            ];
+        }
+
+        $body = [
+            'CardCode' => (string) ($salesDoc['CardCode'] ?? ''),
+            'DocDate' => $docDate,
+            'DocDueDate' => $docDate,
+            'Comments' => 'Delivery from Omniful order ' . $externalId,
+            'DocumentLines' => $lines,
+        ];
+
+        if ($seriesInfo['series']) {
+            $body['Series'] = $seriesInfo['series'];
+        }
+
+        $response = $this->post('/DeliveryNotes', $body);
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP delivery create failed: ' . $response->status() . ' ' . $response->body());
+        }
+
+        $payload = $response->json() ?? [];
+        $payload['ignored'] = false;
+
+        return $payload;
+    }
+
     public function createPurchaseOrderFromOmniful(array $data): array
     {
         $docDate = $this->formatDate(data_get($data, 'created_at'));
@@ -744,6 +815,30 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return array_values(array_unique($normalized));
+    }
+
+    private function extractOpenOrderLineQuantity(array $line): float
+    {
+        $candidates = [
+            $line['RemainingOpenQuantity'] ?? null,
+            $line['OpenQuantity'] ?? null,
+            $line['RemainingOpenInventoryQuantity'] ?? null,
+        ];
+
+        foreach ($candidates as $value) {
+            if (is_numeric($value)) {
+                $qty = (float) $value;
+                if ($qty > 0) {
+                    return $qty;
+                }
+            }
+        }
+
+        $orderedQty = (float) ($line['Quantity'] ?? 0);
+        $deliveredQty = (float) ($line['DeliveredQuantity'] ?? 0);
+        $openQty = $orderedQty - $deliveredQty;
+
+        return $openQty > 0 ? $openQty : 0.0;
     }
 
 }
