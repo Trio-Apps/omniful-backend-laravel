@@ -14,6 +14,14 @@ class PurchaseOrderWebhookService
         $data = data_get($payload, 'data', []);
         $eventName = (string) data_get($payload, 'event_name', '');
         $status = (string) data_get($data, 'status', '');
+        $mapping = $mapper->resolvePurchaseOrderStatus($eventName, $status, $event->sap_status);
+
+        if (!($mapping['mapped'] ?? false)) {
+            $event->sap_status = 'ignored';
+            $event->sap_error = (string) ($mapping['reason'] ?? 'Ignored: purchase-order status/event not allowed by mapping');
+            $event->save();
+            return;
+        }
 
         if ($event->external_id) {
             $existing = OmnifulPurchaseOrderEvent::where('external_id', $event->external_id)
@@ -45,7 +53,7 @@ class PurchaseOrderWebhookService
                 $status ?: ''
             ));
             $client->appendPurchaseOrderComment((int) $event->sap_doc_entry, $comment);
-            $event->sap_status = $mapper->mapPurchaseOrderStatus($eventName, $status, $event->sap_status);
+            $event->sap_status = (string) ($mapping['sap_status'] ?? $event->sap_status ?? 'logged');
 
             $event->save();
         }

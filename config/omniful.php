@@ -21,7 +21,14 @@ return [
     'webhook_static_token' => env('OMNIFUL_WEBHOOK_STATIC_TOKEN'),
     'status_mapping' => [
         'purchase_order' => [
+            'strict' => true,
             'rules' => [
+                [
+                    'name' => 'created',
+                    'event_contains' => ['create'],
+                    'statuses' => ['created', 'pending', 'open', 'processing'],
+                    'sap_status' => 'logged',
+                ],
                 [
                     'name' => 'updated',
                     'event_contains' => ['update'],
@@ -44,15 +51,16 @@ return [
             'default_sap_status' => 'logged',
         ],
         'inventory' => [
+            'strict' => true,
             'routes' => [
                 'inventory.update.event|receiving|purchase_order' => 'grpo',
                 'inventory.update.event|manual_edit|hub_inventory' => 'manual_inventory_adjustment',
             ],
         ],
         'return_order' => [
-            // Empty arrays mean allow all payload statuses/event names.
-            'allowed_statuses' => [],
-            'allowed_event_contains' => [],
+            'strict' => true,
+            'allowed_statuses' => ['created', 'pending', 'approved', 'received', 'completed', 'cancelled', 'canceled'],
+            'allowed_event_contains' => ['return'],
         ],
     ],
     'hub_defaults' => [

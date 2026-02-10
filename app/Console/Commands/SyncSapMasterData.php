@@ -2,72 +2,89 @@
 
 namespace App\Console\Commands;
 
-use App\Models\SapSupplier;
-use App\Models\SapWarehouse;
+use App\Services\MasterData\SapItemSyncService;
+use App\Services\MasterData\SapSupplierSyncService;
+use App\Services\MasterData\SapWarehouseSyncService;
+use App\Services\OmnifulApiClient;
 use App\Services\SapServiceLayerClient;
 use Illuminate\Console\Command;
 
 class SyncSapMasterData extends Command
 {
-    protected $signature = 'sap:sync-master {--warehouses} {--suppliers}';
+    protected $signature = 'sap:sync-master {--warehouses} {--suppliers} {--items} {--push}';
 
-    protected $description = 'Sync SAP master data (warehouses and suppliers) into local tables';
+    protected $description = 'Sync SAP master data into local tables and optionally push to Omniful';
 
-    public function handle(SapServiceLayerClient $client): int
-    {
+    public function handle(
+        SapServiceLayerClient $sapClient,
+        OmnifulApiClient $omnifulClient,
+        SapWarehouseSyncService $warehouseService,
+        SapSupplierSyncService $supplierService,
+        SapItemSyncService $itemService
+    ): int {
         $syncWarehouses = (bool) $this->option('warehouses');
         $syncSuppliers = (bool) $this->option('suppliers');
-        if (!$syncWarehouses && !$syncSuppliers) {
+        $syncItems = (bool) $this->option('items');
+        $pushToOmniful = (bool) $this->option('push');
+
+        if (!$syncWarehouses && !$syncSuppliers && !$syncItems) {
             $syncWarehouses = true;
             $syncSuppliers = true;
+            $syncItems = true;
         }
 
-        if ($syncWarehouses) {
-            $this->info('Syncing SAP warehouses...');
-            $warehouses = $client->fetchWarehouses();
-            foreach ($warehouses as $row) {
-                $code = $row['WarehouseCode'] ?? null;
-                if (!$code) {
-                    continue;
-                }
-                SapWarehouse::updateOrCreate(
-                    ['code' => $code],
-                    [
-                        'name' => $row['WarehouseName'] ?? null,
-                        'payload' => $row,
-                        'synced_at' => now(),
-                        'status' => 'synced',
-                        'error' => null,
-                    ]
-                );
+        try {
+            if ($syncWarehouses) {
+                $this->info('Syncing SAP warehouses...');
+                $warehouseService->syncFromSap($sapClient);
             }
-        }
 
-        if ($syncSuppliers) {
-            $this->info('Syncing SAP suppliers...');
-            $suppliers = $client->fetchSuppliers();
-            foreach ($suppliers as $row) {
-                $code = $row['CardCode'] ?? null;
-                if (!$code) {
-                    continue;
-                }
-                SapSupplier::updateOrCreate(
-                    ['code' => $code],
-                    [
-                        'name' => $row['CardName'] ?? null,
-                        'email' => $row['EmailAddress'] ?? null,
-                        'phone' => $row['Phone1'] ?? null,
-                        'payload' => $row,
-                        'synced_at' => now(),
-                        'status' => 'synced',
-                        'error' => null,
-                    ]
-                );
+            if ($syncSuppliers) {
+                $this->info('Syncing SAP suppliers...');
+                $supplierService->syncFromSap($sapClient);
             }
+
+            if ($syncItems) {
+                $this->info('Syncing SAP items...');
+                $itemService->syncFromSap($sapClient);
+            }
+
+            if ($pushToOmniful) {
+                if ($syncWarehouses) {
+                    $this->info('Pushing warehouses to Omniful...');
+                    $this->printPushSummary($warehouseService->pushToOmniful($omnifulClient));
+                }
+
+                if ($syncSuppliers) {
+                    $this->info('Pushing suppliers to Omniful...');
+                    $this->printPushSummary($supplierService->pushToOmniful($omnifulClient));
+                }
+
+                if ($syncItems) {
+                    $this->info('Pushing items to Omniful...');
+                    $this->printPushSummary($itemService->pushToOmniful($omnifulClient));
+                }
+            }
+        } catch (\Throwable $e) {
+            $this->error('Sync failed: ' . $e->getMessage());
+            return self::FAILURE;
         }
 
         $this->info('Done.');
 
         return self::SUCCESS;
     }
+
+    private function printPushSummary(array $result): void
+    {
+        $ok = (int) ($result['ok'] ?? 0);
+        $failed = (int) ($result['failed'] ?? 0);
+        $this->line('Synced: ' . $ok . ' | Failed: ' . $failed);
+
+        $errors = array_slice((array) ($result['errors'] ?? []), 0, 5);
+        foreach ($errors as $error) {
+            $this->warn((string) $error);
+        }
+    }
 }
+

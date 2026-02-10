@@ -14,10 +14,11 @@ class ReturnOrderWebhookService
         $data = data_get($payload, 'data', []);
         $eventName = (string) data_get($payload, 'event_name', '');
         $status = (string) data_get($data, 'status', '');
+        $validation = $mapper->validateReturnOrder($eventName, $status);
 
-        if (!$mapper->canProcessReturnOrder($eventName, $status)) {
+        if (!($validation['allowed'] ?? false)) {
             $event->sap_status = 'ignored';
-            $event->sap_error = 'Ignored: return-order status/event not allowed by mapping';
+            $event->sap_error = (string) ($validation['reason'] ?? 'Ignored: return-order status/event not allowed by mapping');
             $event->save();
             return;
         }

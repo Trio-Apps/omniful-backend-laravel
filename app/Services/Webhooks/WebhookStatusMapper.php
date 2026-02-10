@@ -4,11 +4,15 @@ namespace App\Services\Webhooks;
 
 class WebhookStatusMapper
 {
-    public function mapPurchaseOrderStatus(string $eventName, string $status, ?string $fallback = null): string
+    /**
+     * @return array{mapped:bool,sap_status:string,reason:?string}
+     */
+    public function resolvePurchaseOrderStatus(string $eventName, string $status, ?string $fallback = null): array
     {
         $eventName = $this->normalize($eventName);
         $status = $this->normalize($status);
         $rules = (array) config('omniful.status_mapping.purchase_order.rules', []);
+        $strict = (bool) config('omniful.status_mapping.purchase_order.strict', false);
 
         foreach ($rules as $rule) {
             $eventContains = array_map([$this, 'normalize'], (array) ($rule['event_contains'] ?? []));
@@ -18,11 +22,27 @@ class WebhookStatusMapper
             $statusMatch = $statuses === [] || in_array($status, $statuses, true);
 
             if ($eventMatch || $statusMatch) {
-                return (string) ($rule['sap_status'] ?? $this->defaultPurchaseOrderStatus($fallback));
+                return [
+                    'mapped' => true,
+                    'sap_status' => (string) ($rule['sap_status'] ?? $this->defaultPurchaseOrderStatus($fallback)),
+                    'reason' => null,
+                ];
             }
         }
 
-        return $this->defaultPurchaseOrderStatus($fallback);
+        if ($strict) {
+            return [
+                'mapped' => false,
+                'sap_status' => $this->defaultPurchaseOrderStatus($fallback),
+                'reason' => 'Unmapped purchase-order status/event',
+            ];
+        }
+
+        return [
+            'mapped' => true,
+            'sap_status' => $this->defaultPurchaseOrderStatus($fallback),
+            'reason' => null,
+        ];
     }
 
     /**
@@ -36,6 +56,7 @@ class WebhookStatusMapper
         $key = $eventName . '|' . $action . '|' . $entity;
 
         $routes = (array) config('omniful.status_mapping.inventory.routes', []);
+        $strict = (bool) config('omniful.status_mapping.inventory.strict', false);
         $sapAction = $routes[$key] ?? null;
         if ($sapAction) {
             return [
@@ -47,17 +68,21 @@ class WebhookStatusMapper
         }
 
         return [
-            'mapped' => false,
+            'mapped' => !$strict ? true : false,
             'sap_action' => null,
             'key' => $key,
-            'reason' => 'Unmapped inventory route',
+            'reason' => $strict ? 'Unmapped inventory route' : null,
         ];
     }
 
-    public function canProcessReturnOrder(string $eventName, string $status): bool
+    /**
+     * @return array{allowed:bool,reason:?string}
+     */
+    public function validateReturnOrder(string $eventName, string $status): array
     {
         $eventName = $this->normalize($eventName);
         $status = $this->normalize($status);
+        $strict = (bool) config('omniful.status_mapping.return_order.strict', false);
 
         $allowedStatuses = array_map([$this, 'normalize'], (array) config('omniful.status_mapping.return_order.allowed_statuses', []));
         $allowedEventContains = array_map([$this, 'normalize'], (array) config('omniful.status_mapping.return_order.allowed_event_contains', []));
@@ -65,7 +90,15 @@ class WebhookStatusMapper
         $statusAllowed = $allowedStatuses === [] || in_array($status, $allowedStatuses, true);
         $eventAllowed = $allowedEventContains === [] || $this->containsAny($eventName, $allowedEventContains);
 
-        return $statusAllowed && $eventAllowed;
+        if ($statusAllowed && $eventAllowed) {
+            return ['allowed' => true, 'reason' => null];
+        }
+
+        if ($strict) {
+            return ['allowed' => false, 'reason' => 'Unmapped return-order status/event'];
+        }
+
+        return ['allowed' => true, 'reason' => null];
     }
 
     private function defaultPurchaseOrderStatus(?string $fallback): string
@@ -96,4 +129,3 @@ class WebhookStatusMapper
         return strtolower(trim($value));
     }
 }
-
