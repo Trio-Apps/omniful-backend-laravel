@@ -17,6 +17,10 @@ class OmnifulReturnOrderEvent extends Model
         'sap_doc_entry',
         'sap_doc_num',
         'sap_error',
+        'sap_cogs_reversal_status',
+        'sap_cogs_reversal_journal_entry',
+        'sap_cogs_reversal_journal_num',
+        'sap_cogs_reversal_error',
     ];
 
     protected $casts = [

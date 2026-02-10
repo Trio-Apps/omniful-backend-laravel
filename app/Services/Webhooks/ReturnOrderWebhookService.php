@@ -44,8 +44,11 @@ class ReturnOrderWebhookService
                 $event->sap_doc_entry = $existing->sap_doc_entry;
                 $event->sap_doc_num = $existing->sap_doc_num;
                 $event->sap_error = $existing->sap_error;
+                $event->sap_cogs_reversal_status = $existing->sap_cogs_reversal_status;
+                $event->sap_cogs_reversal_journal_entry = $existing->sap_cogs_reversal_journal_entry;
+                $event->sap_cogs_reversal_journal_num = $existing->sap_cogs_reversal_journal_num;
+                $event->sap_cogs_reversal_error = $existing->sap_cogs_reversal_error;
                 $event->save();
-                return;
             }
         }
 
@@ -86,6 +89,8 @@ class ReturnOrderWebhookService
             $event->sap_status = $event->sap_status ?: 'logged';
             $event->save();
         }
+
+        $this->createReturnCogsReversalIfEligible($event);
     }
 
     private function buildReturnOrderItems(array $data): array
@@ -168,5 +173,47 @@ class ReturnOrderWebhookService
         }
 
         return null;
+    }
+
+    private function createReturnCogsReversalIfEligible(OmnifulReturnOrderEvent $event): void
+    {
+        if (!(bool) config('omniful.order_accounting.return_cogs_reversal_enabled', false)) {
+            return;
+        }
+
+        if (!empty($event->sap_cogs_reversal_journal_entry)) {
+            if ((string) $event->sap_cogs_reversal_status === '') {
+                $event->sap_cogs_reversal_status = 'created';
+                $event->save();
+            }
+            return;
+        }
+
+        $creditMemoDocEntry = (int) ($event->sap_doc_entry ?? 0);
+        if ($creditMemoDocEntry <= 0) {
+            return;
+        }
+
+        $client = app(SapServiceLayerClient::class);
+        $result = $client->createCogsReversalJournalForCreditMemo([
+            'credit_memo_doc_entry' => $creditMemoDocEntry,
+            'reference' => (string) ($event->external_id ?? ''),
+            'memo' => 'COGS reversal from Omniful return ' . (string) ($event->external_id ?? ''),
+            'expense_account' => config('omniful.order_accounting.cogs_expense_account'),
+            'offset_account' => config('omniful.order_accounting.inventory_offset_account'),
+        ]);
+
+        if (($result['ignored'] ?? false) === true) {
+            $event->sap_cogs_reversal_status = 'ignored';
+            $event->sap_cogs_reversal_error = (string) ($result['reason'] ?? 'COGS reversal ignored');
+            $event->save();
+            return;
+        }
+
+        $event->sap_cogs_reversal_status = 'created';
+        $event->sap_cogs_reversal_journal_entry = (string) ($result['TransId'] ?? '');
+        $event->sap_cogs_reversal_journal_num = (string) ($result['Number'] ?? $result['JdtNum'] ?? '');
+        $event->sap_cogs_reversal_error = null;
+        $event->save();
     }
 }

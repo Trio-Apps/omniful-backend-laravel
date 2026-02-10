@@ -453,6 +453,68 @@ trait HandlesSapPurchaseAndProducts
         return $payload;
     }
 
+    public function createCogsReversalJournalForCreditMemo(array $data): array
+    {
+        $creditMemoDocEntry = (int) ($data['credit_memo_doc_entry'] ?? 0);
+        if ($creditMemoDocEntry <= 0) {
+            throw new \RuntimeException('Missing SAP credit memo doc entry for COGS reversal');
+        }
+
+        $expenseAccount = trim((string) ($data['expense_account'] ?? config('omniful.order_accounting.cogs_expense_account', '')));
+        $offsetAccount = trim((string) ($data['offset_account'] ?? config('omniful.order_accounting.inventory_offset_account', '')));
+        if ($expenseAccount === '' || $offsetAccount === '') {
+            return [
+                'ignored' => true,
+                'reason' => 'Missing COGS reversal accounts',
+            ];
+        }
+
+        $creditMemo = $this->getCreditNote($creditMemoDocEntry);
+        $amount = (float) ($data['amount'] ?? $this->extractCreditMemoCogsAmount($creditMemo));
+        if ($amount <= 0) {
+            return [
+                'ignored' => true,
+                'reason' => 'COGS reversal amount is not available from credit memo lines',
+            ];
+        }
+
+        $referenceDate = $this->formatDate((string) (($creditMemo['DocDate'] ?? null) ?: now()->format('Y-m-d')));
+        $reference = trim((string) ($data['reference'] ?? ($creditMemo['NumAtCard'] ?? '')));
+        $memo = trim((string) ($data['memo'] ?? ('COGS reversal for Credit Memo ' . ($creditMemo['DocNum'] ?? $creditMemoDocEntry))));
+
+        $body = [
+            'ReferenceDate' => $referenceDate,
+            'DueDate' => $referenceDate,
+            'TaxDate' => $referenceDate,
+            'Memo' => $memo,
+            'JournalEntryLines' => [
+                [
+                    'AccountCode' => $offsetAccount,
+                    'Debit' => $amount,
+                ],
+                [
+                    'AccountCode' => $expenseAccount,
+                    'Credit' => $amount,
+                ],
+            ],
+        ];
+
+        if ($reference !== '') {
+            $body['Reference'] = $reference;
+            $body['Reference2'] = (string) ($creditMemo['DocNum'] ?? $reference);
+            $body['Reference3'] = $reference;
+        }
+
+        $response = $this->post('/JournalEntries', $body);
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP COGS reversal journal create failed: ' . $response->status() . ' ' . $response->body());
+        }
+
+        $payload = $response->json() ?? [];
+        $payload['ignored'] = false;
+        return $payload;
+    }
+
     public function createPurchaseOrderFromOmniful(array $data): array
     {
         $docDate = $this->formatDate(data_get($data, 'created_at'));
@@ -911,6 +973,17 @@ trait HandlesSapPurchaseAndProducts
         return $response->json() ?? [];
     }
 
+    private function getCreditNote(int $docEntry): array
+    {
+        $response = $this->get('/CreditNotes(' . $docEntry . ')');
+
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP credit memo fetch failed: ' . $response->status() . ' ' . $response->body());
+        }
+
+        return $response->json() ?? [];
+    }
+
     private function ensureCustomerExists(string $cardCode, array $data, string $externalId): void
     {
         $existing = $this->getBusinessPartner($cardCode);
@@ -1007,6 +1080,38 @@ trait HandlesSapPurchaseAndProducts
     {
         $total = 0.0;
         foreach ((array) ($delivery['DocumentLines'] ?? []) as $line) {
+            $qty = (float) ($line['Quantity'] ?? 0);
+            if ($qty <= 0) {
+                continue;
+            }
+
+            $unitCost = null;
+            $candidates = [
+                $line['StockPrice'] ?? null,
+                $line['GrossBuyPrice'] ?? null,
+                $line['GrossBase'] ?? null,
+            ];
+            foreach ($candidates as $candidate) {
+                if (is_numeric($candidate) && (float) $candidate > 0) {
+                    $unitCost = (float) $candidate;
+                    break;
+                }
+            }
+
+            if ($unitCost === null || $unitCost <= 0) {
+                continue;
+            }
+
+            $total += $qty * $unitCost;
+        }
+
+        return round($total, 6);
+    }
+
+    private function extractCreditMemoCogsAmount(array $creditMemo): float
+    {
+        $total = 0.0;
+        foreach ((array) ($creditMemo['DocumentLines'] ?? []) as $line) {
             $qty = (float) ($line['Quantity'] ?? 0);
             if ($qty <= 0) {
                 continue;

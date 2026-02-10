@@ -88,6 +88,7 @@ return [
         'cogs_journal_enabled' => (bool) env('OMNIFUL_COGS_JOURNAL_ENABLED', false),
         'cogs_expense_account' => env('OMNIFUL_COGS_EXPENSE_ACCOUNT', ''),
         'inventory_offset_account' => env('OMNIFUL_COGS_INVENTORY_OFFSET_ACCOUNT', ''),
+        'return_cogs_reversal_enabled' => (bool) env('OMNIFUL_RETURN_COGS_REVERSAL_ENABLED', false),
     ],
     'hub_defaults' => [
         'type' => env('OMNIFUL_HUB_TYPE', 'warehouse'),
