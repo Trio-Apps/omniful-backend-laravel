@@ -48,11 +48,9 @@ class WebhookRetryService
      */
     public function retryReturnOrderEvent(OmnifulReturnOrderEvent $event): array
     {
-        $event->sap_status = 'retrying';
-        $event->sap_error = null;
-        $event->save();
-
         try {
+            $event->sap_error = null;
+            $event->save();
             app(ReturnOrderWebhookService::class)->process($event);
             return ['ok' => true, 'message' => 'Return order retried successfully'];
         } catch (\Throwable $e) {
@@ -68,11 +66,9 @@ class WebhookRetryService
      */
     public function retryPurchaseOrderEvent(OmnifulPurchaseOrderEvent $event): array
     {
-        $event->sap_status = 'retrying';
-        $event->sap_error = null;
-        $event->save();
-
         try {
+            $event->sap_error = null;
+            $event->save();
             app(PurchaseOrderWebhookService::class)->process($event);
             return ['ok' => true, 'message' => 'Purchase order retried successfully'];
         } catch (\Throwable $e) {
@@ -92,11 +88,9 @@ class WebhookRetryService
             return ['ok' => false, 'message' => 'Items direction is SAP -> Omniful'];
         }
 
-        $event->sap_status = 'retrying';
-        $event->sap_error = null;
-        $event->save();
-
         try {
+            $event->sap_error = null;
+            $event->save();
             $rawData = data_get($event->payload, 'data', []);
             $data = is_array($rawData) ? ($rawData[0] ?? []) : $rawData;
             if (!is_array($data)) {
@@ -134,11 +128,9 @@ class WebhookRetryService
             return ['ok' => false, 'message' => 'Inventory direction is SAP -> Omniful'];
         }
 
-        $event->sap_status = 'retrying';
-        $event->sap_error = null;
-        $event->save();
-
         try {
+            $event->sap_error = null;
+            $event->save();
             if ($this->isStockTransferPayload((array) $event->payload)) {
                 app(StockTransferWebhookService::class)->process($event);
             } else {

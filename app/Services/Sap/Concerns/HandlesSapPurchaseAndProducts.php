@@ -632,6 +632,14 @@ trait HandlesSapPurchaseAndProducts
 
         $supplier = (array) data_get($data, 'supplier', []);
         $cardName = data_get($supplier, 'name') ?: $cardCode;
+        $phone = (string) (data_get($supplier, 'phone') ?? '');
+
+        if ($phone !== '') {
+            $existingByPhone = $this->findBusinessPartnerByPhone($phone);
+            if ($existingByPhone && strtoupper((string) ($existingByPhone['CardType'] ?? '')) === 'S') {
+                return (string) $existingByPhone['CardCode'];
+            }
+        }
 
         $body = [
             'CardCode' => $cardCode,
@@ -640,13 +648,9 @@ trait HandlesSapPurchaseAndProducts
         ];
 
         $email = data_get($supplier, 'email');
-        $phone = data_get($supplier, 'phone');
 
         if ($email) {
             $body['EmailAddress'] = $email;
-        }
-        if ($phone) {
-            $body['Phone1'] = $phone;
         }
 
         $response = $this->post('/BusinessPartners', $body);
@@ -654,19 +658,11 @@ trait HandlesSapPurchaseAndProducts
             return $cardCode;
         }
 
-        if (array_key_exists('Phone1', $body) && $this->isSapMobileDuplicationError($response->body())) {
-            $existingByPhone = $this->findSupplierByPhone((string) $body['Phone1']);
-            if ($existingByPhone) {
-                return $existingByPhone;
+        if ($this->isSapMobileDuplicationError($response->body()) && $phone !== '') {
+            $existingByPhone = $this->findBusinessPartnerByPhone($phone);
+            if ($existingByPhone && strtoupper((string) ($existingByPhone['CardType'] ?? '')) === 'S') {
+                return (string) $existingByPhone['CardCode'];
             }
-
-            unset($body['Phone1']);
-            $retry = $this->post('/BusinessPartners', $body);
-            if ($retry->successful()) {
-                return $cardCode;
-            }
-
-            throw new \RuntimeException('SAP vendor create failed (retry without phone): ' . $retry->status() . ' ' . $retry->body());
         }
 
         throw new \RuntimeException('SAP vendor create failed: ' . $response->status() . ' ' . $response->body());
@@ -777,7 +773,6 @@ trait HandlesSapPurchaseAndProducts
             'CardName' => $cardName,
             'CardType' => 'S',
             'EmailAddress' => $email ?: null,
-            'Phone1' => $phone ?: null,
         ], fn ($value) => $value !== null && $value !== '');
 
         if ($existing) {
@@ -800,19 +795,14 @@ trait HandlesSapPurchaseAndProducts
             return ['status' => 'created', 'supplier_code' => $cardCode];
         }
 
-        if (array_key_exists('Phone1', $payload) && $this->isSapMobileDuplicationError($response->body())) {
-            $existingByPhone = $this->findSupplierByPhone((string) $payload['Phone1']);
+        if ($this->isSapMobileDuplicationError($response->body()) && $phone) {
+            $existingByPhone = $this->findBusinessPartnerByPhone((string) $phone);
             if ($existingByPhone) {
-                return ['status' => 'linked_existing_by_phone', 'supplier_code' => $existingByPhone];
+                $existingType = strtoupper((string) ($existingByPhone['CardType'] ?? ''));
+                if ($existingType === 'S') {
+                    return ['status' => 'linked_existing_by_phone', 'supplier_code' => (string) $existingByPhone['CardCode']];
+                }
             }
-
-            unset($payload['Phone1']);
-            $retry = $this->post('/BusinessPartners', $payload);
-            if ($retry->successful()) {
-                return ['status' => 'created', 'supplier_code' => $cardCode];
-            }
-
-            throw new \RuntimeException('SAP supplier create failed (retry without phone): ' . $retry->status() . ' ' . $retry->body());
         }
 
         throw new \RuntimeException('SAP supplier create failed: ' . $response->status() . ' ' . $response->body());
@@ -1401,23 +1391,35 @@ trait HandlesSapPurchaseAndProducts
         return 'OMNC' . $hash;
     }
 
-    private function findSupplierByPhone(string $phone): ?string
+    /**
+     * @return array<string,mixed>|null
+     */
+    private function findBusinessPartnerByPhone(string $phone): ?array
     {
         $target = $this->normalizePhone($phone);
         if ($target === '') {
             return null;
         }
 
-        foreach ($this->fetchSuppliers() as $supplier) {
-            $candidate = (string) ($supplier['Phone1'] ?? '');
-            if ($candidate === '') {
-                continue;
-            }
+        $sources = $this->fetchAllWithFallback([
+            "/BusinessPartners?\$select=CardCode,CardType,Phone1,Cellular,Phone2",
+            '/BusinessPartners',
+        ]);
 
-            if ($this->normalizePhone($candidate) === $target) {
-                $cardCode = (string) ($supplier['CardCode'] ?? '');
-                if ($cardCode !== '') {
-                    return $cardCode;
+        foreach ($sources as $bp) {
+            $candidates = [
+                (string) ($bp['Phone1'] ?? ''),
+                (string) ($bp['Cellular'] ?? ''),
+                (string) ($bp['Phone2'] ?? ''),
+            ];
+
+            foreach ($candidates as $candidate) {
+                if ($candidate === '') {
+                    continue;
+                }
+
+                if ($this->normalizePhone($candidate) === $target) {
+                    return $bp;
                 }
             }
         }
