@@ -1401,6 +1401,30 @@ trait HandlesSapPurchaseAndProducts
             return null;
         }
 
+        $raw = trim($phone);
+        $candidates = array_values(array_unique(array_filter([
+            $raw,
+            $target,
+            '+' . ltrim($target, '+'),
+        ], fn ($v) => is_string($v) && trim($v) !== '')));
+
+        foreach ($candidates as $candidate) {
+            $escaped = str_replace("'", "''", $candidate);
+            $filter = rawurlencode("(Phone1 eq '{$escaped}' or Cellular eq '{$escaped}' or Phone2 eq '{$escaped}')");
+            $path = "/BusinessPartners?\$select=CardCode,CardType,Phone1,Cellular,Phone2&\$filter={$filter}";
+            $response = $this->get($path);
+
+            if ($response->successful()) {
+                $rows = (array) ($response->json('value') ?? []);
+                foreach ($rows as $bp) {
+                    $cardCode = (string) ($bp['CardCode'] ?? '');
+                    if ($cardCode !== '') {
+                        return $bp;
+                    }
+                }
+            }
+        }
+
         $sources = $this->fetchAllWithFallback([
             "/BusinessPartners?\$select=CardCode,CardType,Phone1,Cellular,Phone2",
             '/BusinessPartners',
