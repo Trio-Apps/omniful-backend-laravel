@@ -4,6 +4,8 @@ namespace App\Filament\Pages;
 
 use Filament\Actions\Action;
 use App\Models\OmnifulReturnOrderEvent;
+use App\Services\Webhooks\WebhookRetryService;
+use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use App\Filament\Pages\OmnifulReturnOrderEventView;
 use Filament\Tables\Columns\IconColumn;
@@ -97,6 +99,18 @@ class OmnifulReturnOrderEvents extends Page implements HasTable
                 ->modalContent(fn ($record) => view('filament.pages.omniful-return-order-sap-error', [
                     'error' => $record->sap_error,
                 ])),
+            Action::make('retrySap')
+                ->label('Retry SAP')
+                ->icon('heroicon-o-arrow-path')
+                ->color('warning')
+                ->action(function ($record) {
+                    $result = app(WebhookRetryService::class)->retryReturnOrderEvent($record);
+                    Notification::make()
+                        ->title($result['ok'] ? 'Retry completed' : 'Retry failed')
+                        ->body($result['message'])
+                        ->{$result['ok'] ? 'success' : 'danger'}()
+                        ->send();
+                }),
         ];
     }
 }

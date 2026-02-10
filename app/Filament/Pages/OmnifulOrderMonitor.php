@@ -3,6 +3,9 @@
 namespace App\Filament\Pages;
 
 use App\Models\OmnifulOrder;
+use App\Services\Webhooks\WebhookRetryService;
+use Filament\Actions\Action;
+use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
@@ -57,6 +60,35 @@ class OmnifulOrderMonitor extends Page implements HasTable
             Filter::make('stuck')
                 ->label('SAP Pending')
                 ->query(fn (Builder $query) => $query->whereNull('sap_status')),
+        ];
+    }
+
+    protected function getTableActions(): array
+    {
+        return [
+            Action::make('retrySap')
+                ->label('Retry SAP')
+                ->icon('heroicon-o-arrow-path')
+                ->color('warning')
+                ->action(function ($record) {
+                    $result = app(WebhookRetryService::class)->retryLatestOrderEventForOrder($record);
+                    Notification::make()
+                        ->title($result['ok'] ? 'Retry completed' : 'Retry failed')
+                        ->body($result['message'])
+                        ->{$result['ok'] ? 'success' : 'danger'}()
+                        ->send();
+                }),
+            Action::make('sapError')
+                ->label('SAP Error')
+                ->icon('heroicon-o-exclamation-triangle')
+                ->color('danger')
+                ->visible(fn ($record) => (bool) $record->sap_error)
+                ->modalHeading('SAP Error')
+                ->modalSubmitAction(false)
+                ->modalCancelActionLabel('Close')
+                ->modalContent(fn ($record) => view('filament.pages.sap-sync-error', [
+                    'error' => $record->sap_error,
+                ])),
         ];
     }
 }

@@ -3,8 +3,11 @@
 namespace App\Filament\Pages;
 
 use App\Models\OmnifulOrderEvent;
+use App\Models\OmnifulOrder;
 use App\Filament\Pages\OmnifulOrderEventView;
+use App\Services\Webhooks\WebhookRetryService;
 use Filament\Actions\Action;
+use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
@@ -66,6 +69,14 @@ class OmnifulOrderEvents extends Page implements HasTable
                 ->label('Received')
                 ->dateTime()
                 ->sortable(),
+            TextColumn::make('sap_status')
+                ->label('SAP')
+                ->badge()
+                ->getStateUsing(function ($record) {
+                    $order = OmnifulOrder::where('external_id', $record->external_id)->first();
+                    return $order?->sap_status ?: '-';
+                })
+                ->toggleable(),
         ];
     }
 
@@ -76,6 +87,35 @@ class OmnifulOrderEvents extends Page implements HasTable
                 ->label('View')
                 ->icon('heroicon-o-eye')
                 ->url(fn ($record) => OmnifulOrderEventView::getUrl(['record' => $record])),
+            Action::make('retrySap')
+                ->label('Retry SAP')
+                ->icon('heroicon-o-arrow-path')
+                ->color('warning')
+                ->action(function ($record) {
+                    $result = app(WebhookRetryService::class)->retryOrderEvent($record);
+                    Notification::make()
+                        ->title($result['ok'] ? 'Retry completed' : 'Retry failed')
+                        ->body($result['message'])
+                        ->{$result['ok'] ? 'success' : 'danger'}()
+                        ->send();
+                }),
+            Action::make('sapError')
+                ->label('SAP Error')
+                ->icon('heroicon-o-exclamation-triangle')
+                ->color('danger')
+                ->visible(function ($record) {
+                    $order = OmnifulOrder::where('external_id', $record->external_id)->first();
+                    return (bool) $order?->sap_error;
+                })
+                ->modalHeading('SAP Error')
+                ->modalSubmitAction(false)
+                ->modalCancelActionLabel('Close')
+                ->modalContent(function ($record) {
+                    $order = OmnifulOrder::where('external_id', $record->external_id)->first();
+                    return view('filament.pages.sap-sync-error', [
+                        'error' => $order?->sap_error,
+                    ]);
+                }),
         ];
     }
 }
