@@ -1401,50 +1401,25 @@ trait HandlesSapPurchaseAndProducts
             return null;
         }
 
-        $raw = trim($phone);
-        $candidates = array_values(array_unique(array_filter([
-            $raw,
-            $target,
-            '+' . ltrim($target, '+'),
-        ], fn ($v) => is_string($v) && trim($v) !== '')));
-
-        foreach ($candidates as $candidate) {
-            $escaped = str_replace("'", "''", $candidate);
-            $filter = rawurlencode("(Phone1 eq '{$escaped}' or Cellular eq '{$escaped}' or Phone2 eq '{$escaped}')");
-            $path = "/BusinessPartners?\$select=CardCode,CardType,Phone1,Cellular,Phone2&\$filter={$filter}";
-            $response = $this->get($path);
-
-            if ($response->successful()) {
-                $rows = (array) ($response->json('value') ?? []);
-                foreach ($rows as $bp) {
-                    $cardCode = (string) ($bp['CardCode'] ?? '');
-                    if ($cardCode !== '') {
-                        return $bp;
-                    }
-                }
-            }
+        // Fast path: search only suppliers list (small + avoids full BusinessPartners scan).
+        try {
+            $suppliers = $this->fetchSuppliers();
+        } catch (\Throwable) {
+            return null;
         }
 
-        $sources = $this->fetchAllWithFallback([
-            "/BusinessPartners?\$select=CardCode,CardType,Phone1,Cellular,Phone2",
-            '/BusinessPartners',
-        ]);
+        foreach ($suppliers as $bp) {
+            $candidate = (string) ($bp['Phone1'] ?? '');
+            if ($candidate === '') {
+                continue;
+            }
 
-        foreach ($sources as $bp) {
-            $candidates = [
-                (string) ($bp['Phone1'] ?? ''),
-                (string) ($bp['Cellular'] ?? ''),
-                (string) ($bp['Phone2'] ?? ''),
-            ];
-
-            foreach ($candidates as $candidate) {
-                if ($candidate === '') {
-                    continue;
-                }
-
-                if ($this->normalizePhone($candidate) === $target) {
-                    return $bp;
-                }
+            if ($this->normalizePhone($candidate) === $target) {
+                return [
+                    'CardCode' => (string) ($bp['CardCode'] ?? ''),
+                    'CardType' => 'S',
+                    'Phone1' => $candidate,
+                ];
             }
         }
 
