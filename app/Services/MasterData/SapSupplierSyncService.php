@@ -1,0 +1,101 @@
+<?php
+
+namespace App\Services\MasterData;
+
+use App\Models\SapSupplier;
+use App\Services\OmnifulApiClient;
+use App\Services\SapServiceLayerClient;
+
+class SapSupplierSyncService
+{
+    public function syncFromSap(SapServiceLayerClient $client): void
+    {
+        $rows = $client->fetchSuppliers();
+        foreach ($rows as $row) {
+            $code = $row['CardCode'] ?? null;
+            if (!$code) {
+                continue;
+            }
+            SapSupplier::updateOrCreate(
+                ['code' => $code],
+                [
+                    'name' => $row['CardName'] ?? null,
+                    'email' => $row['EmailAddress'] ?? null,
+                    'phone' => $row['Phone1'] ?? null,
+                    'payload' => $row,
+                    'synced_at' => now(),
+                    'status' => 'synced',
+                    'error' => null,
+                ]
+            );
+            $record = SapSupplier::where('code', $code)->first();
+            if ($record && !$record->omniful_status) {
+                $record->omniful_status = 'pending';
+                $record->save();
+            }
+        }
+    }
+
+    public function pushToOmniful(OmnifulApiClient $client): array
+    {
+        $records = SapSupplier::query()
+            ->whereNull('omniful_status')
+            ->orWhere('omniful_status', '!=', 'synced')
+            ->orderBy('code')
+            ->get();
+
+        $ok = 0;
+        $failed = 0;
+        $errors = [];
+
+        foreach ($records as $record) {
+            $record->omniful_status = 'syncing';
+            $record->omniful_error = null;
+            $record->save();
+
+            try {
+                $usedFallbacks = [];
+                $name = $record->name ?: $record->code;
+                if (!$record->name) {
+                    $usedFallbacks[] = 'name';
+                }
+                $email = $record->email ?: ($record->code . '@sap.local');
+                if (!$record->email) {
+                    $usedFallbacks[] = 'email';
+                }
+                $phone = $record->phone ?: '0000000000';
+                if (!$record->phone) {
+                    $usedFallbacks[] = 'phone';
+                }
+                $payload = [
+                    'name' => $name,
+                    'email' => $email,
+                    'phone' => $phone,
+                    'code' => $record->code,
+                ];
+
+                $response = $client->upsert('suppliers', $record->code, $payload);
+                if (!$response['ok']) {
+                    throw new \RuntimeException('HTTP ' . $response['status'] . ' ' . $response['body']);
+                }
+
+                $record->omniful_status = 'synced';
+                $record->omniful_error = $usedFallbacks
+                    ? ('Filled defaults for: ' . implode(', ', $usedFallbacks))
+                    : null;
+                $record->omniful_synced_at = now();
+                $record->save();
+                $ok++;
+            } catch (\Throwable $e) {
+                $record->omniful_status = 'failed';
+                $record->omniful_error = $e->getMessage();
+                $record->save();
+                $failed++;
+                $errors[] = $record->code . ': ' . $e->getMessage();
+            }
+        }
+
+        return ['ok' => $ok, 'failed' => $failed, 'errors' => $errors];
+    }
+}
+
