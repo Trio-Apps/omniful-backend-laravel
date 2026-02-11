@@ -2,6 +2,8 @@
 
 namespace App\Services\Sap\Concerns;
 
+use Illuminate\Support\Facades\Log;
+
 trait HandlesSapPurchaseAndProducts
 {
     public function createArReserveInvoiceFromOmnifulOrder(array $data, string $externalId): array
@@ -633,11 +635,22 @@ trait HandlesSapPurchaseAndProducts
         $supplier = (array) data_get($data, 'supplier', []);
         $cardName = data_get($supplier, 'name') ?: $cardCode;
         $phone = (string) (data_get($supplier, 'phone') ?? '');
+        $email = data_get($supplier, 'email');
 
         if ($phone !== '') {
-            $existingByPhone = $this->findBusinessPartnerByPhone($phone);
-            if ($existingByPhone && strtoupper((string) ($existingByPhone['CardType'] ?? '')) === 'S') {
-                return (string) $existingByPhone['CardCode'];
+            $existingByPhone = $this->findBusinessPartnerByPhone($phone, null);
+            if ($existingByPhone) {
+                $existingCode = (string) ($existingByPhone['CardCode'] ?? '');
+                $existingType = strtoupper((string) ($existingByPhone['CardType'] ?? ''));
+                if ($existingCode !== '') {
+                    if ($existingType === 'S') {
+                        return $existingCode;
+                    }
+
+                    if ($this->ensureBusinessPartnerIsSupplier($existingCode, $cardName, $email)) {
+                        return $existingCode;
+                    }
+                }
             }
         }
 
@@ -646,8 +659,6 @@ trait HandlesSapPurchaseAndProducts
             'CardName' => $cardName,
             'CardType' => 'S',
         ];
-
-        $email = data_get($supplier, 'email');
 
         if ($email) {
             $body['EmailAddress'] = $email;
@@ -659,9 +670,19 @@ trait HandlesSapPurchaseAndProducts
         }
 
         if ($this->isSapMobileDuplicationError($response->body()) && $phone !== '') {
-            $existingByPhone = $this->findBusinessPartnerByPhone($phone);
-            if ($existingByPhone && strtoupper((string) ($existingByPhone['CardType'] ?? '')) === 'S') {
-                return (string) $existingByPhone['CardCode'];
+            $existingByPhone = $this->findBusinessPartnerByPhone($phone, null);
+            if ($existingByPhone) {
+                $existingCode = (string) ($existingByPhone['CardCode'] ?? '');
+                $existingType = strtoupper((string) ($existingByPhone['CardType'] ?? ''));
+                if ($existingCode !== '') {
+                    if ($existingType === 'S') {
+                        return $existingCode;
+                    }
+
+                    if ($this->ensureBusinessPartnerIsSupplier($existingCode, $cardName, $email)) {
+                        return $existingCode;
+                    }
+                }
             }
         }
 
@@ -1394,7 +1415,7 @@ trait HandlesSapPurchaseAndProducts
     /**
      * @return array<string,mixed>|null
      */
-    private function findBusinessPartnerByPhone(string $phone): ?array
+    private function findBusinessPartnerByPhone(string $phone, ?string $cardType = 'S'): ?array
     {
         $target = $this->normalizePhone($phone);
         if ($target === '') {
@@ -1411,7 +1432,8 @@ trait HandlesSapPurchaseAndProducts
 
         foreach ($candidates as $candidate) {
             $escaped = str_replace("'", "''", $candidate);
-            $filter = rawurlencode("CardType eq 'S' and (Phone1 eq '{$escaped}' or Cellular eq '{$escaped}' or Phone2 eq '{$escaped}')");
+            $typeFilter = $cardType ? "CardType eq '" . str_replace("'", "''", $cardType) . "' and " : '';
+            $filter = rawurlencode($typeFilter . "(Phone1 eq '{$escaped}' or Cellular eq '{$escaped}' or Phone2 eq '{$escaped}')");
             $path = "/BusinessPartners?\$select=CardCode,CardType,Phone1,Cellular,Phone2&\$filter={$filter}";
             $response = $this->get($path);
 
@@ -1429,6 +1451,42 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return null;
+    }
+
+    private function ensureBusinessPartnerIsSupplier(string $cardCode, string $cardName, mixed $email): bool
+    {
+        $bp = $this->getBusinessPartner($cardCode);
+        if (!$bp) {
+            return false;
+        }
+
+        $currentType = strtoupper((string) ($bp['CardType'] ?? ''));
+        if ($currentType === 'S') {
+            return true;
+        }
+
+        $patch = [
+            'CardType' => 'S',
+            'CardName' => $cardName ?: (string) ($bp['CardName'] ?? $cardCode),
+        ];
+
+        if ($email) {
+            $patch['EmailAddress'] = (string) $email;
+        }
+
+        $encoded = str_replace("'", "''", $cardCode);
+        $response = $this->patch("/BusinessPartners('{$encoded}')", $patch);
+        if ($response->successful()) {
+            return true;
+        }
+
+        Log::warning('Failed to convert BusinessPartner to supplier', [
+            'card_code' => $cardCode,
+            'status' => $response->status(),
+            'body' => $response->body(),
+        ]);
+
+        return false;
     }
 
     private function normalizePhone(string $value): string
