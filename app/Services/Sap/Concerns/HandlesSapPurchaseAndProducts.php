@@ -1430,9 +1430,18 @@ trait HandlesSapPurchaseAndProducts
         }
 
         $response = $this->post('/BusinessPartners', $body);
-        if (!$response->successful()) {
-            throw new \RuntimeException('SAP customer create failed: ' . $response->status() . ' ' . $response->body());
+        if ($response->successful()) {
+            return;
         }
+
+        if ($this->isSapMobileDuplicationError($response->body())) {
+            $resolvedCode = $this->resolveExistingCustomerCodeForDuplication((string) ($phone ?? ''), $fullName, $email);
+            if ($resolvedCode !== null) {
+                return;
+            }
+        }
+
+        throw new \RuntimeException('SAP customer create failed: ' . $response->status() . ' ' . $response->body());
     }
 
     private function buildCustomerCode(array $data, string $externalId): string
@@ -1549,6 +1558,43 @@ trait HandlesSapPurchaseAndProducts
         return null;
     }
 
+    private function resolveExistingCustomerCodeForDuplication(string $phone, string $cardName, mixed $email): ?string
+    {
+        if ($phone !== '') {
+            $existingByPhone = $this->findBusinessPartnerByPhone($phone, null);
+            if ($existingByPhone) {
+                $existingCode = (string) ($existingByPhone['CardCode'] ?? '');
+                $existingType = strtoupper((string) ($existingByPhone['CardType'] ?? ''));
+                if ($existingCode !== '') {
+                    if ($existingType === 'C') {
+                        return $existingCode;
+                    }
+                    if ($this->ensureBusinessPartnerIsCustomer($existingCode, $cardName, $email)) {
+                        return $existingCode;
+                    }
+                }
+            }
+        }
+
+        if ($cardName !== '') {
+            $existingByName = $this->findBusinessPartnerByName($cardName, null);
+            if ($existingByName) {
+                $existingCode = (string) ($existingByName['CardCode'] ?? '');
+                $existingType = strtoupper((string) ($existingByName['CardType'] ?? ''));
+                if ($existingCode !== '') {
+                    if ($existingType === 'C') {
+                        return $existingCode;
+                    }
+                    if ($this->ensureBusinessPartnerIsCustomer($existingCode, $cardName, $email)) {
+                        return $existingCode;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
     private function extractSupplierPhone(array $data): string
     {
         $candidates = [
@@ -1600,6 +1646,42 @@ trait HandlesSapPurchaseAndProducts
         }
 
         Log::warning('Failed to convert BusinessPartner to supplier', [
+            'card_code' => $cardCode,
+            'status' => $response->status(),
+            'body' => $response->body(),
+        ]);
+
+        return false;
+    }
+
+    private function ensureBusinessPartnerIsCustomer(string $cardCode, string $cardName, mixed $email): bool
+    {
+        $bp = $this->getBusinessPartner($cardCode);
+        if (!$bp) {
+            return false;
+        }
+
+        $currentType = strtoupper((string) ($bp['CardType'] ?? ''));
+        if ($currentType === 'C') {
+            return true;
+        }
+
+        $patch = [
+            'CardType' => 'C',
+            'CardName' => $cardName ?: (string) ($bp['CardName'] ?? $cardCode),
+        ];
+
+        if ($email) {
+            $patch['EmailAddress'] = (string) $email;
+        }
+
+        $encoded = str_replace("'", "''", $cardCode);
+        $response = $this->patch("/BusinessPartners('{$encoded}')", $patch);
+        if ($response->successful()) {
+            return true;
+        }
+
+        Log::warning('Failed to convert BusinessPartner to customer', [
             'card_code' => $cardCode,
             'status' => $response->status(),
             'body' => $response->body(),
