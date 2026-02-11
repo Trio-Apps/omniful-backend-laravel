@@ -62,10 +62,37 @@ trait HandlesSapHttp
                 'path' => $path,
                 'duration_ms' => $durationMs,
                 'status' => $response?->status(),
+                'meta' => $this->buildSapPostMeta($path, $body),
             ]);
 
             $this->logout($cookies);
         }
+    }
+
+    private function buildSapPostMeta(string $path, array|object $body): array
+    {
+        if ($path !== '/BusinessPartners') {
+            return [];
+        }
+
+        $payload = is_object($body) ? (array) $body : $body;
+        $keys = array_values(array_map('strval', array_keys($payload)));
+
+        $phoneKeys = ['Phone1', 'Phone2', 'Cellular', 'MobilePhone'];
+        $presentPhoneKeys = [];
+        foreach ($phoneKeys as $key) {
+            if (array_key_exists($key, $payload) && trim((string) $payload[$key]) !== '') {
+                $presentPhoneKeys[] = $key;
+            }
+        }
+
+        return [
+            'keys' => $keys,
+            'has_phone_fields' => $presentPhoneKeys !== [],
+            'phone_keys' => $presentPhoneKeys,
+            'card_code' => (string) ($payload['CardCode'] ?? ''),
+            'card_type' => (string) ($payload['CardType'] ?? ''),
+        ];
     }
 
 
