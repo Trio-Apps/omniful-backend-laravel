@@ -18,10 +18,22 @@ class WebhookRetryService
      */
     public function retryOrderEvent(OmnifulOrderEvent $event): array
     {
+        $order = OmnifulOrder::where('external_id', $event->external_id)->first();
+        if ($order) {
+            $order->sap_status = 'retrying';
+            $order->sap_error = null;
+            $order->save();
+        }
+
         try {
             app(OrderWebhookService::class)->process($event);
             return ['ok' => true, 'message' => 'Order event retried successfully'];
         } catch (\Throwable $e) {
+            if ($order) {
+                $order->sap_status = 'failed';
+                $order->sap_error = $e->getMessage();
+                $order->save();
+            }
             return ['ok' => false, 'message' => $e->getMessage()];
         }
     }

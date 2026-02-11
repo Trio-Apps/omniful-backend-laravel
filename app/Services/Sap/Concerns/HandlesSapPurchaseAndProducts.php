@@ -1446,6 +1446,22 @@ trait HandlesSapPurchaseAndProducts
             if ($resolvedCode !== null) {
                 return $resolvedCode;
             }
+
+            // If source payload has no phone, retry create with alternate generated phone values.
+            if (trim((string) ($phone ?? '')) === '') {
+                for ($attempt = 1; $attempt <= 3; $attempt++) {
+                    $retryBody = $body;
+                    $retryBody['Phone1'] = $this->buildFallbackCustomerPhone($cardCode, $externalId, $attempt);
+                    $retry = $this->post('/BusinessPartners', $retryBody);
+                    if ($retry->successful()) {
+                        return $cardCode;
+                    }
+
+                    if (!$this->isSapMobileDuplicationError($retry->body())) {
+                        throw new \RuntimeException('SAP customer create failed: ' . $retry->status() . ' ' . $retry->body());
+                    }
+                }
+            }
         }
 
         throw new \RuntimeException('SAP customer create failed: ' . $response->status() . ' ' . $response->body());
@@ -1463,11 +1479,14 @@ trait HandlesSapPurchaseAndProducts
         return 'OMNC' . $hash;
     }
 
-    private function buildFallbackCustomerPhone(string $cardCode, string $externalId): string
+    private function buildFallbackCustomerPhone(string $cardCode, string $externalId, int $attempt = 0): string
     {
         $seed = $cardCode !== '' ? $cardCode : $externalId;
         if ($seed === '') {
             $seed = (string) now()->timestamp;
+        }
+        if ($attempt > 0) {
+            $seed .= '-' . $attempt . '-' . now()->format('Hisv');
         }
 
         // Build deterministic 10-digit phone-like value to avoid SAP duplicate-null mobile issue.
