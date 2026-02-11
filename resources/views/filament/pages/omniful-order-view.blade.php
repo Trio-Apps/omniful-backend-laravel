@@ -1,96 +1,147 @@
 <x-filament::page>
+    <style>
+        .po-grid { display: grid; gap: 24px; }
+        @media (min-width: 768px) { .po-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+        @media (min-width: 1024px) { .po-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+        .po-card { border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px; background: #ffffff; }
+        .po-kv { border: 1px solid #f1f5f9; background: #f8fafc; border-radius: 10px; padding: 12px; }
+        .po-label { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: #6b7280; font-weight: 600; }
+        .po-value { margin-top: 4px; font-size: 14px; font-weight: 600; color: #111827; word-break: break-word; }
+        .po-break { word-break: break-word; overflow-wrap: anywhere; }
+        .po-table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+        .po-table th { text-align: left; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: #6b7280; background: #f3f4f6; padding: 10px 12px; border-bottom: 1px solid #e5e7eb; white-space: nowrap; }
+        .po-table td { padding: 10px 12px; border-bottom: 1px solid #eef2f7; font-size: 13px; color: #374151; }
+        .po-table tbody tr:hover { background: #f9fafb; }
+        .po-num { text-align: center; font-variant-numeric: tabular-nums; }
+        .po-empty { text-align: center; color: #6b7280; padding: 12px; }
+        .po-table-wrap { overflow-x: auto; border: 1px solid #e5e7eb; border-radius: 10px; background: #ffffff; }
+        .po-section-pad { padding: 24px 16px; margin-top: 6px; margin-bottom: 6px; }
+        .po-section-gap { margin-bottom: 22px; }
+    </style>
+
     <div class="space-y-6">
-        <x-filament::section>
-            <x-slot name="heading">Order Overview</x-slot>
-            <div class="grid gap-4 md:grid-cols-3">
-                <div>
-                    <div class="text-xs text-gray-500">Order ID</div>
-                    <div class="font-semibold">{{ $record->external_id ?: '-' }}</div>
+        <x-filament::section class="po-section-gap">
+            <x-slot name="heading">Overview</x-slot>
+            <div class="po-grid po-grid-3 po-section-pad">
+                <div class="po-card">
+                    <div class="po-label">Event</div>
+                    <div class="po-value">{{ data_get($payload, 'event_name', $record->last_event_type ?: '-') }}</div>
                 </div>
-                <div>
-                    <div class="text-xs text-gray-500">Omniful Status</div>
-                    <div class="font-semibold">{{ $record->omniful_status ?: '-' }}</div>
+                <div class="po-card">
+                    <div class="po-label">Display ID</div>
+                    <div class="po-value">{{ data_get($data, 'order_id', $record->external_id ?: '-') }}</div>
                 </div>
-                <div>
-                    <div class="text-xs text-gray-500">Last Event</div>
-                    <div class="font-semibold">{{ $record->last_event_type ?: '-' }}</div>
+                <div class="po-card">
+                    <div class="po-label">Status</div>
+                    <div class="po-value">{{ data_get($data, 'status_code', $record->omniful_status ?: '-') }}</div>
                 </div>
-                <div>
-                    <div class="text-xs text-gray-500">SAP Status</div>
-                    <div class="font-semibold">{{ $record->sap_status ?: '-' }}</div>
+                <div class="po-card">
+                    <div class="po-label">Hub Code</div>
+                    <div class="po-value">{{ data_get($data, 'hub_code', '-') }}</div>
                 </div>
-                <div>
-                    <div class="text-xs text-gray-500">SAP Order DocNum</div>
-                    <div class="font-semibold">{{ $record->sap_doc_num ?: '-' }}</div>
+                <div class="po-card">
+                    <div class="po-label">Total Amount</div>
+                    <div class="po-value">{{ data_get($data, 'invoice.total', data_get($data, 'total', '-')) }} {{ data_get($data, 'invoice.currency', '') }}</div>
                 </div>
-                <div>
-                    <div class="text-xs text-gray-500">Last Event At</div>
-                    <div class="font-semibold">{{ optional($record->last_event_at)->toDateTimeString() ?: '-' }}</div>
+                <div class="po-card">
+                    <div class="po-label">Created At</div>
+                    <div class="po-value">{{ data_get($data, 'order_created_at', data_get($data, 'created_at', '-')) }}</div>
+                </div>
+                <div class="po-card">
+                    <div class="po-label">SAP Status</div>
+                    <div class="po-value">{{ $record->sap_status ?: '-' }}</div>
+                </div>
+                <div class="po-card">
+                    <div class="po-label">SAP DocNum</div>
+                    <div class="po-value">{{ $record->sap_doc_num ?: '-' }}</div>
+                </div>
+                <div class="po-card">
+                    <div class="po-label">SAP Error</div>
+                    <div class="po-value po-break">{{ $record->sap_error ?: '-' }}</div>
                 </div>
             </div>
         </x-filament::section>
 
-        <x-filament::section>
-            <x-slot name="heading">SAP Flow</x-slot>
-            <div class="grid gap-4 md:grid-cols-4">
-                <div>
-                    <div class="text-xs text-gray-500">AR Reserve</div>
-                    <div class="font-semibold">{{ $record->sap_doc_num ?: '-' }}</div>
+        <div class="po-grid po-grid-2">
+            <x-filament::section class="po-section-gap">
+                <x-slot name="heading">Supplier</x-slot>
+                <div class="po-grid po-grid-2 po-section-pad">
+                    <div class="po-kv">
+                        <div class="po-label">Name</div>
+                        <div class="po-value po-break">{{ data_get($data, 'supplier.name', '-') }}</div>
+                    </div>
+                    <div class="po-kv">
+                        <div class="po-label">Code</div>
+                        <div class="po-value po-break">{{ data_get($data, 'supplier.code', '-') }}</div>
+                    </div>
+                    <div class="po-kv">
+                        <div class="po-label">Email</div>
+                        <div class="po-value po-break">{{ data_get($data, 'supplier.email', '-') }}</div>
+                    </div>
+                    <div class="po-kv">
+                        <div class="po-label">Phone</div>
+                        <div class="po-value po-break">{{ data_get($data, 'supplier.phone', '-') }}</div>
+                    </div>
                 </div>
-                <div>
-                    <div class="text-xs text-gray-500">Incoming Payment</div>
-                    <div class="font-semibold">{{ $record->sap_payment_doc_num ?: '-' }}</div>
-                </div>
-                <div>
-                    <div class="text-xs text-gray-500">Delivery</div>
-                    <div class="font-semibold">{{ $record->sap_delivery_doc_num ?: '-' }}</div>
-                </div>
-                <div>
-                    <div class="text-xs text-gray-500">COGS JE</div>
-                    <div class="font-semibold">{{ $record->sap_cogs_journal_num ?: '-' }}</div>
-                </div>
-            </div>
-            @if ($record->sap_error)
-                <div class="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                    {{ $record->sap_error }}
-                </div>
-            @endif
-        </x-filament::section>
+            </x-filament::section>
 
-        <x-filament::section>
+            <x-filament::section class="po-section-gap">
+                <x-slot name="heading">Seller</x-slot>
+                <div class="po-grid po-grid-2 po-section-pad">
+                    <div class="po-kv">
+                        <div class="po-label">Name</div>
+                        <div class="po-value po-break">{{ data_get($data, 'store_name', data_get($data, 'seller.name', '-')) }}</div>
+                    </div>
+                    <div class="po-kv">
+                        <div class="po-label">Code</div>
+                        <div class="po-value po-break">{{ data_get($data, 'seller_code', data_get($data, 'seller.code', '-')) }}</div>
+                    </div>
+                    <div class="po-kv">
+                        <div class="po-label">Email</div>
+                        <div class="po-value po-break">{{ data_get($data, 'seller.email', '-') }}</div>
+                    </div>
+                    <div class="po-kv">
+                        <div class="po-label">Phone</div>
+                        <div class="po-value po-break">{{ data_get($data, 'seller.phone', '-') }}</div>
+                    </div>
+                </div>
+            </x-filament::section>
+        </div>
+
+        <x-filament::section class="po-section-gap">
             <x-slot name="heading">Items</x-slot>
-            <div class="overflow-x-auto">
-                <table class="min-w-full text-sm">
+            <div class="po-table-wrap po-section-pad">
+                <table class="po-table">
+                    <colgroup>
+                        <col>
+                        <col style="width: 90px;">
+                        <col style="width: 120px;">
+                        <col style="width: 120px;">
+                    </colgroup>
                     <thead>
-                        <tr class="border-b">
-                            <th class="px-3 py-2 text-left">SKU</th>
-                            <th class="px-3 py-2 text-left">Qty</th>
-                            <th class="px-3 py-2 text-left">Unit Price</th>
-                            <th class="px-3 py-2 text-left">Total</th>
+                        <tr>
+                            <th>SKU</th>
+                            <th class="po-num">Qty</th>
+                            <th class="po-num">Unit Price</th>
+                            <th class="po-num">Total</th>
                         </tr>
                     </thead>
                     <tbody>
                         @forelse ($items as $item)
-                            <tr class="border-b">
-                                <td class="px-3 py-2">{{ data_get($item, 'sku_code', '-') }}</td>
-                                <td class="px-3 py-2">{{ data_get($item, 'quantity', '-') }}</td>
-                                <td class="px-3 py-2">{{ data_get($item, 'unit_price', '-') }}</td>
-                                <td class="px-3 py-2">{{ data_get($item, 'total', '-') }}</td>
+                            <tr>
+                                <td class="po-break">{{ data_get($item, 'sku_code', '-') }}</td>
+                                <td class="po-num">{{ data_get($item, 'quantity', '-') }}</td>
+                                <td class="po-num">{{ data_get($item, 'unit_price', '-') }}</td>
+                                <td class="po-num">{{ data_get($item, 'total', '-') }}</td>
                             </tr>
                         @empty
                             <tr>
-                                <td colspan="4" class="px-3 py-4 text-center text-gray-500">No items</td>
+                                <td class="po-empty" colspan="4">No items</td>
                             </tr>
                         @endforelse
                     </tbody>
                 </table>
             </div>
         </x-filament::section>
-
-        <x-filament::section>
-            <x-slot name="heading">Payload</x-slot>
-            <pre class="overflow-x-auto rounded-lg bg-gray-50 p-3 text-xs">{{ json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) }}</pre>
-        </x-filament::section>
     </div>
 </x-filament::page>
-
