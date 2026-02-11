@@ -153,18 +153,23 @@ class SapSuppliers extends Page implements HasTable
             return;
         }
 
-        $result = app(SapSupplierSyncService::class)->pushToOmniful($client);
+        $batchSize = (int) config('omniful.push_batch.suppliers', 50);
+        $result = app(SapSupplierSyncService::class)->pushToOmniful($client, $batchSize);
         $ok = (int) ($result['ok'] ?? 0);
         $failed = (int) ($result['failed'] ?? 0);
+        $remaining = (int) ($result['remaining'] ?? 0);
         $errors = (array) ($result['errors'] ?? []);
 
-        $body = 'Synced: ' . $ok . ' | Failed: ' . $failed;
+        $body = 'Batch: ' . $batchSize . ' | Synced: ' . $ok . ' | Failed: ' . $failed . ' | Remaining: ' . $remaining;
         if ($failed > 0) {
             $body .= "\n" . implode("\n", array_slice($errors, 0, 5));
         }
+        if ($remaining > 0 && $failed === 0) {
+            $body .= "\nRun Push again to continue next batch.";
+        }
 
         Notification::make()
-            ->title('Omniful push finished')
+            ->title($remaining > 0 ? 'Omniful push batch finished' : 'Omniful push finished')
             ->body($body)
             ->{$failed > 0 ? 'warning' : 'success'}()
             ->send();

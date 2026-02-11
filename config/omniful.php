@@ -29,6 +29,9 @@ return [
         ))),
     ],
     'sync_timeout' => (int) env('OMNIFUL_TIMEOUT', 20),
+    'push_batch' => [
+        'suppliers' => (int) env('OMNIFUL_PUSH_BATCH_SUPPLIERS', 50),
+    ],
     'sap_item_defaults' => [
         'item_type' => env('SAP_ITEM_TYPE', 'itItems'),
         'item_type_numeric_fallback' => (int) env('SAP_ITEM_TYPE_NUMERIC_FALLBACK', 0),

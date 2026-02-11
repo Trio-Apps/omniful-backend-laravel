@@ -46,13 +46,22 @@ class SapSupplierSyncService
         }
     }
 
-    public function pushToOmniful(OmnifulApiClient $client): array
+    public function pushToOmniful(OmnifulApiClient $client, ?int $limit = null): array
     {
-        $records = SapSupplier::query()
-            ->whereNull('omniful_status')
-            ->orWhere('omniful_status', '!=', 'synced')
+        $query = SapSupplier::query()
+            ->where(function ($q): void {
+                $q->whereNull('omniful_status')
+                    ->orWhereIn('omniful_status', ['pending', 'failed']);
+            })
             ->orderBy('code')
-            ->get();
+            ;
+
+        $batchLimit = (int) ($limit ?? config('omniful.push_batch.suppliers', 50));
+        if ($batchLimit > 0) {
+            $query->limit($batchLimit);
+        }
+
+        $records = $query->get();
 
         $ok = 0;
         $failed = 0;
@@ -113,7 +122,14 @@ class SapSupplierSyncService
             }
         }
 
-        return ['ok' => $ok, 'failed' => $failed, 'errors' => $errors];
+        $remaining = SapSupplier::query()
+            ->where(function ($q): void {
+                $q->whereNull('omniful_status')
+                    ->orWhereIn('omniful_status', ['pending', 'failed']);
+            })
+            ->count();
+
+        return ['ok' => $ok, 'failed' => $failed, 'errors' => $errors, 'remaining' => $remaining];
     }
 
     public function syncFromOmniful(OmnifulApiClient $omnifulClient, SapServiceLayerClient $sapClient): array
