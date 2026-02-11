@@ -754,6 +754,7 @@ trait HandlesSapPurchaseAndProducts
         $body = [
             'ItemCode' => $itemCode,
             'ItemName' => $name,
+            'ItemType' => 'itItems',
             'InventoryItem' => 'tYES',
             'PurchaseItem' => 'tYES',
             'SalesItem' => 'tNO',
@@ -1000,6 +1001,7 @@ trait HandlesSapPurchaseAndProducts
         $body = [
             'ItemCode' => $itemCode,
             'ItemName' => $name,
+            'ItemType' => 'itItems',
             'InventoryItem' => 'tYES',
             'PurchaseItem' => 'tYES',
             'SalesItem' => 'tNO',
@@ -1206,6 +1208,7 @@ trait HandlesSapPurchaseAndProducts
         $body = [
             'ItemCode' => $bundleCode,
             'ItemName' => $name,
+            'ItemType' => 'itItems',
             'InventoryItem' => 'tNO',
             'PurchaseItem' => 'tNO',
             'SalesItem' => 'tYES',
