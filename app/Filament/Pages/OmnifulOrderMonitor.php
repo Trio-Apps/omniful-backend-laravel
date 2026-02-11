@@ -3,6 +3,7 @@
 namespace App\Filament\Pages;
 
 use App\Models\OmnifulOrder;
+use App\Filament\Pages\OmnifulOrderView;
 use App\Services\Webhooks\WebhookRetryService;
 use Filament\Actions\Action;
 use Filament\Notifications\Notification;
@@ -43,7 +44,22 @@ class OmnifulOrderMonitor extends Page implements HasTable
             TextColumn::make('sap_status')
                 ->label('SAP Status')
                 ->badge()
+                ->color(fn ($state) => match ($state) {
+                    'created', 'updated', 'logged', 'created_mixed' => 'success',
+                    'failed' => 'danger',
+                    'ignored', 'blocked' => 'warning',
+                    default => 'gray',
+                })
                 ->toggleable(),
+            TextColumn::make('sap_doc_num')
+                ->label('SAP Order')
+                ->toggleable(),
+            TextColumn::make('sap_delivery_doc_num')
+                ->label('SAP Delivery')
+                ->toggleable(isToggledHiddenByDefault: true),
+            TextColumn::make('sap_payment_doc_num')
+                ->label('SAP Payment')
+                ->toggleable(isToggledHiddenByDefault: true),
             TextColumn::make('last_event_type')
                 ->label('Last Event')
                 ->toggleable(),
@@ -66,10 +82,15 @@ class OmnifulOrderMonitor extends Page implements HasTable
     protected function getTableActions(): array
     {
         return [
+            Action::make('view')
+                ->label('View')
+                ->icon('heroicon-o-eye')
+                ->url(fn ($record) => OmnifulOrderView::getUrl(['record' => $record])),
             Action::make('retrySap')
                 ->label('Retry SAP')
                 ->icon('heroicon-o-arrow-path')
                 ->color('warning')
+                ->visible(fn ($record) => (bool) $record->sap_error || in_array((string) $record->sap_status, ['failed', 'pending', 'retrying'], true))
                 ->action(function ($record) {
                     $result = app(WebhookRetryService::class)->retryLatestOrderEventForOrder($record);
                     Notification::make()

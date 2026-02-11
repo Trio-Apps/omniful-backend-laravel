@@ -193,12 +193,14 @@ abstract class OmnifulWebhookBase
     {
         $candidates = [
             Arr::get($payload, 'status'),
+            Arr::get($payload, 'status_code'),
             Arr::get($payload, 'order_status'),
             Arr::get($payload, 'orderStatus'),
             Arr::get($payload, 'state'),
             Arr::get($payload, 'order.status'),
             Arr::get($payload, 'order.state'),
             Arr::get($payload, 'data.status'),
+            Arr::get($payload, 'data.status_code'),
             Arr::get($payload, 'data.order_status'),
         ];
 

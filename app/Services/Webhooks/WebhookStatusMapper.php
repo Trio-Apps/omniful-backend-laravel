@@ -108,7 +108,7 @@ class WebhookStatusMapper
     public function resolveOrderInvoiceEligibility(string $eventName, string $status, array $paymentSignals): array
     {
         $eventName = $this->normalize($eventName);
-        $status = $this->normalize($status);
+        $status = $this->normalizeOrderStatus($status);
         $strict = (bool) config('omniful.status_mapping.order.strict', false);
 
         $eventRules = array_map([$this, 'normalize'], (array) config('omniful.status_mapping.order.invoice_event_contains', []));
@@ -119,6 +119,11 @@ class WebhookStatusMapper
         $isPrepaid = $this->isPrepaid($paymentSignals);
 
         if ($eventOk && $statusOk && $isPrepaid) {
+            return ['eligible' => true, 'reason' => null];
+        }
+
+        // Some Omniful flows send creation as order.update.event with status_code like new_order.
+        if ($isPrepaid && $this->isOrderInitialStatus($status)) {
             return ['eligible' => true, 'reason' => null];
         }
 
@@ -135,7 +140,7 @@ class WebhookStatusMapper
     public function resolveOrderDeliveryEligibility(string $eventName, string $status): array
     {
         $eventName = $this->normalize($eventName);
-        $status = $this->normalize($status);
+        $status = $this->normalizeOrderStatus($status);
         $strict = (bool) config('omniful.status_mapping.order.strict', false);
 
         $eventRules = array_map([$this, 'normalize'], (array) config('omniful.status_mapping.order.delivery_event_contains', []));
@@ -181,6 +186,25 @@ class WebhookStatusMapper
     private function normalize(string $value): string
     {
         return strtolower(trim($value));
+    }
+
+    private function normalizeOrderStatus(string $value): string
+    {
+        $normalized = $this->normalize($value);
+        if (str_ends_with($normalized, '_order')) {
+            return substr($normalized, 0, -6);
+        }
+
+        if (str_ends_with($normalized, '-order')) {
+            return substr($normalized, 0, -6);
+        }
+
+        return $normalized;
+    }
+
+    private function isOrderInitialStatus(string $status): bool
+    {
+        return in_array($status, ['new', 'created', 'pending', 'confirmed'], true);
     }
 
     /**
