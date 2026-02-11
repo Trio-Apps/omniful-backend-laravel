@@ -1418,9 +1418,7 @@ trait HandlesSapPurchaseAndProducts
         ];
 
         $email = data_get($data, 'customer.email') ?? data_get($data, 'billing_address.email');
-        $phone = data_get($data, 'customer.phone')
-            ?? data_get($data, 'billing_address.phone')
-            ?? data_get($data, 'shipping_address.phone');
+        $phone = $this->extractCustomerPhone($data);
 
         $resolvedByIdentity = $this->resolveExistingCustomerCodeForDuplication((string) ($phone ?? ''), $fullName, $email);
         if ($resolvedByIdentity !== null) {
@@ -1434,6 +1432,7 @@ trait HandlesSapPurchaseAndProducts
         if ($phoneValue === '') {
             $phoneValue = $this->buildFallbackCustomerPhone($cardCode, $externalId);
         }
+        $phoneValue = $this->normalizePhoneForSap($phoneValue);
         $body['Phone1'] = $phoneValue;
 
         $response = $this->post('/BusinessPartners', $body);
@@ -1500,6 +1499,47 @@ trait HandlesSapPurchaseAndProducts
         return '9' . $digits;
     }
 
+    private function extractCustomerPhone(array $data): string
+    {
+        $candidates = [
+            data_get($data, 'customer.phone'),
+            data_get($data, 'customer.mobile'),
+            data_get($data, 'billing_address.phone'),
+            data_get($data, 'shipping_address.phone'),
+            data_get($data, 'phone'),
+            data_get($data, 'mobile'),
+        ];
+
+        foreach ($candidates as $value) {
+            $v = trim((string) ($value ?? ''));
+            if ($v !== '') {
+                return $v;
+            }
+        }
+
+        return '';
+    }
+
+    private function normalizePhoneForSap(string $phone): string
+    {
+        $raw = trim($phone);
+        if ($raw === '') {
+            return '';
+        }
+
+        $digits = $this->normalizePhone($raw);
+        if ($digits === '') {
+            return $raw;
+        }
+
+        // Keep international format when possible (+<digits>) to reduce variant mismatch.
+        if (str_starts_with($raw, '+')) {
+            return '+' . $digits;
+        }
+
+        return $digits;
+    }
+
     /**
      * @return array<string,mixed>|null
      */
@@ -1511,12 +1551,28 @@ trait HandlesSapPurchaseAndProducts
         }
 
         $raw = trim($phone);
-        $candidates = array_values(array_unique(array_filter([
+        $candidates = [
             $raw,
             $target,
             '+' . ltrim($target, '+'),
             '0' . ltrim($target, '0'),
-        ], fn ($v) => is_string($v) && trim($v) !== '')));
+        ];
+
+        // Common KSA fallback variants: 966xxxxxxxxx <-> 0xxxxxxxxx
+        if (str_starts_with($target, '966') && strlen($target) > 9) {
+            $local = substr($target, 3);
+            $candidates[] = $local;
+            $candidates[] = '0' . ltrim($local, '0');
+            $candidates[] = '+966' . ltrim($local, '0');
+        }
+
+        if (strlen($target) >= 9) {
+            $last9 = substr($target, -9);
+            $candidates[] = $last9;
+            $candidates[] = '0' . ltrim($last9, '0');
+        }
+
+        $candidates = array_values(array_unique(array_filter($candidates, fn ($v) => is_string($v) && trim($v) !== '')));
 
         foreach ($candidates as $candidate) {
             $escaped = str_replace("'", "''", $candidate);
