@@ -182,9 +182,26 @@ class IntegrationControlSettings extends Page implements HasForms
 
     private function getDistributionRuleOptions(int $dimension): array
     {
-        return SapCostCenter::query()
+        $exact = SapCostCenter::query()
             ->where('source', 'distribution_rule')
             ->where('dimension', $dimension)
+            ->where('is_active', true)
+            ->orderBy('code')
+            ->get()
+            ->mapWithKeys(fn (SapCostCenter $row) => [
+                $row->code => $row->code . ' - ' . ($row->name ?: $row->code),
+            ])
+            ->all();
+
+        if ($exact !== []) {
+            return $exact;
+        }
+
+        // Some SAP setups don't expose dimension field consistently via Service Layer.
+        // In that case, show uncategorized active rules instead of empty selects.
+        return SapCostCenter::query()
+            ->where('source', 'distribution_rule')
+            ->whereNull('dimension')
             ->where('is_active', true)
             ->orderBy('code')
             ->get()

@@ -16,17 +16,38 @@ class SapCostCenterSyncService
 
         $upsertRows = [];
         foreach ($distributionRules as $row) {
-            $code = trim((string) ($row['FactorCode'] ?? $row['OcrCode'] ?? $row['Code'] ?? ''));
+            $code = trim((string) (
+                $row['FactorCode']
+                ?? $row['OcrCode']
+                ?? $row['Code']
+                ?? $row['CentreCode']
+                ?? $row['CenterCode']
+                ?? ''
+            ));
             if ($code === '') {
                 continue;
             }
 
-            $dimension = $this->parseDimension($row['InWhichDimension'] ?? $row['DimCode'] ?? null);
+            $dimension = $this->parseDimension(
+                $row['InWhichDimension']
+                ?? $row['DimCode']
+                ?? $row['CostCentreTypeCode']
+                ?? $row['CostCenterTypeCode']
+                ?? $row['Dimension']
+                ?? null
+            );
             $upsertRows[] = [
                 'source' => 'distribution_rule',
                 'dimension' => $dimension,
                 'code' => $code,
-                'name' => trim((string) ($row['FactorName'] ?? $row['OcrName'] ?? $row['Name'] ?? $code)),
+                'name' => trim((string) (
+                    $row['FactorName']
+                    ?? $row['OcrName']
+                    ?? $row['Name']
+                    ?? $row['CentreName']
+                    ?? $row['CenterName']
+                    ?? $code
+                )),
                 'is_active' => $this->parseActive($row['Active'] ?? $row['Locked'] ?? null, true),
                 'synced_at' => $now,
                 'updated_at' => $now,
@@ -115,4 +136,3 @@ class SapCostCenterSyncService
         return $default;
     }
 }
-

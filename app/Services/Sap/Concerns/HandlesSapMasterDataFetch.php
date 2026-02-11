@@ -145,11 +145,11 @@ trait HandlesSapMasterDataFetch
     public function fetchCostCenters(): array
     {
         return $this->fetchAllWithFallback([
-            "/DistributionRules?\$select=FactorCode,FactorName,InWhichDimension,Active&\$filter=Active%20eq%20'tYES'&\$top=200",
-            "/DistributionRules?\$select=FactorCode,InWhichDimension,Active&\$filter=Active%20eq%20'tYES'&\$top=200",
-            "/DistributionRules?\$select=FactorCode,FactorName,InWhichDimension,Active&\$top=200",
-            "/DistributionRules?\$select=FactorCode,InWhichDimension,Active&\$top=200",
-            "/DistributionRules?\$select=FactorCode,InWhichDimension&\$top=200",
+            "/DistributionRules?\$select=FactorCode,FactorName,InWhichDimension,CostCentreTypeCode,CostCenterTypeCode,CentreCode,CentreName,Active&\$filter=Active%20eq%20'tYES'&\$top=200",
+            "/DistributionRules?\$select=FactorCode,InWhichDimension,CostCentreTypeCode,CostCenterTypeCode,CentreCode,CentreName,Active&\$filter=Active%20eq%20'tYES'&\$top=200",
+            "/DistributionRules?\$select=FactorCode,FactorName,InWhichDimension,CostCentreTypeCode,CostCenterTypeCode,CentreCode,CentreName,Active&\$top=200",
+            "/DistributionRules?\$select=FactorCode,InWhichDimension,CostCentreTypeCode,CostCenterTypeCode,CentreCode,CentreName,Active&\$top=200",
+            "/DistributionRules?\$select=FactorCode,InWhichDimension,CostCentreTypeCode,CostCenterTypeCode,CentreCode,CentreName&\$top=200",
             "/DistributionRules?\$top=200",
         ]);
     }
