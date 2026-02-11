@@ -1434,6 +1434,7 @@ trait HandlesSapPurchaseAndProducts
         }
         $phoneValue = $this->normalizePhoneForSap($phoneValue);
         $body['Phone1'] = $phoneValue;
+        $body['Cellular'] = $phoneValue;
 
         $response = $this->post('/BusinessPartners', $body);
         if ($response->successful()) {
@@ -1450,7 +1451,9 @@ trait HandlesSapPurchaseAndProducts
             if (trim((string) ($phone ?? '')) === '') {
                 for ($attempt = 1; $attempt <= 3; $attempt++) {
                     $retryBody = $body;
-                    $retryBody['Phone1'] = $this->buildFallbackCustomerPhone($cardCode, $externalId, $attempt);
+                    $retryPhone = $this->normalizePhoneForSap($this->buildFallbackCustomerPhone($cardCode, $externalId, $attempt));
+                    $retryBody['Phone1'] = $retryPhone;
+                    $retryBody['Cellular'] = $retryPhone;
                     $retry = $this->post('/BusinessPartners', $retryBody);
                     if ($retry->successful()) {
                         return $cardCode;
@@ -1532,9 +1535,21 @@ trait HandlesSapPurchaseAndProducts
             return $raw;
         }
 
-        // Keep international format when possible (+<digits>) to reduce variant mismatch.
-        if (str_starts_with($raw, '+')) {
-            return '+' . $digits;
+        // KSA local mobile format expected by many SAP B1 setups: 05XXXXXXXX.
+        if (str_starts_with($digits, '966') && strlen($digits) >= 12) {
+            $local = substr($digits, 3);
+            if (str_starts_with($local, '5') && strlen($local) >= 9) {
+                return '0' . substr($local, 0, 9);
+            }
+            return substr($local, 0, 10);
+        }
+
+        if (str_starts_with($digits, '5') && strlen($digits) === 9) {
+            return '0' . $digits;
+        }
+
+        if (str_starts_with($digits, '05') && strlen($digits) >= 10) {
+            return substr($digits, 0, 10);
         }
 
         return $digits;
