@@ -1742,7 +1742,7 @@ trait HandlesSapPurchaseAndProducts
         $seen = 0;
 
         while ($seen < $maxRows) {
-            $path = "/BusinessPartners?\$select=CardCode,CardType,CardName,EmailAddress,Phone1,Cellular,Phone2&\$filter=CardType eq 'C'&\$top={$top}&\$skip={$skip}";
+            $path = "/BusinessPartners?\$select=CardCode,CardType,CardName,EmailAddress,Phone1,Cellular,Phone2&\$top={$top}&\$skip={$skip}";
             $response = $this->get($path);
             if (!$response->successful()) {
                 return null;
@@ -1755,6 +1755,10 @@ trait HandlesSapPurchaseAndProducts
 
             foreach ($rows as $row) {
                 $seen++;
+                $rowType = $this->normalizeSapCardType((string) ($row['CardType'] ?? ''));
+                if (!in_array($rowType, ['C', 'S', 'L'], true)) {
+                    continue;
+                }
                 $rowEmail = strtolower(trim((string) ($row['EmailAddress'] ?? '')));
                 $rowName = strtolower(trim((string) ($row['CardName'] ?? '')));
 
