@@ -71,7 +71,7 @@ trait HandlesSapHttp
 
     private function buildSapPostMeta(string $path, array|object $body): array
     {
-        if ($path !== '/BusinessPartners') {
+        if ($path !== '/BusinessPartners' && $path !== '/Items') {
             return [];
         }
 
@@ -86,13 +86,29 @@ trait HandlesSapHttp
             }
         }
 
-        return [
+        $meta = [
             'keys' => $keys,
-            'has_phone_fields' => $presentPhoneKeys !== [],
-            'phone_keys' => $presentPhoneKeys,
-            'card_code' => (string) ($payload['CardCode'] ?? ''),
-            'card_type' => (string) ($payload['CardType'] ?? ''),
+            'path' => $path,
         ];
+
+        if ($path === '/BusinessPartners') {
+            $meta['has_phone_fields'] = $presentPhoneKeys !== [];
+            $meta['phone_keys'] = $presentPhoneKeys;
+            $meta['card_code'] = (string) ($payload['CardCode'] ?? '');
+            $meta['card_type'] = (string) ($payload['CardType'] ?? '');
+        }
+
+        if ($path === '/Items') {
+            $udfKeys = array_values(array_filter($keys, fn ($k) => str_starts_with($k, 'U_')));
+            $meta['item_code'] = (string) ($payload['ItemCode'] ?? '');
+            $meta['item_type'] = $payload['ItemType'] ?? null;
+            $meta['inventory_item'] = $payload['InventoryItem'] ?? null;
+            $meta['purchase_item'] = $payload['PurchaseItem'] ?? null;
+            $meta['sales_item'] = $payload['SalesItem'] ?? null;
+            $meta['udf_keys'] = $udfKeys;
+        }
+
+        return $meta;
     }
 
 

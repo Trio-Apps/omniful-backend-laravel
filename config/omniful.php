@@ -29,6 +29,12 @@ return [
         ))),
     ],
     'sync_timeout' => (int) env('OMNIFUL_TIMEOUT', 20),
+    'sap_item_defaults' => [
+        'item_type' => env('SAP_ITEM_TYPE', 'itItems'),
+        'item_type_numeric_fallback' => (int) env('SAP_ITEM_TYPE_NUMERIC_FALLBACK', 0),
+        'item_type_udf_field' => env('SAP_ITEM_TYPE_UDF_FIELD', ''),
+        'item_type_udf_value' => env('SAP_ITEM_TYPE_UDF_VALUE', ''),
+    ],
     'tenant_token_endpoint' => env('OMNIFUL_TENANT_TOKEN_ENDPOINT', '/sales-channel/public/v1/tenants/token'),
     'seller_token_endpoint' => env('OMNIFUL_SELLER_TOKEN_ENDPOINT', '/sales-channel/public/v1/token'),
     'webhook_signature_header' => env('OMNIFUL_WEBHOOK_SIGNATURE_HEADER', 'X-Omniful-Signature'),

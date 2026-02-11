@@ -754,13 +754,25 @@ trait HandlesSapPurchaseAndProducts
         $body = [
             'ItemCode' => $itemCode,
             'ItemName' => $name,
-            'ItemType' => 'itItems',
+            'ItemType' => (string) config('omniful.sap_item_defaults.item_type', 'itItems'),
             'InventoryItem' => 'tYES',
             'PurchaseItem' => 'tYES',
             'SalesItem' => 'tNO',
         ];
+        $this->applyItemTypeUdfDefaults($body);
 
         $response = $this->post('/Items', $body);
+        if (!$response->successful() && $this->isSapItemTypeRequiredError($response->body())) {
+            $retryBody = $body;
+            $retryBody['ItemType'] = (int) config('omniful.sap_item_defaults.item_type_numeric_fallback', 0);
+            $this->applyItemTypeUdfDefaults($retryBody);
+            $retry = $this->post('/Items', $retryBody);
+            if ($retry->successful()) {
+                return true;
+            }
+
+            throw new \RuntimeException('SAP item create failed for line ' . $lineIndex . ' (' . $itemCode . ') [retry]: ' . $retry->status() . ' ' . $retry->body());
+        }
 
         if (!$response->successful()) {
             throw new \RuntimeException('SAP item create failed for line ' . $lineIndex . ' (' . $itemCode . '): ' . $response->status() . ' ' . $response->body());
@@ -1001,13 +1013,24 @@ trait HandlesSapPurchaseAndProducts
         $body = [
             'ItemCode' => $itemCode,
             'ItemName' => $name,
-            'ItemType' => 'itItems',
+            'ItemType' => (string) config('omniful.sap_item_defaults.item_type', 'itItems'),
             'InventoryItem' => 'tYES',
             'PurchaseItem' => 'tYES',
             'SalesItem' => 'tNO',
         ];
+        $this->applyItemTypeUdfDefaults($body);
 
         $response = $this->post('/Items', $body);
+        if (!$response->successful() && $this->isSapItemTypeRequiredError($response->body())) {
+            $retryBody = $body;
+            $retryBody['ItemType'] = (int) config('omniful.sap_item_defaults.item_type_numeric_fallback', 0);
+            $this->applyItemTypeUdfDefaults($retryBody);
+            $retry = $this->post('/Items', $retryBody);
+            if ($retry->successful()) {
+                return;
+            }
+            throw new \RuntimeException('SAP item create failed [retry]: ' . $retry->status() . ' ' . $retry->body());
+        }
 
         if (!$response->successful()) {
             throw new \RuntimeException('SAP item create failed: ' . $response->status() . ' ' . $response->body());
@@ -1208,13 +1231,24 @@ trait HandlesSapPurchaseAndProducts
         $body = [
             'ItemCode' => $bundleCode,
             'ItemName' => $name,
-            'ItemType' => 'itItems',
+            'ItemType' => (string) config('omniful.sap_item_defaults.item_type', 'itItems'),
             'InventoryItem' => 'tNO',
             'PurchaseItem' => 'tNO',
             'SalesItem' => 'tYES',
         ];
+        $this->applyItemTypeUdfDefaults($body);
 
         $response = $this->post('/Items', $body);
+        if (!$response->successful() && $this->isSapItemTypeRequiredError($response->body())) {
+            $retryBody = $body;
+            $retryBody['ItemType'] = (int) config('omniful.sap_item_defaults.item_type_numeric_fallback', 0);
+            $this->applyItemTypeUdfDefaults($retryBody);
+            $retry = $this->post('/Items', $retryBody);
+            if ($retry->successful()) {
+                return;
+            }
+            throw new \RuntimeException('SAP bundle item create failed [retry]: ' . $retry->status() . ' ' . $retry->body());
+        }
         if (!$response->successful()) {
             throw new \RuntimeException('SAP bundle item create failed: ' . $response->status() . ' ' . $response->body());
         }
@@ -1495,6 +1529,30 @@ trait HandlesSapPurchaseAndProducts
     private function normalizePhone(string $value): string
     {
         return preg_replace('/\D+/', '', $value) ?? '';
+    }
+
+    /**
+     * @param array<string,mixed> $body
+     */
+    private function applyItemTypeUdfDefaults(array &$body): void
+    {
+        $udfField = trim((string) config('omniful.sap_item_defaults.item_type_udf_field', ''));
+        $udfValue = config('omniful.sap_item_defaults.item_type_udf_value', '');
+        if ($udfField === '' || $udfValue === null || $udfValue === '') {
+            return;
+        }
+
+        if (!str_starts_with($udfField, 'U_')) {
+            $udfField = 'U_' . $udfField;
+        }
+
+        $body[$udfField] = $udfValue;
+    }
+
+    private function isSapItemTypeRequiredError(string $body): bool
+    {
+        $normalized = strtolower($body);
+        return str_contains($normalized, 'please specify item type');
     }
 
     private function isSapMobileDuplicationError(string $body): bool
