@@ -1539,14 +1539,24 @@ trait HandlesSapPurchaseAndProducts
         $udfField = trim((string) config('omniful.sap_item_defaults.item_type_udf_field', ''));
         $udfValue = config('omniful.sap_item_defaults.item_type_udf_value', '');
         if ($udfField === '' || $udfValue === null || $udfValue === '') {
-            return;
+            // continue to built-in defaults below
+        } else {
+            if (!str_starts_with($udfField, 'U_')) {
+                $udfField = 'U_' . $udfField;
+            }
+
+            $body[$udfField] = $udfValue;
         }
 
-        if (!str_starts_with($udfField, 'U_')) {
-            $udfField = 'U_' . $udfField;
+        $itemTypeDefault = trim((string) config('omniful.sap_item_defaults.item_type_default_value', 'product'));
+        if ($itemTypeDefault !== '' && !array_key_exists('U_ItemType', $body)) {
+            $body['U_ItemType'] = $itemTypeDefault;
         }
 
-        $body[$udfField] = $udfValue;
+        $productTypeDefault = trim((string) config('omniful.sap_item_defaults.product_type_default_value', 'product'));
+        if ($productTypeDefault !== '' && !array_key_exists('U_ProductType', $body)) {
+            $body['U_ProductType'] = $productTypeDefault;
+        }
     }
 
     private function isSapItemTypeRequiredError(string $body): bool
