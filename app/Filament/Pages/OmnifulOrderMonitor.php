@@ -47,7 +47,7 @@ class OmnifulOrderMonitor extends Page implements HasTable
                 ->color(fn ($state) => match ($state) {
                     'created', 'updated', 'logged', 'created_mixed' => 'success',
                     'failed' => 'danger',
-                    'ignored', 'blocked' => 'warning',
+                    'ignored', 'blocked', 'pending', 'retrying' => 'warning',
                     default => 'gray',
                 })
                 ->toggleable(),
@@ -90,7 +90,7 @@ class OmnifulOrderMonitor extends Page implements HasTable
                 ->label('Retry SAP')
                 ->icon('heroicon-o-arrow-path')
                 ->color('warning')
-                ->visible(fn ($record) => (bool) $record->sap_error || in_array((string) $record->sap_status, ['failed', 'pending', 'retrying'], true))
+                ->visible(fn ($record) => (bool) $record->sap_error || empty($record->sap_status) || in_array((string) $record->sap_status, ['failed', 'pending', 'retrying'], true))
                 ->action(function ($record) {
                     $result = app(WebhookRetryService::class)->retryLatestOrderEventForOrder($record);
                     Notification::make()

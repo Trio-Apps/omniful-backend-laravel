@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Webhooks;
 
+use App\Models\OmnifulOrder;
 use App\Models\OmnifulOrderEvent;
 use App\Services\Webhooks\OrderWebhookService;
 use Illuminate\Http\Request;
@@ -24,6 +25,15 @@ class OmnifulOrderWebhookController extends OmnifulWebhookBase
             return response()->json(['status' => 'ok', 'id' => $event->id, 'duplicate' => true]);
         }
 
+        if (!empty($event->external_id)) {
+            OmnifulOrder::where('external_id', $event->external_id)
+                ->whereNull('sap_status')
+                ->update([
+                    'sap_status' => 'pending',
+                    'sap_error' => null,
+                ]);
+        }
+
         try {
             $service->process($event);
         } catch (\Throwable $e) {
@@ -32,6 +42,13 @@ class OmnifulOrderWebhookController extends OmnifulWebhookBase
                 'external_id' => $event->external_id,
                 'error' => $e->getMessage(),
             ]);
+
+            if (!empty($event->external_id)) {
+                OmnifulOrder::where('external_id', $event->external_id)->update([
+                    'sap_status' => 'failed',
+                    'sap_error' => $e->getMessage(),
+                ]);
+            }
         }
 
         return response()->json(['status' => 'ok', 'id' => $event->id]);
