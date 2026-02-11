@@ -652,7 +652,7 @@ trait HandlesSapPurchaseAndProducts
             $existingByPhone = $this->findBusinessPartnerByPhone($phone, null);
             if ($existingByPhone) {
                 $existingCode = (string) ($existingByPhone['CardCode'] ?? '');
-                $existingType = strtoupper((string) ($existingByPhone['CardType'] ?? ''));
+                $existingType = $this->normalizeSapCardType((string) ($existingByPhone['CardType'] ?? ''));
                 if ($existingCode !== '') {
                     if ($existingType === 'S') {
                         return $existingCode;
@@ -1566,7 +1566,7 @@ trait HandlesSapPurchaseAndProducts
             $existingByPhone = $this->findBusinessPartnerByPhone($phone, null);
             if ($existingByPhone) {
                 $existingCode = (string) ($existingByPhone['CardCode'] ?? '');
-                $existingType = strtoupper((string) ($existingByPhone['CardType'] ?? ''));
+                $existingType = $this->normalizeSapCardType((string) ($existingByPhone['CardType'] ?? ''));
                 if ($existingCode !== '') {
                     if ($existingType === 'S') {
                         return $existingCode;
@@ -1582,7 +1582,7 @@ trait HandlesSapPurchaseAndProducts
             $existingByName = $this->findBusinessPartnerByName($cardName, null);
             if ($existingByName) {
                 $existingCode = (string) ($existingByName['CardCode'] ?? '');
-                $existingType = strtoupper((string) ($existingByName['CardType'] ?? ''));
+                $existingType = $this->normalizeSapCardType((string) ($existingByName['CardType'] ?? ''));
                 if ($existingCode !== '') {
                     if ($existingType === 'S') {
                         return $existingCode;
@@ -1604,7 +1604,7 @@ trait HandlesSapPurchaseAndProducts
             $existingByEmail = $this->findBusinessPartnerByEmail($emailValue, null);
             if ($existingByEmail) {
                 $existingCode = (string) ($existingByEmail['CardCode'] ?? '');
-                $existingType = strtoupper((string) ($existingByEmail['CardType'] ?? ''));
+                $existingType = $this->normalizeSapCardType((string) ($existingByEmail['CardType'] ?? ''));
                 if ($existingCode !== '') {
                     if ($existingType === 'C') {
                         return $existingCode;
@@ -1620,7 +1620,7 @@ trait HandlesSapPurchaseAndProducts
             $existingByPhone = $this->findBusinessPartnerByPhone($phone, null);
             if ($existingByPhone) {
                 $existingCode = (string) ($existingByPhone['CardCode'] ?? '');
-                $existingType = strtoupper((string) ($existingByPhone['CardType'] ?? ''));
+                $existingType = $this->normalizeSapCardType((string) ($existingByPhone['CardType'] ?? ''));
                 if ($existingCode !== '') {
                     if ($existingType === 'C') {
                         return $existingCode;
@@ -1636,7 +1636,7 @@ trait HandlesSapPurchaseAndProducts
             $existingByName = $this->findBusinessPartnerByName($cardName, null);
             if ($existingByName) {
                 $existingCode = (string) ($existingByName['CardCode'] ?? '');
-                $existingType = strtoupper((string) ($existingByName['CardType'] ?? ''));
+                $existingType = $this->normalizeSapCardType((string) ($existingByName['CardType'] ?? ''));
                 if ($existingCode !== '') {
                     if ($existingType === 'C') {
                         return $existingCode;
@@ -1705,7 +1705,7 @@ trait HandlesSapPurchaseAndProducts
             return false;
         }
 
-        $currentType = strtoupper((string) ($bp['CardType'] ?? ''));
+        $currentType = $this->normalizeSapCardType((string) ($bp['CardType'] ?? ''));
         if ($currentType === 'S') {
             return true;
         }
@@ -1741,7 +1741,7 @@ trait HandlesSapPurchaseAndProducts
             return false;
         }
 
-        $currentType = strtoupper((string) ($bp['CardType'] ?? ''));
+        $currentType = $this->normalizeSapCardType((string) ($bp['CardType'] ?? ''));
         if ($currentType === 'C') {
             return true;
         }
@@ -1773,6 +1773,17 @@ trait HandlesSapPurchaseAndProducts
     private function normalizePhone(string $value): string
     {
         return preg_replace('/\D+/', '', $value) ?? '';
+    }
+
+    private function normalizeSapCardType(string $value): string
+    {
+        $v = strtoupper(trim($value));
+        return match ($v) {
+            'C', 'CCUSTOMER', 'CUSTOMER', 'C_CUSTOMER' => 'C',
+            'S', 'CSUPPLIER', 'SUPPLIER', 'S_SUPPLIER' => 'S',
+            'L', 'CLEAD', 'LEAD', 'L_LEAD' => 'L',
+            default => $v,
+        };
     }
 
     /**
