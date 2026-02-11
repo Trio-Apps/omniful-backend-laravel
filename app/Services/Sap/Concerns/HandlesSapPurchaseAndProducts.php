@@ -595,6 +595,21 @@ trait HandlesSapPurchaseAndProducts
         }
 
         $response = $this->post('/PurchaseOrders', $body);
+        if (!$response->successful() && $this->isSapSeriesPeriodMismatchError($response->body())) {
+            $fallbackDocDate = now()->format('Y-m-d');
+            $fallbackSeriesInfo = $this->resolveSeriesForDocument('22', $fallbackDocDate);
+            $body['DocDate'] = $fallbackSeriesInfo['docDate'];
+            $body['DocDueDate'] = $fallbackSeriesInfo['docDate'];
+
+            if (!empty($fallbackSeriesInfo['series'])) {
+                $body['Series'] = $fallbackSeriesInfo['series'];
+            } else {
+                unset($body['Series']);
+            }
+
+            $body['Comments'] = ($body['Comments'] ?? 'Omniful PO') . ' | retry with current period ' . $body['DocDate'];
+            $response = $this->post('/PurchaseOrders', $body);
+        }
 
         if (!$response->successful()) {
             throw new \RuntimeException('SAP PO create failed: ' . $response->status() . ' ' . $response->body());
@@ -1846,6 +1861,11 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return $lines;
+    }
+
+    private function isSapSeriesPeriodMismatchError(string $responseBody): bool
+    {
+        return str_contains(strtolower($responseBody), 'series period does not match current period');
     }
 
 }

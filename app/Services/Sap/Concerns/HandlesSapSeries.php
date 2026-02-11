@@ -50,12 +50,6 @@ trait HandlesSapSeries
         $year = substr($docDate, 0, 4);
         $seriesList = $this->getDocumentSeries($documentCode);
 
-        $force2025 = $this->pickSeriesByIndicator($seriesList, '2025', true);
-        if ($force2025) {
-            $seriesId = isset($force2025['Series']) ? (int) $force2025['Series'] : null;
-            return ['series' => $seriesId, 'docDate' => $docDate, 'indicator' => '2025'];
-        }
-
         $pick = $this->pickSeriesByIndicator($seriesList, $year, true)
             ?? $this->pickSeriesByIndicator($seriesList, 'Default', true)
             ?? $this->pickFirstUnlockedSeries($seriesList, true);
