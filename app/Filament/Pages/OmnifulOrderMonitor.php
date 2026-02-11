@@ -54,17 +54,6 @@ class OmnifulOrderMonitor extends Page implements HasTable
             TextColumn::make('sap_doc_num')
                 ->label('SAP Order')
                 ->toggleable(),
-            TextColumn::make('sap_delivery_doc_num')
-                ->label('SAP Delivery')
-                ->toggleable(isToggledHiddenByDefault: true),
-            TextColumn::make('sap_payment_doc_num')
-                ->label('SAP Payment')
-                ->toggleable(isToggledHiddenByDefault: true),
-            TextColumn::make('sap_error')
-                ->label('SAP Error')
-                ->limit(60)
-                ->tooltip(fn ($record) => $record->sap_error)
-                ->toggleable(),
             TextColumn::make('last_event_type')
                 ->label('Last Event')
                 ->toggleable(),
