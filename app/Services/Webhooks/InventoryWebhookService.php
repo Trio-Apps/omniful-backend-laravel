@@ -52,8 +52,13 @@ class InventoryWebhookService
                             $poEvent = $matches[0];
                             $displayId = $poEvent->external_id;
                         } elseif (count($matches) > 1) {
-                            $ids = array_map(fn ($match) => $match->external_id, $matches);
-                            throw new \RuntimeException('Multiple matching SAP POs found for GRPO: ' . implode(', ', $ids));
+                            $ids = array_map(function ($match): string {
+                                $external = (string) ($match->external_id ?? '-');
+                                $docNum = (string) ($match->sap_doc_num ?? '-');
+                                $docEntry = (string) ($match->sap_doc_entry ?? '-');
+                                return $external . ' (DocNum=' . $docNum . ', DocEntry=' . $docEntry . ')';
+                            }, $matches);
+                            throw new \RuntimeException('Multiple matching SAP POs found for GRPO: ' . implode(', ', array_unique($ids)));
                         }
                     }
 
@@ -379,7 +384,26 @@ class InventoryWebhookService
             }
         }
 
-        return $matches;
+        // Deduplicate repeated webhook rows that point to the same SAP PO.
+        $dedup = [];
+        foreach ($matches as $match) {
+            $sapDocEntry = (string) ($match->sap_doc_entry ?? '');
+            $externalId = (string) ($match->external_id ?? '');
+            $key = $sapDocEntry !== '' ? ('doc:' . $sapDocEntry) : ('ext:' . $externalId);
+            if (!isset($dedup[$key])) {
+                $dedup[$key] = $match;
+                continue;
+            }
+
+            $existing = $dedup[$key];
+            $existingTime = $existing->received_at ? strtotime((string) $existing->received_at) : 0;
+            $matchTime = $match->received_at ? strtotime((string) $match->received_at) : 0;
+            if ($matchTime > $existingTime) {
+                $dedup[$key] = $match;
+            }
+        }
+
+        return array_values($dedup);
     }
 
     private function extractPurchaseOrderItemCodes(array $payload): array

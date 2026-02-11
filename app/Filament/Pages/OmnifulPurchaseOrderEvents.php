@@ -49,7 +49,7 @@ class OmnifulPurchaseOrderEvents extends Page implements HasTable
                 ->getStateUsing(fn ($record) => $record->sap_status)
                 ->color(fn ($record) => match ($record->sap_status) {
                     'failed' => 'danger',
-                    'created' => 'success',
+                    'logged', 'updated', 'created', 'received_logged', 'created_mixed' => 'success',
                     'skipped' => 'gray',
                     default => 'gray',
                 })
@@ -91,6 +91,13 @@ class OmnifulPurchaseOrderEvents extends Page implements HasTable
                 ->label('Retry SAP')
                 ->icon('heroicon-o-arrow-path')
                 ->color('warning')
+                ->visible(function ($record): bool {
+                    if ((bool) $record->sap_error) {
+                        return true;
+                    }
+
+                    return in_array((string) $record->sap_status, ['failed', 'retrying', 'pending'], true);
+                })
                 ->action(function ($record) {
                     $result = app(WebhookRetryService::class)->retryPurchaseOrderEvent($record);
                     Notification::make()
