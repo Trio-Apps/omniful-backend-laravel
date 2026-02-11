@@ -93,6 +93,18 @@ trait HandlesSapPurchaseAndProducts
         }
 
         $response = $this->post('/Orders', $body);
+        $usedReserveInvoiceFallback = false;
+
+        if (
+            !$response->successful()
+            && str_contains((string) $response->body(), 'This field is not supported in this document [OINV.isIns]')
+        ) {
+            // Some SAP B1 setups reject ReserveInvoice on /Orders. Retry without it to keep order flow alive.
+            $fallbackBody = $body;
+            unset($fallbackBody['ReserveInvoice']);
+            $response = $this->post('/Orders', $fallbackBody);
+            $usedReserveInvoiceFallback = $response->successful();
+        }
 
         if (!$response->successful()) {
             throw new \RuntimeException('SAP AR reserve invoice create failed: ' . $response->status() . ' ' . $response->body());
@@ -100,6 +112,9 @@ trait HandlesSapPurchaseAndProducts
 
         $payload = $response->json() ?? [];
         $payload['ignored'] = false;
+        if ($usedReserveInvoiceFallback) {
+            $payload['reserve_invoice_fallback'] = true;
+        }
 
         return $payload;
     }
