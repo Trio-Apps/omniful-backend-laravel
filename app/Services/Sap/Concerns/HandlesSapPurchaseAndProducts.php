@@ -1430,9 +1430,11 @@ trait HandlesSapPurchaseAndProducts
         if ($email) {
             $body['EmailAddress'] = (string) $email;
         }
-        if ($phone) {
-            $body['Phone1'] = (string) $phone;
+        $phoneValue = trim((string) ($phone ?? ''));
+        if ($phoneValue === '') {
+            $phoneValue = $this->buildFallbackCustomerPhone($cardCode, $externalId);
         }
+        $body['Phone1'] = $phoneValue;
 
         $response = $this->post('/BusinessPartners', $body);
         if ($response->successful()) {
@@ -1459,6 +1461,19 @@ trait HandlesSapPurchaseAndProducts
         );
         $hash = strtoupper(substr(sha1($seed), 0, 10));
         return 'OMNC' . $hash;
+    }
+
+    private function buildFallbackCustomerPhone(string $cardCode, string $externalId): string
+    {
+        $seed = $cardCode !== '' ? $cardCode : $externalId;
+        if ($seed === '') {
+            $seed = (string) now()->timestamp;
+        }
+
+        // Build deterministic 10-digit phone-like value to avoid SAP duplicate-null mobile issue.
+        $digits = preg_replace('/\D+/', '', (string) sprintf('%u', crc32($seed))) ?? '';
+        $digits = str_pad(substr($digits, 0, 9), 9, '0', STR_PAD_LEFT);
+        return '9' . $digits;
     }
 
     /**
