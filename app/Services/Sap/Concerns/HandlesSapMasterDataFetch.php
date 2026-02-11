@@ -142,6 +142,30 @@ trait HandlesSapMasterDataFetch
     /**
      * @return array<int,array>
      */
+    public function fetchCostCenters(): array
+    {
+        return $this->fetchAllWithFallback([
+            "/DistributionRules?\$select=FactorCode,FactorName,InWhichDimension,Active",
+            "/DistributionRules?\$select=FactorCode,FactorName,InWhichDimension",
+            "/DistributionRules",
+        ]);
+    }
+
+    /**
+     * @return array<int,array>
+     */
+    public function fetchProjects(): array
+    {
+        return $this->fetchAllWithFallback([
+            "/Projects?\$select=Code,Name,Active",
+            "/Projects?\$select=Code,Name",
+            "/Projects",
+        ]);
+    }
+
+    /**
+     * @return array<int,array>
+     */
 
     /**
      * @return array<int,array>

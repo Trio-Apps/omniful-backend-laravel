@@ -2,6 +2,8 @@
 
 namespace App\Services\Sap\Concerns;
 
+use App\Models\SapCostCenterSetting;
+
 trait HandlesSapInventoryDocs
 {
     public function syncInventoryItems(array $items): void
@@ -145,7 +147,11 @@ trait HandlesSapInventoryDocs
                 'reason' => 'No stock transfer lines found',
             ];
         }
-        if ((bool) config('omniful.sap_cost_centers.apply_to_stock_transfer', false)) {
+        $applyToStockTransfer = (bool) (
+            SapCostCenterSetting::query()->value('apply_to_stock_transfer')
+            ?? config('omniful.sap_cost_centers.apply_to_stock_transfer', false)
+        );
+        if ($applyToStockTransfer) {
             $lines = $this->applyDefaultCostCentersToLines($lines);
         }
 

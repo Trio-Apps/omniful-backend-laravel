@@ -2,6 +2,7 @@
 
 namespace App\Services\Sap\Concerns;
 
+use App\Models\SapCostCenterSetting;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
@@ -2856,13 +2857,20 @@ trait HandlesSapPurchaseAndProducts
 
     private function getDefaultCostCenterFields(): array
     {
+        static $cached = null;
+        if (is_array($cached)) {
+            return $cached;
+        }
+
+        $setting = SapCostCenterSetting::query()->first();
+
         $raw = [
-            'CostingCode' => (string) config('omniful.sap_cost_centers.costing_code', ''),
-            'CostingCode2' => (string) config('omniful.sap_cost_centers.costing_code2', ''),
-            'CostingCode3' => (string) config('omniful.sap_cost_centers.costing_code3', ''),
-            'CostingCode4' => (string) config('omniful.sap_cost_centers.costing_code4', ''),
-            'CostingCode5' => (string) config('omniful.sap_cost_centers.costing_code5', ''),
-            'ProjectCode' => (string) config('omniful.sap_cost_centers.project_code', ''),
+            'CostingCode' => (string) ($setting->costing_code ?? config('omniful.sap_cost_centers.costing_code', '')),
+            'CostingCode2' => (string) ($setting->costing_code2 ?? config('omniful.sap_cost_centers.costing_code2', '')),
+            'CostingCode3' => (string) ($setting->costing_code3 ?? config('omniful.sap_cost_centers.costing_code3', '')),
+            'CostingCode4' => (string) ($setting->costing_code4 ?? config('omniful.sap_cost_centers.costing_code4', '')),
+            'CostingCode5' => (string) ($setting->costing_code5 ?? config('omniful.sap_cost_centers.costing_code5', '')),
+            'ProjectCode' => (string) ($setting->project_code ?? config('omniful.sap_cost_centers.project_code', '')),
         ];
 
         $fields = [];
@@ -2873,7 +2881,8 @@ trait HandlesSapPurchaseAndProducts
             }
         }
 
-        return $fields;
+        $cached = $fields;
+        return $cached;
     }
 
 }

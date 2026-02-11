@@ -3,8 +3,12 @@
 namespace App\Filament\Pages;
 
 use App\Models\IntegrationSetting;
+use App\Models\SapCostCenter;
+use App\Models\SapCostCenterSetting;
 use App\Services\Connections\IntegrationConnectionTester;
 use App\Services\IntegrationDirectionService;
+use App\Services\MasterData\SapCostCenterSyncService;
+use App\Services\SapServiceLayerClient;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
@@ -35,8 +39,12 @@ class IntegrationSettings extends Page implements HasForms
     public function mount(): void
     {
         $settings = IntegrationSetting::first();
+        $costCenterSettings = SapCostCenterSetting::first();
 
-        $this->form->fill($settings?->toArray() ?? []);
+        $this->form->fill(array_merge(
+            $settings?->toArray() ?? [],
+            $costCenterSettings?->toArray() ?? []
+        ));
     }
 
     public function form(Schema $schema): Schema
@@ -152,6 +160,44 @@ class IntegrationSettings extends Page implements HasForms
                             ->required(),
                     ])
                     ->columns(2),
+                Section::make('SAP Cost Centers')
+                    ->description('Default costing and project values sent to SAP on transactions')
+                    ->schema([
+                        Select::make('costing_code')
+                            ->label('Costing Code (Dimension 1)')
+                            ->options(fn () => $this->getDistributionRuleOptions(1))
+                            ->searchable()
+                            ->preload(),
+                        Select::make('costing_code2')
+                            ->label('Costing Code 2 (Dimension 2)')
+                            ->options(fn () => $this->getDistributionRuleOptions(2))
+                            ->searchable()
+                            ->preload(),
+                        Select::make('costing_code3')
+                            ->label('Costing Code 3 (Dimension 3)')
+                            ->options(fn () => $this->getDistributionRuleOptions(3))
+                            ->searchable()
+                            ->preload(),
+                        Select::make('costing_code4')
+                            ->label('Costing Code 4 (Dimension 4)')
+                            ->options(fn () => $this->getDistributionRuleOptions(4))
+                            ->searchable()
+                            ->preload(),
+                        Select::make('costing_code5')
+                            ->label('Costing Code 5 (Dimension 5)')
+                            ->options(fn () => $this->getDistributionRuleOptions(5))
+                            ->searchable()
+                            ->preload(),
+                        Select::make('project_code')
+                            ->label('Project Code')
+                            ->options(fn () => $this->getProjectOptions())
+                            ->searchable()
+                            ->preload(),
+                        Toggle::make('apply_to_stock_transfer')
+                            ->label('Apply cost centers on Stock Transfer lines')
+                            ->default(false),
+                    ])
+                    ->columns(2),
             ])
             ->statePath('data');
     }
@@ -161,7 +207,23 @@ class IntegrationSettings extends Page implements HasForms
         $state = $this->form->getState();
 
         IntegrationSetting::updateOrCreate(['id' => 1], $state);
-        $this->form->fill(IntegrationSetting::first()?->toArray() ?? []);
+        SapCostCenterSetting::query()->updateOrCreate(
+            ['id' => 1],
+            [
+                'costing_code' => $state['costing_code'] ?? null,
+                'costing_code2' => $state['costing_code2'] ?? null,
+                'costing_code3' => $state['costing_code3'] ?? null,
+                'costing_code4' => $state['costing_code4'] ?? null,
+                'costing_code5' => $state['costing_code5'] ?? null,
+                'project_code' => $state['project_code'] ?? null,
+                'apply_to_stock_transfer' => (bool) ($state['apply_to_stock_transfer'] ?? false),
+            ]
+        );
+
+        $this->form->fill(array_merge(
+            IntegrationSetting::first()?->toArray() ?? [],
+            SapCostCenterSetting::first()?->toArray() ?? []
+        ));
 
         Notification::make()
             ->title('Connections saved')
@@ -225,6 +287,65 @@ class IntegrationSettings extends Page implements HasForms
                 ->label('Test Connection')
                 ->action('testConnection')
                 ->color('gray'),
+            Action::make('syncSapCostCenters')
+                ->label('Sync SAP Cost Centers')
+                ->icon('heroicon-o-arrow-path')
+                ->color('gray')
+                ->action('syncSapCostCenters'),
         ];
+    }
+
+    public function syncSapCostCenters(SapServiceLayerClient $client): void
+    {
+        try {
+            $result = app(SapCostCenterSyncService::class)->syncFromSap($client);
+
+            Notification::make()
+                ->title('SAP cost centers synced')
+                ->body(
+                    'Distribution Rules: ' . (int) ($result['distribution_rules'] ?? 0)
+                    . ' | Projects: ' . (int) ($result['projects'] ?? 0)
+                )
+                ->success()
+                ->send();
+
+            $this->form->fill(array_merge(
+                IntegrationSetting::first()?->toArray() ?? [],
+                SapCostCenterSetting::first()?->toArray() ?? []
+            ));
+        } catch (\Throwable $e) {
+            Notification::make()
+                ->title('SAP cost center sync failed')
+                ->body($e->getMessage())
+                ->danger()
+                ->send();
+        }
+    }
+
+    private function getDistributionRuleOptions(int $dimension): array
+    {
+        return SapCostCenter::query()
+            ->where('source', 'distribution_rule')
+            ->where('dimension', $dimension)
+            ->where('is_active', true)
+            ->orderBy('code')
+            ->get()
+            ->mapWithKeys(fn (SapCostCenter $row) => [
+                $row->code => $row->code . ' - ' . ($row->name ?: $row->code),
+            ])
+            ->all();
+    }
+
+    private function getProjectOptions(): array
+    {
+        return SapCostCenter::query()
+            ->where('source', 'project')
+            ->where('is_active', true)
+            ->orderBy('code')
+            ->get()
+            ->mapWithKeys(fn (SapCostCenter $row) => [
+                $row->code => $row->code . ' - ' . ($row->name ?: $row->code),
+            ])
+            ->all();
     }
 }
