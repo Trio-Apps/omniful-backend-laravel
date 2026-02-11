@@ -146,7 +146,8 @@ trait HandlesSapMasterDataFetch
     {
         return $this->fetchAllWithFallback([
             "/DistributionRules?\$select=FactorCode,FactorName,InWhichDimension,Active",
-            "/DistributionRules?\$select=FactorCode,FactorName,InWhichDimension",
+            "/DistributionRules?\$select=FactorCode,InWhichDimension,Active",
+            "/DistributionRules?\$select=FactorCode,InWhichDimension",
             "/DistributionRules",
         ]);
     }
@@ -240,7 +241,12 @@ trait HandlesSapMasterDataFetch
             } catch (\Throwable $e) {
                 $lastError = $e;
                 $message = $e->getMessage();
-                if (!str_contains($message, ' 404 ')) {
+                $normalized = strtolower($message);
+                $isNotFound = str_contains($message, ' 404 ');
+                $isInvalidProperty = str_contains($normalized, 'property')
+                    && str_contains($normalized, 'invalid');
+
+                if (!$isNotFound && !$isInvalidProperty) {
                     throw $e;
                 }
             }
