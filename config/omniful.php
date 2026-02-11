@@ -118,6 +118,9 @@ return [
         'inventory_offset_account' => env('OMNIFUL_COGS_INVENTORY_OFFSET_ACCOUNT', ''),
         'return_cogs_reversal_enabled' => (bool) env('OMNIFUL_RETURN_COGS_REVERSAL_ENABLED', false),
     ],
+    'order_fallback' => [
+        'customer_code' => env('OMNIFUL_FALLBACK_CUSTOMER_CODE', ''),
+    ],
     'stock_transfer' => [
         'in_transit_enabled' => (bool) env('OMNIFUL_IN_TRANSIT_ENABLED', false),
         'in_transit_warehouse' => env('OMNIFUL_IN_TRANSIT_WAREHOUSE', ''),

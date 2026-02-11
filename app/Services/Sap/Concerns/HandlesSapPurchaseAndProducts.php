@@ -1464,6 +1464,11 @@ trait HandlesSapPurchaseAndProducts
             }
         }
 
+        $fallbackCustomerCode = $this->resolveConfiguredFallbackCustomerCode($fullName, $email);
+        if ($fallbackCustomerCode !== null) {
+            return $fallbackCustomerCode;
+        }
+
         throw new \RuntimeException('SAP customer create failed: ' . $response->status() . ' ' . $response->body());
     }
 
@@ -1784,6 +1789,36 @@ trait HandlesSapPurchaseAndProducts
             'L', 'CLEAD', 'LEAD', 'L_LEAD' => 'L',
             default => $v,
         };
+    }
+
+    private function resolveConfiguredFallbackCustomerCode(string $cardName, mixed $email): ?string
+    {
+        $fallback = trim((string) config('omniful.order_fallback.customer_code', ''));
+        if ($fallback === '') {
+            return null;
+        }
+
+        $bp = $this->getBusinessPartner($fallback);
+        if (!$bp) {
+            return null;
+        }
+
+        $type = $this->normalizeSapCardType((string) ($bp['CardType'] ?? ''));
+        if ($type === 'C') {
+            Log::warning('Using configured fallback SAP customer code', [
+                'fallback_customer_code' => $fallback,
+            ]);
+            return $fallback;
+        }
+
+        if ($this->ensureBusinessPartnerIsCustomer($fallback, $cardName, $email)) {
+            Log::warning('Converted configured fallback BP to customer for order flow', [
+                'fallback_customer_code' => $fallback,
+            ]);
+            return $fallback;
+        }
+
+        return null;
     }
 
     /**
