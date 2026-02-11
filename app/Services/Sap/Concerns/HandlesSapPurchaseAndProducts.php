@@ -12,7 +12,10 @@ trait HandlesSapPurchaseAndProducts
         $docDate = $this->formatDate((string) (data_get($data, 'order_created_at') ?? data_get($data, 'created_at') ?? null));
         $currency = data_get($data, 'invoice.currency') ?? data_get($data, 'currency');
         $hubCode = data_get($data, 'hub_code');
-        $seriesInfo = $this->resolveSeriesForDocument('17', $docDate);
+        $preferredSeries = $this->getPreferredSeriesId('17');
+        $seriesInfo = $preferredSeries !== null
+            ? ['series' => $preferredSeries, 'docDate' => $docDate, 'indicator' => 'preferred']
+            : $this->resolveSeriesForDocument('17', $docDate);
         $docDate = $seriesInfo['docDate'];
 
         $customerCode = data_get($data, 'customer.code');
@@ -92,18 +95,10 @@ trait HandlesSapPurchaseAndProducts
             $body['DocCurrency'] = $currency;
         }
 
-        $response = $this->post('/Orders', $body);
         $usedReserveInvoiceFallback = false;
-
-        if (
-            !$response->successful()
-            && str_contains((string) $response->body(), 'This field is not supported in this document [OINV.isIns]')
-        ) {
-            // Some SAP B1 setups reject ReserveInvoice on /Orders. Retry without it to keep order flow alive.
-            $fallbackBody = $body;
-            unset($fallbackBody['ReserveInvoice']);
-            $response = $this->post('/Orders', $fallbackBody);
-            $usedReserveInvoiceFallback = $response->successful();
+        $response = $this->postArOrderWithReserveFallback($body, $usedReserveInvoiceFallback);
+        if (!$response->successful() && $this->isSapSeriesPeriodMismatchError((string) $response->body())) {
+            $response = $this->retryArOrderWithDynamicSeries($body, $docDate, $usedReserveInvoiceFallback);
         }
 
         if (!$response->successful()) {
@@ -117,6 +112,24 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return $payload;
+    }
+
+    private function postArOrderWithReserveFallback(array $body, bool &$usedReserveInvoiceFallback)
+    {
+        $response = $this->post('/Orders', $body);
+        if (
+            !$response->successful()
+            && str_contains((string) $response->body(), 'This field is not supported in this document [OINV.isIns]')
+            && array_key_exists('ReserveInvoice', $body)
+        ) {
+            // Some SAP B1 setups reject ReserveInvoice on /Orders. Retry without it to keep order flow alive.
+            $fallbackBody = $body;
+            unset($fallbackBody['ReserveInvoice']);
+            $response = $this->post('/Orders', $fallbackBody);
+            $usedReserveInvoiceFallback = $response->successful() || $usedReserveInvoiceFallback;
+        }
+
+        return $response;
     }
 
     public function createIncomingPaymentForInvoice(array $data): array
@@ -2317,6 +2330,88 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return $lines;
+    }
+
+    private function retryArOrderWithDynamicSeries(array $body, string $initialDocDate, bool &$usedReserveInvoiceFallback)
+    {
+        $seriesList = $this->getDocumentSeries('17');
+        $today = now()->format('Y-m-d');
+        $currentYear = substr($today, 0, 4);
+        $candidateSeries = [];
+        $fallbackSeries = [];
+
+        foreach ((array) $seriesList as $series) {
+            if (($series['Locked'] ?? 'tNO') === 'tYES') {
+                continue;
+            }
+            if (!$this->isSeriesUsable((array) $series)) {
+                continue;
+            }
+
+            $seriesId = isset($series['Series']) && is_numeric($series['Series']) ? (int) $series['Series'] : null;
+            if ($seriesId === null) {
+                continue;
+            }
+
+            $indicator = (string) ($series['PeriodIndicator'] ?? '');
+            if ($indicator === $currentYear || $indicator === 'Default') {
+                $candidateSeries[] = $seriesId;
+            } else {
+                $fallbackSeries[] = $seriesId;
+            }
+        }
+
+        $orderedSeries = array_values(array_unique(array_merge($candidateSeries, $fallbackSeries)));
+        $candidateDates = array_values(array_unique([$today, $initialDocDate]));
+        $attempts = [];
+        $response = null;
+
+        foreach ($candidateDates as $date) {
+            foreach ($orderedSeries as $seriesId) {
+                $attemptBody = $body;
+                $attemptBody['DocDate'] = $date;
+                $attemptBody['DocDueDate'] = $date;
+                $attemptBody['Series'] = $seriesId;
+                $attemptBody['Comments'] = ($body['Comments'] ?? 'Omniful AR reserve order') . ' | retry dynamic series=' . $seriesId . ' date=' . $date;
+
+                $response = $this->postArOrderWithReserveFallback($attemptBody, $usedReserveInvoiceFallback);
+                if ($response->successful()) {
+                    $this->rememberPreferredSeriesId('17', $seriesId);
+                    return $response;
+                }
+
+                $attempts[] = 'series=' . $seriesId . ',date=' . $date . ',status=' . $response->status();
+                if (!$this->isSapSeriesPeriodMismatchError((string) $response->body())) {
+                    return $response;
+                }
+            }
+        }
+
+        foreach ($candidateDates as $date) {
+            $attemptBody = $body;
+            $attemptBody['DocDate'] = $date;
+            $attemptBody['DocDueDate'] = $date;
+            unset($attemptBody['Series']);
+            $attemptBody['Comments'] = ($body['Comments'] ?? 'Omniful AR reserve order') . ' | retry dynamic without series date=' . $date;
+
+            $response = $this->postArOrderWithReserveFallback($attemptBody, $usedReserveInvoiceFallback);
+            if ($response->successful()) {
+                $this->forgetPreferredSeriesId('17');
+                return $response;
+            }
+
+            $attempts[] = 'series=none,date=' . $date . ',status=' . $response->status();
+            if (!$this->isSapSeriesPeriodMismatchError((string) $response->body())) {
+                return $response;
+            }
+        }
+
+        Log::warning('SAP AR reserve order series dynamic retry exhausted', [
+            'attempts' => $attempts,
+            'initial_doc_date' => $initialDocDate,
+        ]);
+
+        return $response;
     }
 
     private function retryPurchaseOrderWithDynamicSeries(array $body, string $initialDocDate)
