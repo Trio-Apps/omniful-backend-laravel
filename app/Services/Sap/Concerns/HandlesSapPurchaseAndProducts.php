@@ -1962,11 +1962,11 @@ trait HandlesSapPurchaseAndProducts
             }
 
             $uom = $uomByItem[$itemCode];
-            if (!isset($line['UoMEntry']) && isset($uom['UoMEntry'])) {
+            if (isset($uom['UoMEntry']) && (!isset($line['UoMEntry']) || (int) $line['UoMEntry'] !== (int) $uom['UoMEntry'])) {
                 $lines[$idx]['UoMEntry'] = $uom['UoMEntry'];
                 $updated = true;
             }
-            if (!isset($line['UoMCode']) && isset($uom['UoMCode'])) {
+            if (isset($uom['UoMCode']) && (!isset($line['UoMCode']) || (string) $line['UoMCode'] !== (string) $uom['UoMCode'])) {
                 $lines[$idx]['UoMCode'] = $uom['UoMCode'];
                 $updated = true;
             }
@@ -1999,7 +1999,7 @@ trait HandlesSapPurchaseAndProducts
     private function getPreferredPurchaseUomForItem(string $itemCode): array
     {
         $encoded = str_replace("'", "''", $itemCode);
-        $response = $this->get("/Items('{$encoded}')?\$select=ItemCode,DefaultPurchasingUoMEntry,PurchaseUnit,InventoryUOM,SalesUnit");
+        $response = $this->get("/Items('{$encoded}')?\$select=ItemCode,UoMGroupEntry,DefaultPurchasingUoMEntry,PurchaseUnit,InventoryUOM,SalesUnit");
         if (!$response->successful()) {
             return [];
         }
@@ -2017,7 +2017,82 @@ trait HandlesSapPurchaseAndProducts
             $out['UoMCode'] = $code;
         }
 
+        if (!isset($out['UoMEntry'])) {
+            $groupEntry = $payload['UoMGroupEntry'] ?? null;
+            if (is_numeric($groupEntry) && (int) $groupEntry > 0) {
+                $groupUomEntry = $this->getFirstUomEntryFromGroup((int) $groupEntry);
+                if ($groupUomEntry !== null) {
+                    $out['UoMEntry'] = $groupUomEntry;
+                }
+            }
+        }
+
+        if (!isset($out['UoMEntry']) && isset($out['UoMCode'])) {
+            $entryByCode = $this->getUomEntryByCode((string) $out['UoMCode']);
+            if ($entryByCode !== null) {
+                $out['UoMEntry'] = $entryByCode;
+            }
+        }
+
+        if (!isset($out['UoMCode']) && isset($out['UoMEntry'])) {
+            $codeByEntry = $this->getUomCodeByEntry((int) $out['UoMEntry']);
+            if ($codeByEntry !== null) {
+                $out['UoMCode'] = $codeByEntry;
+            }
+        }
+
         return $out;
+    }
+
+    private function getFirstUomEntryFromGroup(int $uomGroupEntry): ?int
+    {
+        $response = $this->get('/UoMGroups(' . $uomGroupEntry . ')?$select=AbsEntry,UoMGroupDefinitionCollection&$expand=UoMGroupDefinitionCollection');
+        if (!$response->successful()) {
+            return null;
+        }
+
+        $payload = $response->json() ?? [];
+        $rows = (array) ($payload['UoMGroupDefinitionCollection'] ?? []);
+        foreach ($rows as $row) {
+            $entry = $row['UoMEntry'] ?? null;
+            if (is_numeric($entry) && (int) $entry > 0) {
+                return (int) $entry;
+            }
+        }
+
+        return null;
+    }
+
+    private function getUomEntryByCode(string $uomCode): ?int
+    {
+        $uomCode = trim($uomCode);
+        if ($uomCode === '') {
+            return null;
+        }
+
+        $escaped = str_replace("'", "''", $uomCode);
+        $response = $this->get("/UnitOfMeasurements?\$select=AbsEntry,Code&\$filter=Code eq '{$escaped}'&\$top=1");
+        if (!$response->successful()) {
+            return null;
+        }
+
+        $entry = data_get($response->json(), 'value.0.AbsEntry');
+        return is_numeric($entry) ? (int) $entry : null;
+    }
+
+    private function getUomCodeByEntry(int $uomEntry): ?string
+    {
+        if ($uomEntry <= 0) {
+            return null;
+        }
+
+        $response = $this->get('/UnitOfMeasurements(' . $uomEntry . ')?$select=Code');
+        if (!$response->successful()) {
+            return null;
+        }
+
+        $code = trim((string) ($response->json()['Code'] ?? ''));
+        return $code !== '' ? $code : null;
     }
 
     private function getPreferredSeriesId(string $documentCode): ?int
