@@ -121,6 +121,15 @@ return [
     'order_fallback' => [
         'customer_code' => env('OMNIFUL_FALLBACK_CUSTOMER_CODE', ''),
     ],
+    'sap_cost_centers' => [
+        'costing_code' => env('SAP_COSTING_CODE', ''),
+        'costing_code2' => env('SAP_COSTING_CODE2', ''),
+        'costing_code3' => env('SAP_COSTING_CODE3', ''),
+        'costing_code4' => env('SAP_COSTING_CODE4', ''),
+        'costing_code5' => env('SAP_COSTING_CODE5', ''),
+        'project_code' => env('SAP_PROJECT_CODE', ''),
+        'apply_to_stock_transfer' => (bool) env('SAP_COST_CENTER_STOCK_TRANSFER', false),
+    ],
     'stock_transfer' => [
         'in_transit_enabled' => (bool) env('OMNIFUL_IN_TRANSIT_ENABLED', false),
         'in_transit_warehouse' => env('OMNIFUL_IN_TRANSIT_WAREHOUSE', ''),

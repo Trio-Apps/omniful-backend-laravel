@@ -70,6 +70,7 @@ trait HandlesSapPurchaseAndProducts
                 'reason' => 'No order lines found for AR reserve invoice',
             ];
         }
+        $lines = $this->applyDefaultCostCentersToLines($lines);
 
         $comments = 'AR Reserve Invoice from Omniful order ' . $externalId;
         if ($currency && !$this->isValidCurrency((string) $currency)) {
@@ -231,21 +232,23 @@ trait HandlesSapPurchaseAndProducts
         $reference = trim((string) ($data['reference'] ?? ''));
         $memo = trim((string) ($data['memo'] ?? 'Card fee journal from Omniful prepaid order'));
 
+        $journalLines = $this->applyDefaultCostCentersToJournalLines([
+            [
+                'AccountCode' => $expenseAccount,
+                'Debit' => $amount,
+            ],
+            [
+                'AccountCode' => $offsetAccount,
+                'Credit' => $amount,
+            ],
+        ]);
+
         $body = [
             'ReferenceDate' => $referenceDate,
             'DueDate' => $referenceDate,
             'TaxDate' => $referenceDate,
             'Memo' => $memo,
-            'JournalEntryLines' => [
-                [
-                    'AccountCode' => $expenseAccount,
-                    'Debit' => $amount,
-                ],
-                [
-                    'AccountCode' => $offsetAccount,
-                    'Credit' => $amount,
-                ],
-            ],
+            'JournalEntryLines' => $journalLines,
         ];
 
         if ($reference !== '') {
@@ -311,6 +314,7 @@ trait HandlesSapPurchaseAndProducts
                 'reason' => 'No open quantity found for delivery',
             ];
         }
+        $lines = $this->applyDefaultCostCentersToLines($lines);
 
         $body = [
             'CardCode' => (string) ($salesDoc['CardCode'] ?? ''),
@@ -364,21 +368,23 @@ trait HandlesSapPurchaseAndProducts
         $reference = trim((string) ($data['reference'] ?? ($delivery['NumAtCard'] ?? '')));
         $memo = trim((string) ($data['memo'] ?? ('COGS journal for Delivery ' . ($delivery['DocNum'] ?? $deliveryDocEntry))));
 
+        $journalLines = $this->applyDefaultCostCentersToJournalLines([
+            [
+                'AccountCode' => $expenseAccount,
+                'Debit' => $amount,
+            ],
+            [
+                'AccountCode' => $offsetAccount,
+                'Credit' => $amount,
+            ],
+        ]);
+
         $body = [
             'ReferenceDate' => $referenceDate,
             'DueDate' => $referenceDate,
             'TaxDate' => $referenceDate,
             'Memo' => $memo,
-            'JournalEntryLines' => [
-                [
-                    'AccountCode' => $expenseAccount,
-                    'Debit' => $amount,
-                ],
-                [
-                    'AccountCode' => $offsetAccount,
-                    'Credit' => $amount,
-                ],
-            ],
+            'JournalEntryLines' => $journalLines,
         ];
 
         if ($reference !== '') {
@@ -459,6 +465,7 @@ trait HandlesSapPurchaseAndProducts
                 'reason' => 'No SAP credit memo lines could be built',
             ];
         }
+        $documentLines = $this->applyDefaultCostCentersToLines($documentLines);
 
         $body = [
             'CardCode' => $cardCode,
@@ -515,21 +522,23 @@ trait HandlesSapPurchaseAndProducts
         $reference = trim((string) ($data['reference'] ?? ($creditMemo['NumAtCard'] ?? '')));
         $memo = trim((string) ($data['memo'] ?? ('COGS reversal for Credit Memo ' . ($creditMemo['DocNum'] ?? $creditMemoDocEntry))));
 
+        $journalLines = $this->applyDefaultCostCentersToJournalLines([
+            [
+                'AccountCode' => $offsetAccount,
+                'Debit' => $amount,
+            ],
+            [
+                'AccountCode' => $expenseAccount,
+                'Credit' => $amount,
+            ],
+        ]);
+
         $body = [
             'ReferenceDate' => $referenceDate,
             'DueDate' => $referenceDate,
             'TaxDate' => $referenceDate,
             'Memo' => $memo,
-            'JournalEntryLines' => [
-                [
-                    'AccountCode' => $offsetAccount,
-                    'Debit' => $amount,
-                ],
-                [
-                    'AccountCode' => $expenseAccount,
-                    'Credit' => $amount,
-                ],
-            ],
+            'JournalEntryLines' => $journalLines,
         ];
 
         if ($reference !== '') {
@@ -600,6 +609,7 @@ trait HandlesSapPurchaseAndProducts
         if ($lines === []) {
             throw new \RuntimeException('No purchase_order_items found for SAP PO');
         }
+        $lines = $this->applyDefaultCostCentersToLines($lines);
 
         $comments = $displayId ? ('Omniful PO ' . $displayId) : 'Omniful PO';
         if ($seriesIndicator && $seriesIndicator !== substr($docDate, 0, 4)) {
@@ -1205,6 +1215,7 @@ trait HandlesSapPurchaseAndProducts
                 'reason' => $reason,
             ];
         }
+        $lines = $this->applyDefaultCostCentersToLines($lines);
 
         $comments = 'GRPO from Omniful inventory';
         if ($displayId) {
@@ -2814,6 +2825,55 @@ trait HandlesSapPurchaseAndProducts
         $body = strtolower($responseBody);
         return str_contains($body, 'specify a uom code')
             || str_contains($body, '1470000315');
+    }
+
+    private function applyDefaultCostCentersToLines(array $lines): array
+    {
+        $fields = $this->getDefaultCostCenterFields();
+        if ($fields === []) {
+            return $lines;
+        }
+
+        foreach ($lines as $idx => $line) {
+            if (!is_array($line)) {
+                continue;
+            }
+            foreach ($fields as $key => $value) {
+                if (!array_key_exists($key, $line) || trim((string) $line[$key]) === '') {
+                    $line[$key] = $value;
+                }
+            }
+            $lines[$idx] = $line;
+        }
+
+        return $lines;
+    }
+
+    private function applyDefaultCostCentersToJournalLines(array $lines): array
+    {
+        return $this->applyDefaultCostCentersToLines($lines);
+    }
+
+    private function getDefaultCostCenterFields(): array
+    {
+        $raw = [
+            'CostingCode' => (string) config('omniful.sap_cost_centers.costing_code', ''),
+            'CostingCode2' => (string) config('omniful.sap_cost_centers.costing_code2', ''),
+            'CostingCode3' => (string) config('omniful.sap_cost_centers.costing_code3', ''),
+            'CostingCode4' => (string) config('omniful.sap_cost_centers.costing_code4', ''),
+            'CostingCode5' => (string) config('omniful.sap_cost_centers.costing_code5', ''),
+            'ProjectCode' => (string) config('omniful.sap_cost_centers.project_code', ''),
+        ];
+
+        $fields = [];
+        foreach ($raw as $key => $value) {
+            $v = trim($value);
+            if ($v !== '') {
+                $fields[$key] = $v;
+            }
+        }
+
+        return $fields;
     }
 
 }

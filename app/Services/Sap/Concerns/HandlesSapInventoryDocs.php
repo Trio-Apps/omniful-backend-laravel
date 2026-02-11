@@ -25,6 +25,7 @@ trait HandlesSapInventoryDocs
     public function createInventoryGoodsReceipt(array $items, ?string $hubCode, string $remarks): array
     {
         $lines = $this->buildInventoryLinesForInventoryDoc($items, $hubCode, false);
+        $lines = $this->applyDefaultCostCentersToLines($lines);
 
         if ($lines === []) {
             throw new \RuntimeException('No inventory lines found for Goods Receipt');
@@ -65,6 +66,7 @@ trait HandlesSapInventoryDocs
     public function createInventoryGoodsIssue(array $items, ?string $hubCode, string $remarks): array
     {
         $lines = $this->buildInventoryLinesForInventoryDoc($items, $hubCode, true);
+        $lines = $this->applyDefaultCostCentersToLines($lines);
 
         if ($lines === []) {
             throw new \RuntimeException('No inventory lines found for Goods Issue');
@@ -142,6 +144,9 @@ trait HandlesSapInventoryDocs
                 'ignored' => true,
                 'reason' => 'No stock transfer lines found',
             ];
+        }
+        if ((bool) config('omniful.sap_cost_centers.apply_to_stock_transfer', false)) {
+            $lines = $this->applyDefaultCostCentersToLines($lines);
         }
 
         $docDate = now()->format('Y-m-d');
