@@ -101,6 +101,9 @@ trait HandlesSapPurchaseAndProducts
         if (!$response->successful() && $this->isSapSeriesPeriodMismatchError((string) $response->body())) {
             $response = $this->retryArOrderWithDynamicSeries($body, $docDate, $usedReserveInvoiceFallback);
         }
+        if (!$response->successful() && $this->isSapUomCodeRequiredError((string) $response->body())) {
+            $response = $this->retryArOrderWithResolvedUom($body, $usedReserveInvoiceFallback);
+        }
 
         if (!$response->successful()) {
             throw new \RuntimeException('SAP AR reserve invoice create failed: ' . $response->status() . ' ' . $response->body());
@@ -2438,6 +2441,61 @@ trait HandlesSapPurchaseAndProducts
         return $response;
     }
 
+    private function retryArOrderWithResolvedUom(array $body, bool &$usedReserveInvoiceFallback)
+    {
+        $lines = (array) ($body['DocumentLines'] ?? []);
+        $uomByItem = [];
+        $updated = false;
+
+        foreach ($lines as $idx => $line) {
+            $itemCode = trim((string) ($line['ItemCode'] ?? ''));
+            if ($itemCode === '') {
+                continue;
+            }
+
+            if (!array_key_exists($itemCode, $uomByItem)) {
+                $uomByItem[$itemCode] = $this->getPreferredSalesUomForItem($itemCode);
+                if ($uomByItem[$itemCode] === []) {
+                    $uomByItem[$itemCode] = $this->getPreferredPurchaseUomForItem($itemCode);
+                }
+            }
+
+            $uom = $uomByItem[$itemCode];
+            if (isset($uom['UoMEntry']) && (!isset($line['UoMEntry']) || (int) $line['UoMEntry'] !== (int) $uom['UoMEntry'])) {
+                $lines[$idx]['UoMEntry'] = $uom['UoMEntry'];
+                $updated = true;
+            }
+            if (isset($uom['UoMCode']) && (!isset($line['UoMCode']) || (string) $line['UoMCode'] !== (string) $uom['UoMCode'])) {
+                $lines[$idx]['UoMCode'] = (string) $uom['UoMCode'];
+                $updated = true;
+            }
+        }
+
+        if (!$updated) {
+            return $this->postArOrderWithReserveFallback($body, $usedReserveInvoiceFallback);
+        }
+
+        $retryBody = $body;
+        $retryBody['DocumentLines'] = $lines;
+        $retryBody['Comments'] = ($body['Comments'] ?? 'Omniful AR reserve order') . ' | retry with resolved UoM';
+
+        $preferredSeries = $this->getPreferredSeriesId('17');
+        if ($preferredSeries !== null) {
+            $retryBody['Series'] = $preferredSeries;
+        }
+
+        $response = $this->postArOrderWithReserveFallback($retryBody, $usedReserveInvoiceFallback);
+        if (!$response->successful() && $this->isSapSeriesPeriodMismatchError((string) $response->body())) {
+            $response = $this->retryArOrderWithDynamicSeries(
+                $retryBody,
+                (string) ($retryBody['DocDate'] ?? now()->format('Y-m-d')),
+                $usedReserveInvoiceFallback
+            );
+        }
+
+        return $response;
+    }
+
     private function retryPurchaseOrderWithDynamicSeries(array $body, string $initialDocDate)
     {
         $seriesList = $this->getDocumentSeries('22');
@@ -2589,6 +2647,54 @@ trait HandlesSapPurchaseAndProducts
         }
 
         $code = trim((string) ($payload['PurchaseUnit'] ?? $payload['InventoryUOM'] ?? $payload['SalesUnit'] ?? ''));
+        if ($code !== '') {
+            $out['UoMCode'] = $code;
+        }
+
+        if (!isset($out['UoMEntry'])) {
+            $groupEntry = $payload['UoMGroupEntry'] ?? null;
+            if (is_numeric($groupEntry) && (int) $groupEntry > 0) {
+                $groupUomEntry = $this->getFirstUomEntryFromGroup((int) $groupEntry);
+                if ($groupUomEntry !== null) {
+                    $out['UoMEntry'] = $groupUomEntry;
+                }
+            }
+        }
+
+        if (!isset($out['UoMEntry']) && isset($out['UoMCode'])) {
+            $entryByCode = $this->getUomEntryByCode((string) $out['UoMCode']);
+            if ($entryByCode !== null) {
+                $out['UoMEntry'] = $entryByCode;
+            }
+        }
+
+        if (!isset($out['UoMCode']) && isset($out['UoMEntry'])) {
+            $codeByEntry = $this->getUomCodeByEntry((int) $out['UoMEntry']);
+            if ($codeByEntry !== null) {
+                $out['UoMCode'] = $codeByEntry;
+            }
+        }
+
+        return $out;
+    }
+
+    private function getPreferredSalesUomForItem(string $itemCode): array
+    {
+        $encoded = str_replace("'", "''", $itemCode);
+        $response = $this->get("/Items('{$encoded}')?\$select=ItemCode,UoMGroupEntry,DefaultSalesUoMEntry,SalesUnit,InventoryUOM,PurchaseUnit");
+        if (!$response->successful()) {
+            return [];
+        }
+
+        $payload = $response->json() ?? [];
+        $out = [];
+
+        $entry = $payload['DefaultSalesUoMEntry'] ?? null;
+        if (is_numeric($entry) && (int) $entry > 0) {
+            $out['UoMEntry'] = (int) $entry;
+        }
+
+        $code = trim((string) ($payload['SalesUnit'] ?? $payload['InventoryUOM'] ?? $payload['PurchaseUnit'] ?? ''));
         if ($code !== '') {
             $out['UoMCode'] = $code;
         }
