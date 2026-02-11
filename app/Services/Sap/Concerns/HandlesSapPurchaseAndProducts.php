@@ -1548,7 +1548,8 @@ trait HandlesSapPurchaseAndProducts
             $body[$udfField] = $udfValue;
         }
 
-        $itemTypeDefault = trim((string) config('omniful.sap_item_defaults.item_type_default_value', 'product'));
+        $itemTypeDefault = trim((string) config('omniful.sap_item_defaults.item_type_default_value', 'P'));
+        $itemTypeDefault = $this->normalizeSapItemTypeCode($itemTypeDefault);
         if ($itemTypeDefault !== '' && !array_key_exists('U_ItemType', $body)) {
             $body['U_ItemType'] = $itemTypeDefault;
         }
@@ -1557,6 +1558,18 @@ trait HandlesSapPurchaseAndProducts
         if ($productTypeDefault !== '' && !array_key_exists('U_ProductType', $body)) {
             $body['U_ProductType'] = $productTypeDefault;
         }
+    }
+
+    private function normalizeSapItemTypeCode(string $value): string
+    {
+        $v = strtoupper(trim($value));
+        return match ($v) {
+            'PRODUCT' => 'P',
+            'INVENTORY', 'INVENTORY ITEM', 'INVENTORYITEM' => 'I',
+            'STOCK PRODUCT', 'STOCKPRODUCT' => 'IP',
+            'OTHER' => 'M',
+            default => $v,
+        };
     }
 
     private function isSapItemTypeRequiredError(string $body): bool

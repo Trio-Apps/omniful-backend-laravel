@@ -34,7 +34,7 @@ return [
         'item_type_numeric_fallback' => (int) env('SAP_ITEM_TYPE_NUMERIC_FALLBACK', 0),
         'item_type_udf_field' => env('SAP_ITEM_TYPE_UDF_FIELD', ''),
         'item_type_udf_value' => env('SAP_ITEM_TYPE_UDF_VALUE', ''),
-        'item_type_default_value' => env('SAP_ITEM_TYPE_DEFAULT_VALUE', 'product'),
+        'item_type_default_value' => env('SAP_ITEM_TYPE_DEFAULT_VALUE', 'P'),
         'product_type_default_value' => env('SAP_PRODUCT_TYPE_DEFAULT_VALUE', 'product'),
     ],
     'tenant_token_endpoint' => env('OMNIFUL_TENANT_TOKEN_ENDPOINT', '/sales-channel/public/v1/tenants/token'),
