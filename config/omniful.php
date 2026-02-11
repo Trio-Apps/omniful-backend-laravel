@@ -120,6 +120,35 @@ return [
         'in_transit_warehouse' => env('OMNIFUL_IN_TRANSIT_WAREHOUSE', ''),
         'force_in_transit' => (bool) env('OMNIFUL_IN_TRANSIT_FORCE', false),
     ],
+    'warehouse_resolution' => [
+        'auto_create' => (bool) env('SAP_WAREHOUSE_AUTO_CREATE', false),
+        'map' => (function () {
+            $raw = trim((string) env('SAP_WAREHOUSE_MAP', ''));
+            if ($raw === '') {
+                return [];
+            }
+
+            $decoded = json_decode($raw, true);
+            if (is_array($decoded)) {
+                return $decoded;
+            }
+
+            $pairs = array_filter(array_map('trim', explode(',', $raw)));
+            $map = [];
+            foreach ($pairs as $pair) {
+                if (!str_contains($pair, ':')) {
+                    continue;
+                }
+
+                [$source, $target] = array_map('trim', explode(':', $pair, 2));
+                if ($source !== '' && $target !== '') {
+                    $map[$source] = $target;
+                }
+            }
+
+            return $map;
+        })(),
+    ],
     'hub_defaults' => [
         'type' => env('OMNIFUL_HUB_TYPE', 'warehouse'),
         'email' => env('OMNIFUL_HUB_EMAIL'),

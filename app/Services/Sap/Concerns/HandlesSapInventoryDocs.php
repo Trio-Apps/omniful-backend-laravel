@@ -112,8 +112,8 @@ trait HandlesSapInventoryDocs
             throw new \RuntimeException('Stock transfer requires source and destination warehouses');
         }
 
-        $this->ensureWarehouseExists($fromWarehouse, 1);
-        $this->ensureWarehouseExists($toWarehouse, 1);
+        $fromWarehouse = $this->ensureWarehouseExists($fromWarehouse, 1);
+        $toWarehouse = $this->ensureWarehouseExists($toWarehouse, 1);
 
         $lines = [];
         $lineIndex = 0;
@@ -235,7 +235,7 @@ trait HandlesSapInventoryDocs
         $binAbsEntry = null;
         $binManaged = false;
         if ($hubCode) {
-            $this->ensureWarehouseExists($hubCode, 1);
+            $hubCode = $this->ensureWarehouseExists($hubCode, 1);
             $binManaged = $this->isWarehouseBinManaged($hubCode);
             if ($binManaged) {
                 $binAbsEntry = $this->getFirstBinAbsEntry($hubCode);
@@ -530,7 +530,8 @@ trait HandlesSapInventoryDocs
 
     public function getWarehouseOnHand(string $itemCode, ?string $warehouseCode): float
     {
-        if (!$warehouseCode) {
+        $warehouseCode = $this->resolveWarehouseCode($warehouseCode);
+        if ($warehouseCode === '') {
             return 0.0;
         }
 
@@ -570,10 +571,23 @@ trait HandlesSapInventoryDocs
     }
 
 
-    private function ensureWarehouseExists(string $warehouseCode, int $lineIndex): void
+    private function ensureWarehouseExists(string $warehouseCode, int $lineIndex): string
     {
+        $sourceCode = trim($warehouseCode);
+        if ($sourceCode === '') {
+            throw new \RuntimeException('Missing warehouse code for SAP line ' . $lineIndex);
+        }
+
+        $warehouseCode = $this->resolveWarehouseCode($sourceCode);
         if ($this->isValidWarehouse($warehouseCode)) {
-            return;
+            return $warehouseCode;
+        }
+
+        if (!$this->shouldAutoCreateWarehouse()) {
+            throw new \RuntimeException(
+                'SAP warehouse not found for line ' . $lineIndex . ' (source=' . $sourceCode . ', resolved=' . $warehouseCode . ').'
+                . ' Configure SAP_WAREHOUSE_MAP or create the warehouse in SAP.'
+            );
         }
 
         $body = [
@@ -584,8 +598,40 @@ trait HandlesSapInventoryDocs
         $response = $this->post('/Warehouses', $body);
 
         if (!$response->successful()) {
-            throw new \RuntimeException('SAP warehouse create failed for line ' . $lineIndex . ' (' . $warehouseCode . '): ' . $response->status() . ' ' . $response->body());
+            throw new \RuntimeException(
+                'SAP warehouse create failed for line ' . $lineIndex . ' (source=' . $sourceCode . ', resolved=' . $warehouseCode . '): '
+                . $response->status() . ' ' . $response->body()
+            );
         }
+
+        return $warehouseCode;
+    }
+
+    private function resolveWarehouseCode(?string $warehouseCode): string
+    {
+        $warehouseCode = trim((string) $warehouseCode);
+        if ($warehouseCode === '') {
+            return '';
+        }
+
+        $mapping = (array) config('omniful.warehouse_resolution.map', []);
+        if ($mapping === []) {
+            return $warehouseCode;
+        }
+
+        foreach ($mapping as $source => $target) {
+            if (strcasecmp(trim((string) $source), $warehouseCode) === 0) {
+                $mapped = trim((string) $target);
+                return $mapped !== '' ? $mapped : $warehouseCode;
+            }
+        }
+
+        return $warehouseCode;
+    }
+
+    private function shouldAutoCreateWarehouse(): bool
+    {
+        return (bool) config('omniful.warehouse_resolution.auto_create', false);
     }
 
 }

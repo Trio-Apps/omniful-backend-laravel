@@ -53,8 +53,7 @@ trait HandlesSapPurchaseAndProducts
             ];
 
             if ($hubCode) {
-                $this->ensureWarehouseExists((string) $hubCode, $lineIndex);
-                $line['WarehouseCode'] = (string) $hubCode;
+                $line['WarehouseCode'] = $this->ensureWarehouseExists((string) $hubCode, $lineIndex);
             }
 
             $lines[] = $line;
@@ -267,8 +266,7 @@ trait HandlesSapPurchaseAndProducts
             ];
 
             if ($hubCode !== '') {
-                $this->ensureWarehouseExists($hubCode, ((int) $lineNum) + 1);
-                $deliveryLine['WarehouseCode'] = $hubCode;
+                $deliveryLine['WarehouseCode'] = $this->ensureWarehouseExists($hubCode, ((int) $lineNum) + 1);
             }
 
             $lines[] = $deliveryLine;
@@ -557,8 +555,7 @@ trait HandlesSapPurchaseAndProducts
             ];
 
             if ($hubCode) {
-                $this->ensureWarehouseExists($hubCode, $lineIndex);
-                $line['WarehouseCode'] = $hubCode;
+                $line['WarehouseCode'] = $this->ensureWarehouseExists($hubCode, $lineIndex);
             }
 
             $lines[] = $line;
@@ -1842,8 +1839,7 @@ trait HandlesSapPurchaseAndProducts
             ];
 
             if ($hubCode !== '') {
-                $this->ensureWarehouseExists($hubCode, $lineIndex);
-                $line['WarehouseCode'] = $hubCode;
+                $line['WarehouseCode'] = $this->ensureWarehouseExists($hubCode, $lineIndex);
             }
 
             $lines[] = $line;
