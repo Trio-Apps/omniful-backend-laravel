@@ -39,6 +39,7 @@ trait HandlesSapPurchaseAndProducts
             }
 
             $this->ensureItemExists((string) $itemCode, (array) $item, $lineIndex);
+            $this->ensureItemCanBeSold((string) $itemCode, $lineIndex);
 
             $qty = (float) (data_get($item, 'quantity') ?? 0);
             if ($qty <= 0) {
@@ -808,6 +809,29 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return true;
+    }
+
+    private function ensureItemCanBeSold(string $itemCode, int $lineIndex): void
+    {
+        $encoded = str_replace("'", "''", $itemCode);
+        $response = $this->get("/Items('{$encoded}')?\$select=ItemCode,SalesItem");
+
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP item sales-check failed for line ' . $lineIndex . ' (' . $itemCode . '): ' . $response->status() . ' ' . $response->body());
+        }
+
+        $salesItem = strtolower((string) ($response->json()['SalesItem'] ?? ''));
+        if ($salesItem === 'tyes') {
+            return;
+        }
+
+        $patch = $this->patch("/Items('{$encoded}')", [
+            'SalesItem' => 'tYES',
+        ]);
+
+        if (!$patch->successful()) {
+            throw new \RuntimeException('SAP item sales-enable failed for line ' . $lineIndex . ' (' . $itemCode . '): ' . $patch->status() . ' ' . $patch->body());
+        }
     }
 
     public function syncSupplierFromOmniful(array $data): array
