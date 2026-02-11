@@ -19,7 +19,7 @@ trait HandlesSapPurchaseAndProducts
         if (!$customerCode) {
             $customerCode = $this->buildCustomerCode($data, $externalId);
         }
-        $this->ensureCustomerExists((string) $customerCode, $data, $externalId);
+        $customerCode = $this->ensureCustomerExists((string) $customerCode, $data, $externalId);
 
         $lines = [];
         $lineIndex = 0;
@@ -418,7 +418,7 @@ trait HandlesSapPurchaseAndProducts
                 );
                 $cardCode = $this->buildCustomerCode($data, $seedId);
             }
-            $this->ensureCustomerExists($cardCode, $data, $externalId !== '' ? $externalId : $cardCode);
+            $cardCode = $this->ensureCustomerExists($cardCode, $data, $externalId !== '' ? $externalId : $cardCode);
         }
 
         if ($documentLines === []) {
@@ -1397,11 +1397,11 @@ trait HandlesSapPurchaseAndProducts
         return $response->json() ?? [];
     }
 
-    private function ensureCustomerExists(string $cardCode, array $data, string $externalId): void
+    private function ensureCustomerExists(string $cardCode, array $data, string $externalId): string
     {
         $existing = $this->getBusinessPartner($cardCode);
         if ($existing) {
-            return;
+            return $cardCode;
         }
 
         $firstName = (string) (data_get($data, 'customer.first_name') ?? '');
@@ -1422,6 +1422,11 @@ trait HandlesSapPurchaseAndProducts
             ?? data_get($data, 'billing_address.phone')
             ?? data_get($data, 'shipping_address.phone');
 
+        $resolvedByIdentity = $this->resolveExistingCustomerCodeForDuplication((string) ($phone ?? ''), $fullName, $email);
+        if ($resolvedByIdentity !== null) {
+            return $resolvedByIdentity;
+        }
+
         if ($email) {
             $body['EmailAddress'] = (string) $email;
         }
@@ -1431,13 +1436,13 @@ trait HandlesSapPurchaseAndProducts
 
         $response = $this->post('/BusinessPartners', $body);
         if ($response->successful()) {
-            return;
+            return $cardCode;
         }
 
         if ($this->isSapMobileDuplicationError($response->body())) {
             $resolvedCode = $this->resolveExistingCustomerCodeForDuplication((string) ($phone ?? ''), $fullName, $email);
             if ($resolvedCode !== null) {
-                return;
+                return $resolvedCode;
             }
         }
 
