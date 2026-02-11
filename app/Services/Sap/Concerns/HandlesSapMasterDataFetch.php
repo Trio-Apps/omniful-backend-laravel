@@ -2,6 +2,8 @@
 
 namespace App\Services\Sap\Concerns;
 
+use Illuminate\Support\Facades\Log;
+
 trait HandlesSapMasterDataFetch
 {
     /**
@@ -90,6 +92,15 @@ trait HandlesSapMasterDataFetch
         }
 
         if (!$response->successful()) {
+            if ($this->isInvalidSapPropertyError($response->body(), $udfField)) {
+                Log::warning('SAP supplier integration UDF field not found; bypassing supplier UDF control', [
+                    'supplier_code' => $supplierCode,
+                    'udf_field' => $udfField,
+                    'status' => $response->status(),
+                ]);
+                return true;
+            }
+
             throw new \RuntimeException('SAP supplier integration-udf lookup failed: ' . $response->status() . ' ' . $response->body());
         }
 
@@ -100,6 +111,20 @@ trait HandlesSapMasterDataFetch
         }
 
         return in_array($value, $allowed, true);
+    }
+
+    private function isInvalidSapPropertyError(string $body, string $field): bool
+    {
+        $normalized = strtolower($body);
+        if (!str_contains($normalized, 'property') || !str_contains($normalized, 'invalid')) {
+            return false;
+        }
+
+        if ($field === '') {
+            return str_contains($normalized, 'property');
+        }
+
+        return str_contains($normalized, strtolower($field));
     }
 
     /**
