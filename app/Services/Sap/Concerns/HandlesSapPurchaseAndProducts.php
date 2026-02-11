@@ -1709,6 +1709,94 @@ trait HandlesSapPurchaseAndProducts
             }
         }
 
+        $existingByLooseScan = $this->findCustomerByLooseScan($phone, (string) ($email ?? ''), $cardName);
+        if ($existingByLooseScan) {
+            $existingCode = (string) ($existingByLooseScan['CardCode'] ?? '');
+            $existingType = $this->normalizeSapCardType((string) ($existingByLooseScan['CardType'] ?? ''));
+            if ($existingCode !== '') {
+                if ($existingType === 'C') {
+                    return $existingCode;
+                }
+                if ($this->ensureBusinessPartnerIsCustomer($existingCode, $cardName, $email)) {
+                    return $existingCode;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Best-effort scan when exact OData eq filters miss due formatting/case differences.
+     * @return array<string,mixed>|null
+     */
+    private function findCustomerByLooseScan(string $phone, string $email, string $cardName): ?array
+    {
+        $targetPhone = $this->normalizePhone($phone);
+        $targetEmail = strtolower(trim($email));
+        $targetName = strtolower(trim($cardName));
+
+        $skip = 0;
+        $top = 200;
+        $maxRows = 2000;
+        $seen = 0;
+
+        while ($seen < $maxRows) {
+            $path = "/BusinessPartners?\$select=CardCode,CardType,CardName,EmailAddress,Phone1,Cellular,Phone2&\$filter=CardType eq 'C'&\$top={$top}&\$skip={$skip}";
+            $response = $this->get($path);
+            if (!$response->successful()) {
+                return null;
+            }
+
+            $rows = (array) ($response->json('value') ?? []);
+            if ($rows === []) {
+                return null;
+            }
+
+            foreach ($rows as $row) {
+                $seen++;
+                $rowEmail = strtolower(trim((string) ($row['EmailAddress'] ?? '')));
+                $rowName = strtolower(trim((string) ($row['CardName'] ?? '')));
+
+                if ($targetEmail !== '' && $rowEmail !== '' && $rowEmail === $targetEmail) {
+                    return $row;
+                }
+
+                if ($targetPhone !== '') {
+                    $phones = [
+                        $this->normalizePhone((string) ($row['Phone1'] ?? '')),
+                        $this->normalizePhone((string) ($row['Cellular'] ?? '')),
+                        $this->normalizePhone((string) ($row['Phone2'] ?? '')),
+                    ];
+                    foreach ($phones as $p) {
+                        if ($p === '') {
+                            continue;
+                        }
+
+                        if ($p === $targetPhone) {
+                            return $row;
+                        }
+
+                        // Relaxed KSA/local matching by last 9 digits.
+                        if (strlen($p) >= 9 && strlen($targetPhone) >= 9) {
+                            if (substr($p, -9) === substr($targetPhone, -9)) {
+                                return $row;
+                            }
+                        }
+                    }
+                }
+
+                if ($targetName !== '' && $rowName !== '' && $rowName === $targetName) {
+                    return $row;
+                }
+            }
+
+            if (count($rows) < $top) {
+                return null;
+            }
+            $skip += $top;
+        }
+
         return null;
     }
 
