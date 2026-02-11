@@ -2,6 +2,7 @@
 
 namespace App\Services\Sap\Concerns;
 
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
 trait HandlesSapPurchaseAndProducts
@@ -518,7 +519,10 @@ trait HandlesSapPurchaseAndProducts
     public function createPurchaseOrderFromOmniful(array $data): array
     {
         $docDate = $this->formatDate(data_get($data, 'created_at'));
-        $seriesInfo = $this->resolveSeriesForDocument('22', $docDate);
+        $preferredSeries = $this->getPreferredSeriesId('22');
+        $seriesInfo = $preferredSeries !== null
+            ? ['series' => $preferredSeries, 'docDate' => $docDate, 'indicator' => 'preferred']
+            : $this->resolveSeriesForDocument('22', $docDate);
         $docDate = $seriesInfo['docDate'];
         $dueDate = $docDate;
         $currency = data_get($data, 'currency');
@@ -598,9 +602,16 @@ trait HandlesSapPurchaseAndProducts
         if (!$response->successful() && $this->isSapSeriesPeriodMismatchError($response->body())) {
             $response = $this->retryPurchaseOrderWithDynamicSeries($body, $docDate);
         }
+        if (!$response->successful() && $this->isSapUomCodeRequiredError($response->body())) {
+            $response = $this->retryPurchaseOrderWithResolvedUom($body);
+        }
 
         if (!$response->successful()) {
             throw new \RuntimeException('SAP PO create failed: ' . $response->status() . ' ' . $response->body());
+        }
+
+        if (isset($body['Series']) && is_numeric($body['Series'])) {
+            $this->rememberPreferredSeriesId('22', (int) $body['Series']);
         }
 
         return $response->json() ?? [];
@@ -1894,12 +1905,14 @@ trait HandlesSapPurchaseAndProducts
 
                 $response = $this->post('/PurchaseOrders', $attemptBody);
                 if ($response->successful()) {
+                    $this->rememberPreferredSeriesId('22', $seriesId);
                     return $response;
                 }
 
                 $attempts[] = 'series=' . $seriesId . ',date=' . $date . ',status=' . $response->status();
 
                 if (!$this->isSapSeriesPeriodMismatchError($response->body())) {
+                    $this->rememberPreferredSeriesId('22', $seriesId);
                     return $response;
                 }
             }
@@ -1914,6 +1927,7 @@ trait HandlesSapPurchaseAndProducts
 
             $response = $this->post('/PurchaseOrders', $attemptBody);
             if ($response->successful()) {
+                $this->forgetPreferredSeriesId('22');
                 return $response;
             }
 
@@ -1931,9 +1945,118 @@ trait HandlesSapPurchaseAndProducts
         return $response;
     }
 
+    private function retryPurchaseOrderWithResolvedUom(array $body)
+    {
+        $lines = (array) ($body['DocumentLines'] ?? []);
+        $uomByItem = [];
+        $updated = false;
+
+        foreach ($lines as $idx => $line) {
+            $itemCode = trim((string) ($line['ItemCode'] ?? ''));
+            if ($itemCode === '') {
+                continue;
+            }
+
+            if (!array_key_exists($itemCode, $uomByItem)) {
+                $uomByItem[$itemCode] = $this->getPreferredPurchaseUomForItem($itemCode);
+            }
+
+            $uom = $uomByItem[$itemCode];
+            if (!isset($line['UoMEntry']) && isset($uom['UoMEntry'])) {
+                $lines[$idx]['UoMEntry'] = $uom['UoMEntry'];
+                $updated = true;
+            }
+            if (!isset($line['UoMCode']) && isset($uom['UoMCode'])) {
+                $lines[$idx]['UoMCode'] = $uom['UoMCode'];
+                $updated = true;
+            }
+        }
+
+        if (!$updated) {
+            return $this->post('/PurchaseOrders', $body);
+        }
+
+        $retryBody = $body;
+        $retryBody['DocumentLines'] = $lines;
+        $retryBody['Comments'] = ($body['Comments'] ?? 'Omniful PO') . ' | retry with resolved UoM';
+
+        $preferredSeries = $this->getPreferredSeriesId('22');
+        if ($preferredSeries !== null) {
+            $retryBody['Series'] = $preferredSeries;
+        }
+
+        $response = $this->post('/PurchaseOrders', $retryBody);
+        if (!$response->successful() && $this->isSapSeriesPeriodMismatchError($response->body())) {
+            $response = $this->retryPurchaseOrderWithDynamicSeries(
+                $retryBody,
+                (string) ($retryBody['DocDate'] ?? now()->format('Y-m-d'))
+            );
+        }
+
+        return $response;
+    }
+
+    private function getPreferredPurchaseUomForItem(string $itemCode): array
+    {
+        $encoded = str_replace("'", "''", $itemCode);
+        $response = $this->get("/Items('{$encoded}')?\$select=ItemCode,DefaultPurchasingUoMEntry,PurchaseUnit,InventoryUOM,SalesUnit");
+        if (!$response->successful()) {
+            return [];
+        }
+
+        $payload = $response->json() ?? [];
+        $out = [];
+
+        $entry = $payload['DefaultPurchasingUoMEntry'] ?? null;
+        if (is_numeric($entry) && (int) $entry > 0) {
+            $out['UoMEntry'] = (int) $entry;
+        }
+
+        $code = trim((string) ($payload['PurchaseUnit'] ?? $payload['InventoryUOM'] ?? $payload['SalesUnit'] ?? ''));
+        if ($code !== '') {
+            $out['UoMCode'] = $code;
+        }
+
+        return $out;
+    }
+
+    private function getPreferredSeriesId(string $documentCode): ?int
+    {
+        $key = $this->preferredSeriesCacheKey($documentCode);
+        $value = Cache::get($key);
+        return is_numeric($value) ? (int) $value : null;
+    }
+
+    private function rememberPreferredSeriesId(string $documentCode, int $seriesId): void
+    {
+        if ($seriesId <= 0) {
+            return;
+        }
+
+        Cache::put($this->preferredSeriesCacheKey($documentCode), $seriesId, now()->addDays(30));
+    }
+
+    private function forgetPreferredSeriesId(string $documentCode): void
+    {
+        Cache::forget($this->preferredSeriesCacheKey($documentCode));
+    }
+
+    private function preferredSeriesCacheKey(string $documentCode): string
+    {
+        $company = trim((string) (property_exists($this, 'companyDb') ? $this->companyDb : 'default'));
+        return 'sap.preferred_series.' . strtolower($company !== '' ? $company : 'default') . '.' . $documentCode;
+    }
+
     private function isSapSeriesPeriodMismatchError(string $responseBody): bool
     {
         return str_contains(strtolower($responseBody), 'series period does not match current period');
+    }
+
+    private function isSapUomCodeRequiredError(string $responseBody): bool
+    {
+        $body = strtolower($responseBody);
+        return str_contains($body, 'specify a uom code')
+            || str_contains($body, '1470000315');
     }
 
 }
