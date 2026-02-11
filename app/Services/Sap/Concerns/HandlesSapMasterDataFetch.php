@@ -145,10 +145,12 @@ trait HandlesSapMasterDataFetch
     public function fetchCostCenters(): array
     {
         return $this->fetchAllWithFallback([
-            "/DistributionRules?\$select=FactorCode,FactorName,InWhichDimension,Active",
-            "/DistributionRules?\$select=FactorCode,InWhichDimension,Active",
-            "/DistributionRules?\$select=FactorCode,InWhichDimension",
-            "/DistributionRules",
+            "/DistributionRules?\$select=FactorCode,FactorName,InWhichDimension,Active&\$filter=Active%20eq%20'tYES'&\$top=200",
+            "/DistributionRules?\$select=FactorCode,InWhichDimension,Active&\$filter=Active%20eq%20'tYES'&\$top=200",
+            "/DistributionRules?\$select=FactorCode,FactorName,InWhichDimension,Active&\$top=200",
+            "/DistributionRules?\$select=FactorCode,InWhichDimension,Active&\$top=200",
+            "/DistributionRules?\$select=FactorCode,InWhichDimension&\$top=200",
+            "/DistributionRules?\$top=200",
         ]);
     }
 
@@ -158,9 +160,10 @@ trait HandlesSapMasterDataFetch
     public function fetchProjects(): array
     {
         return $this->fetchAllWithFallback([
-            "/Projects?\$select=Code,Name,Active",
-            "/Projects?\$select=Code,Name",
-            "/Projects",
+            "/Projects?\$select=Code,Name,Active&\$filter=Active%20eq%20'tYES'&\$top=200",
+            "/Projects?\$select=Code,Name,Active&\$top=200",
+            "/Projects?\$select=Code,Name&\$top=200",
+            "/Projects?\$top=200",
         ]);
     }
 

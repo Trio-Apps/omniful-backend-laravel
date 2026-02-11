@@ -153,6 +153,8 @@ class IntegrationControlSettings extends Page implements HasForms
 
     public function syncSapCostCenters(SapServiceLayerClient $client): void
     {
+        @ini_set('max_execution_time', '0');
+        @set_time_limit(0);
         try {
             $result = app(SapCostCenterSyncService::class)->syncFromSap($client);
 
@@ -224,4 +226,3 @@ class IntegrationControlSettings extends Page implements HasForms
         ];
     }
 }
-
