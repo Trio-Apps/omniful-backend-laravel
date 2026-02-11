@@ -596,19 +596,7 @@ trait HandlesSapPurchaseAndProducts
 
         $response = $this->post('/PurchaseOrders', $body);
         if (!$response->successful() && $this->isSapSeriesPeriodMismatchError($response->body())) {
-            $fallbackDocDate = now()->format('Y-m-d');
-            $fallbackSeriesInfo = $this->resolveSeriesForDocument('22', $fallbackDocDate);
-            $body['DocDate'] = $fallbackSeriesInfo['docDate'];
-            $body['DocDueDate'] = $fallbackSeriesInfo['docDate'];
-
-            if (!empty($fallbackSeriesInfo['series'])) {
-                $body['Series'] = $fallbackSeriesInfo['series'];
-            } else {
-                unset($body['Series']);
-            }
-
-            $body['Comments'] = ($body['Comments'] ?? 'Omniful PO') . ' | retry with current period ' . $body['DocDate'];
-            $response = $this->post('/PurchaseOrders', $body);
+            $response = $this->retryPurchaseOrderWithDynamicSeries($body, $docDate);
         }
 
         if (!$response->successful()) {
@@ -1861,6 +1849,86 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return $lines;
+    }
+
+    private function retryPurchaseOrderWithDynamicSeries(array $body, string $initialDocDate)
+    {
+        $seriesList = $this->getDocumentSeries('22');
+        $today = now()->format('Y-m-d');
+        $currentYear = substr($today, 0, 4);
+        $candidateSeries = [];
+        $fallbackSeries = [];
+
+        foreach ((array) $seriesList as $series) {
+            if (($series['Locked'] ?? 'tNO') === 'tYES') {
+                continue;
+            }
+            if (!$this->isSeriesUsable((array) $series)) {
+                continue;
+            }
+
+            $seriesId = isset($series['Series']) && is_numeric($series['Series']) ? (int) $series['Series'] : null;
+            if ($seriesId === null) {
+                continue;
+            }
+
+            $indicator = (string) ($series['PeriodIndicator'] ?? '');
+            if ($indicator === $currentYear || $indicator === 'Default') {
+                $candidateSeries[] = $seriesId;
+            } else {
+                $fallbackSeries[] = $seriesId;
+            }
+        }
+
+        $orderedSeries = array_values(array_unique(array_merge($candidateSeries, $fallbackSeries)));
+        $candidateDates = array_values(array_unique([$today, $initialDocDate]));
+        $attempts = [];
+
+        foreach ($candidateDates as $date) {
+            foreach ($orderedSeries as $seriesId) {
+                $attemptBody = $body;
+                $attemptBody['DocDate'] = $date;
+                $attemptBody['DocDueDate'] = $date;
+                $attemptBody['Series'] = $seriesId;
+                $attemptBody['Comments'] = ($body['Comments'] ?? 'Omniful PO') . ' | retry dynamic series=' . $seriesId . ' date=' . $date;
+
+                $response = $this->post('/PurchaseOrders', $attemptBody);
+                if ($response->successful()) {
+                    return $response;
+                }
+
+                $attempts[] = 'series=' . $seriesId . ',date=' . $date . ',status=' . $response->status();
+
+                if (!$this->isSapSeriesPeriodMismatchError($response->body())) {
+                    return $response;
+                }
+            }
+        }
+
+        foreach ($candidateDates as $date) {
+            $attemptBody = $body;
+            $attemptBody['DocDate'] = $date;
+            $attemptBody['DocDueDate'] = $date;
+            unset($attemptBody['Series']);
+            $attemptBody['Comments'] = ($body['Comments'] ?? 'Omniful PO') . ' | retry dynamic without series date=' . $date;
+
+            $response = $this->post('/PurchaseOrders', $attemptBody);
+            if ($response->successful()) {
+                return $response;
+            }
+
+            $attempts[] = 'series=none,date=' . $date . ',status=' . $response->status();
+            if (!$this->isSapSeriesPeriodMismatchError($response->body())) {
+                return $response;
+            }
+        }
+
+        Log::warning('SAP PO series dynamic retry exhausted', [
+            'attempts' => $attempts,
+            'initial_doc_date' => $initialDocDate,
+        ]);
+
+        return $response;
     }
 
     private function isSapSeriesPeriodMismatchError(string $responseBody): bool
