@@ -1560,6 +1560,23 @@ trait HandlesSapPurchaseAndProducts
 
     private function resolveExistingCustomerCodeForDuplication(string $phone, string $cardName, mixed $email): ?string
     {
+        $emailValue = trim((string) ($email ?? ''));
+        if ($emailValue !== '') {
+            $existingByEmail = $this->findBusinessPartnerByEmail($emailValue, null);
+            if ($existingByEmail) {
+                $existingCode = (string) ($existingByEmail['CardCode'] ?? '');
+                $existingType = strtoupper((string) ($existingByEmail['CardType'] ?? ''));
+                if ($existingCode !== '') {
+                    if ($existingType === 'C') {
+                        return $existingCode;
+                    }
+                    if ($this->ensureBusinessPartnerIsCustomer($existingCode, $cardName, $email)) {
+                        return $existingCode;
+                    }
+                }
+            }
+        }
+
         if ($phone !== '') {
             $existingByPhone = $this->findBusinessPartnerByPhone($phone, null);
             if ($existingByPhone) {
@@ -1593,6 +1610,30 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return null;
+    }
+
+    /**
+     * @return array<string,mixed>|null
+     */
+    private function findBusinessPartnerByEmail(string $email, ?string $cardType = 'C'): ?array
+    {
+        $email = trim($email);
+        if ($email === '') {
+            return null;
+        }
+
+        $escaped = str_replace("'", "''", $email);
+        $typeFilter = $cardType ? "CardType eq '" . str_replace("'", "''", $cardType) . "' and " : '';
+        $filter = rawurlencode($typeFilter . "EmailAddress eq '{$escaped}'");
+        $path = "/BusinessPartners?\$select=CardCode,CardType,CardName,EmailAddress,Phone1,Cellular,Phone2&\$filter={$filter}&\$top=1";
+        $response = $this->get($path);
+
+        if (!$response->successful()) {
+            return null;
+        }
+
+        $rows = (array) ($response->json('value') ?? []);
+        return $rows[0] ?? null;
     }
 
     private function extractSupplierPhone(array $data): string
