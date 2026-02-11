@@ -645,7 +645,7 @@ trait HandlesSapPurchaseAndProducts
 
         $supplier = (array) data_get($data, 'supplier', []);
         $cardName = data_get($supplier, 'name') ?: $cardCode;
-        $phone = (string) (data_get($supplier, 'phone') ?? '');
+        $phone = $this->extractSupplierPhone($data);
         $email = data_get($supplier, 'email');
 
         if ($phone !== '') {
@@ -680,20 +680,10 @@ trait HandlesSapPurchaseAndProducts
             return $cardCode;
         }
 
-        if ($this->isSapMobileDuplicationError($response->body()) && $phone !== '') {
-            $existingByPhone = $this->findBusinessPartnerByPhone($phone, null);
-            if ($existingByPhone) {
-                $existingCode = (string) ($existingByPhone['CardCode'] ?? '');
-                $existingType = strtoupper((string) ($existingByPhone['CardType'] ?? ''));
-                if ($existingCode !== '') {
-                    if ($existingType === 'S') {
-                        return $existingCode;
-                    }
-
-                    if ($this->ensureBusinessPartnerIsSupplier($existingCode, $cardName, $email)) {
-                        return $existingCode;
-                    }
-                }
+        if ($this->isSapMobileDuplicationError($response->body())) {
+            $existingCode = $this->resolveExistingSupplierCodeForDuplication($phone, (string) $cardName, $email);
+            if ($existingCode !== null) {
+                return $existingCode;
             }
         }
 
@@ -840,13 +830,10 @@ trait HandlesSapPurchaseAndProducts
             return ['status' => 'created', 'supplier_code' => $cardCode];
         }
 
-        if ($this->isSapMobileDuplicationError($response->body()) && $phone) {
-            $existingByPhone = $this->findBusinessPartnerByPhone((string) $phone);
-            if ($existingByPhone) {
-                $existingType = strtoupper((string) ($existingByPhone['CardType'] ?? ''));
-                if ($existingType === 'S') {
-                    return ['status' => 'linked_existing_by_phone', 'supplier_code' => (string) $existingByPhone['CardCode']];
-                }
+        if ($this->isSapMobileDuplicationError($response->body())) {
+            $existingCode = $this->resolveExistingSupplierCodeForDuplication((string) ($phone ?? ''), $cardName, $email);
+            if ($existingCode !== null) {
+                return ['status' => 'linked_existing_by_phone', 'supplier_code' => $existingCode];
             }
         }
 
@@ -1499,6 +1486,90 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return null;
+    }
+
+    /**
+     * @return array<string,mixed>|null
+     */
+    private function findBusinessPartnerByName(string $cardName, ?string $cardType = 'S'): ?array
+    {
+        $name = trim($cardName);
+        if ($name === '') {
+            return null;
+        }
+
+        $escaped = str_replace("'", "''", $name);
+        $typeFilter = $cardType ? "CardType eq '" . str_replace("'", "''", $cardType) . "' and " : '';
+        $filter = rawurlencode($typeFilter . "CardName eq '{$escaped}'");
+        $path = "/BusinessPartners?\$select=CardCode,CardType,CardName,Phone1,Cellular,Phone2&\$filter={$filter}&\$top=1";
+        $response = $this->get($path);
+
+        if (!$response->successful()) {
+            return null;
+        }
+
+        $rows = (array) ($response->json('value') ?? []);
+        return $rows[0] ?? null;
+    }
+
+    private function resolveExistingSupplierCodeForDuplication(string $phone, string $cardName, mixed $email): ?string
+    {
+        if ($phone !== '') {
+            $existingByPhone = $this->findBusinessPartnerByPhone($phone, null);
+            if ($existingByPhone) {
+                $existingCode = (string) ($existingByPhone['CardCode'] ?? '');
+                $existingType = strtoupper((string) ($existingByPhone['CardType'] ?? ''));
+                if ($existingCode !== '') {
+                    if ($existingType === 'S') {
+                        return $existingCode;
+                    }
+                    if ($this->ensureBusinessPartnerIsSupplier($existingCode, $cardName, $email)) {
+                        return $existingCode;
+                    }
+                }
+            }
+        }
+
+        if ($cardName !== '') {
+            $existingByName = $this->findBusinessPartnerByName($cardName, null);
+            if ($existingByName) {
+                $existingCode = (string) ($existingByName['CardCode'] ?? '');
+                $existingType = strtoupper((string) ($existingByName['CardType'] ?? ''));
+                if ($existingCode !== '') {
+                    if ($existingType === 'S') {
+                        return $existingCode;
+                    }
+                    if ($this->ensureBusinessPartnerIsSupplier($existingCode, $cardName, $email)) {
+                        return $existingCode;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function extractSupplierPhone(array $data): string
+    {
+        $candidates = [
+            data_get($data, 'supplier.phone'),
+            data_get($data, 'supplier.mobile'),
+            data_get($data, 'supplier.phone_number'),
+            data_get($data, 'supplier.contact.phone'),
+            data_get($data, 'supplier.contact.mobile'),
+            data_get($data, 'phone'),
+            data_get($data, 'phone_number'),
+            data_get($data, 'mobile'),
+        ];
+
+        foreach ($candidates as $value) {
+            $v = trim((string) ($value ?? ''));
+            if ($v !== '') {
+                return $v;
+            }
+        }
+
+        return '';
     }
 
     private function ensureBusinessPartnerIsSupplier(string $cardCode, string $cardName, mixed $email): bool
