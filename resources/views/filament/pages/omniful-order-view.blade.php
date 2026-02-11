@@ -64,23 +64,23 @@
 
         <div class="po-grid po-grid-2">
             <x-filament::section class="po-section-gap">
-                <x-slot name="heading">Supplier</x-slot>
+                <x-slot name="heading">Customer</x-slot>
                 <div class="po-grid po-grid-2 po-section-pad">
                     <div class="po-kv">
                         <div class="po-label">Name</div>
-                        <div class="po-value po-break">{{ data_get($data, 'supplier.name', '-') }}</div>
+                        <div class="po-value po-break">{{ data_get($data, 'customer.first_name', '-') }} {{ data_get($data, 'customer.last_name', '') }}</div>
                     </div>
                     <div class="po-kv">
-                        <div class="po-label">Code</div>
-                        <div class="po-value po-break">{{ data_get($data, 'supplier.code', '-') }}</div>
+                        <div class="po-label">Customer ID</div>
+                        <div class="po-value po-break">{{ data_get($data, 'customer.id', '-') }}</div>
                     </div>
                     <div class="po-kv">
                         <div class="po-label">Email</div>
-                        <div class="po-value po-break">{{ data_get($data, 'supplier.email', '-') }}</div>
+                        <div class="po-value po-break">{{ data_get($data, 'customer.email', '-') }}</div>
                     </div>
                     <div class="po-kv">
-                        <div class="po-label">Phone</div>
-                        <div class="po-value po-break">{{ data_get($data, 'supplier.phone', '-') }}</div>
+                        <div class="po-label">Payment Method</div>
+                        <div class="po-value po-break">{{ data_get($data, 'payment_method', '-') }}</div>
                     </div>
                 </div>
             </x-filament::section>
@@ -103,6 +103,52 @@
                     <div class="po-kv">
                         <div class="po-label">Phone</div>
                         <div class="po-value po-break">{{ data_get($data, 'seller.phone', '-') }}</div>
+                    </div>
+                </div>
+            </x-filament::section>
+        </div>
+
+        <div class="po-grid po-grid-2">
+            <x-filament::section class="po-section-gap">
+                <x-slot name="heading">Billing Address</x-slot>
+                <div class="po-grid po-grid-2 po-section-pad">
+                    <div class="po-kv">
+                        <div class="po-label">Name</div>
+                        <div class="po-value po-break">{{ data_get($data, 'billing_address.first_name', '-') }} {{ data_get($data, 'billing_address.last_name', '') }}</div>
+                    </div>
+                    <div class="po-kv">
+                        <div class="po-label">Phone</div>
+                        <div class="po-value po-break">{{ data_get($data, 'billing_address.phone', '-') }}</div>
+                    </div>
+                    <div class="po-kv">
+                        <div class="po-label">Address</div>
+                        <div class="po-value po-break">{{ data_get($data, 'billing_address.address1', '-') }}</div>
+                    </div>
+                    <div class="po-kv">
+                        <div class="po-label">Country</div>
+                        <div class="po-value po-break">{{ data_get($data, 'billing_address.country', '-') }}</div>
+                    </div>
+                </div>
+            </x-filament::section>
+
+            <x-filament::section class="po-section-gap">
+                <x-slot name="heading">Shipping Address</x-slot>
+                <div class="po-grid po-grid-2 po-section-pad">
+                    <div class="po-kv">
+                        <div class="po-label">Name</div>
+                        <div class="po-value po-break">{{ data_get($data, 'shipping_address.first_name', '-') }} {{ data_get($data, 'shipping_address.last_name', '') }}</div>
+                    </div>
+                    <div class="po-kv">
+                        <div class="po-label">Phone</div>
+                        <div class="po-value po-break">{{ data_get($data, 'shipping_address.phone', '-') }}</div>
+                    </div>
+                    <div class="po-kv">
+                        <div class="po-label">Address</div>
+                        <div class="po-value po-break">{{ data_get($data, 'shipping_address.address1', '-') }}</div>
+                    </div>
+                    <div class="po-kv">
+                        <div class="po-label">Country</div>
+                        <div class="po-value po-break">{{ data_get($data, 'shipping_address.country', '-') }}</div>
                     </div>
                 </div>
             </x-filament::section>
