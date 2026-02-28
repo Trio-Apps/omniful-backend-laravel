@@ -98,6 +98,24 @@ class SapFinanceMasterData extends Page implements HasTable
         ];
     }
 
+    public function getQuickLinks(): array
+    {
+        return [
+            ['label' => 'Chart Of Accounts', 'description' => 'Full account list', 'url' => SapChartOfAccountsCatalog::getUrl()],
+            ['label' => 'Account Categories', 'description' => 'Grouping and reporting categories', 'url' => SapAccountCategoriesCatalog::getUrl()],
+            ['label' => 'Financial Periods', 'description' => 'Posting period snapshots', 'url' => SapFinancialPeriodsCatalog::getUrl()],
+            ['label' => 'Banks', 'description' => 'Bank master records', 'url' => SapBanksCatalog::getUrl()],
+            ['label' => 'Bank Accounts', 'description' => 'House bank accounts', 'url' => SapBankAccountsCatalog::getUrl()],
+            ['label' => 'Currencies', 'description' => 'Currency master rows', 'url' => SapCurrenciesCatalog::getUrl()],
+            ['label' => 'Exchange Rates', 'description' => 'FX rate snapshots', 'url' => SapExchangeRatesCatalog::getUrl()],
+            ['label' => 'Payment Terms', 'description' => 'Payment term groups', 'url' => SapPaymentTermsCatalog::getUrl()],
+            ['label' => 'Profit Centers', 'description' => 'Cost accounting dimensions', 'url' => SapProfitCentersCatalog::getUrl()],
+            ['label' => 'Branches', 'description' => 'Business place snapshots', 'url' => SapBranchesCatalog::getUrl()],
+            ['label' => 'Customer Finance', 'description' => 'A/R balances by customer', 'url' => SapCustomerFinanceCatalog::getUrl()],
+            ['label' => 'Finance Documents', 'description' => 'A/R and A/P documents', 'url' => SapFinanceDocuments::getUrl()],
+        ];
+    }
+
     public function syncFinanceMaster(SapServiceLayerClient $client): void
     {
         @ini_set('max_execution_time', '0');

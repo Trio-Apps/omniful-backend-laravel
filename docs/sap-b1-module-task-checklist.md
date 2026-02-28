@@ -97,6 +97,10 @@ Note:
 ## Dashboard Tasks
 
 - [x] Add `SAP Finance Master` Filament page for finance master snapshots and sync.
+- [x] Add `SAP Chart Of Accounts` drill-down page.
+- [x] Add `SAP Account Categories` drill-down page.
+- [x] Add `SAP Financial Periods` drill-down page.
+- [x] Add `SAP Banks` drill-down page.
 - [x] Add `SAP Finance Documents` Filament page for finance document snapshots and sync.
 - [x] Add `SAP Sales Catalog` Filament page for sales snapshots and sync.
 - [x] Add `SAP Inventory Catalog` Filament page for inventory snapshots and sync.
@@ -110,6 +114,7 @@ Note:
 - [x] Add `SAP Customer Finance` drill-down page.
 - [x] Add `SAP Item Groups` drill-down page.
 - [x] Add a shared SAP catalog dashboard view for cards + table rendering.
+- [x] Add quick links inside `SAP Finance Master` to finance detail pages.
 - [x] Reorder the sidebar groups to include `SAP Catalog`.
 - [x] Add explicit sort order to older visible `Master Data` and `Monitoring` pages to prevent navigation conflicts.
 - [x] Add table filters to the main SAP catalog document pages.
