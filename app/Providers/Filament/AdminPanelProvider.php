@@ -48,6 +48,8 @@ class AdminPanelProvider extends PanelProvider
             ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\Filament\Widgets')
             ->widgets([
                 \App\Filament\Widgets\OverviewStats::class,
+                \App\Filament\Widgets\SapCatalogSnapshotStats::class,
+                \App\Filament\Widgets\SapCatalogQuickLinks::class,
                 \App\Filament\Widgets\OrdersChart::class,
                 \App\Filament\Widgets\RevenueChart::class,
             ])

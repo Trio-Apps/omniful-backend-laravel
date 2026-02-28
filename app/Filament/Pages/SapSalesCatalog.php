@@ -8,10 +8,12 @@ use App\Models\SapSalesDocument;
 use App\Services\MasterData\SapSalesCatalogSyncService;
 use App\Services\SapServiceLayerClient;
 use Filament\Actions\Action;
+use Filament\Forms\Components\DatePicker;
 use Filament\Pages\Page;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
+use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
 use Illuminate\Database\Eloquent\Builder;
 
@@ -69,6 +71,17 @@ class SapSalesCatalog extends Page implements HasTable
     protected function getTableFilters(): array
     {
         return [
+            Filter::make('doc_date_range')
+                ->label('Doc Date Range')
+                ->form([
+                    DatePicker::make('from')->label('From'),
+                    DatePicker::make('until')->label('Until'),
+                ])
+                ->query(function (Builder $query, array $data): Builder {
+                    return $query
+                        ->when($data['from'] ?? null, fn (Builder $q, $date) => $q->whereDate('doc_date', '>=', $date))
+                        ->when($data['until'] ?? null, fn (Builder $q, $date) => $q->whereDate('doc_date', '<=', $date));
+                }),
             SelectFilter::make('document_type')
                 ->label('Document Type')
                 ->options([
@@ -81,6 +94,9 @@ class SapSalesCatalog extends Page implements HasTable
                     'synced' => 'Synced',
                     'failed' => 'Failed',
                 ]),
+            Filter::make('has_amount')
+                ->label('Has Amount')
+                ->query(fn (Builder $query) => $query->whereNotNull('amount')),
         ];
     }
 

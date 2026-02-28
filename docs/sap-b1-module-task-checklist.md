@@ -115,9 +115,11 @@ Note:
 - [x] Add `SAP Customer Finance` drill-down page.
 - [x] Add `SAP Item Groups` drill-down page.
 - [x] Add a shared SAP catalog dashboard view for cards + table rendering.
+- [x] Add SAP widgets to the main Filament dashboard for snapshot counts and shortcuts.
 - [x] Add quick links to the main SAP catalog module pages.
 - [x] Add quick links inside `SAP Finance Master` to finance detail pages.
 - [x] Reorder the sidebar groups to include `SAP Catalog`.
 - [x] Add explicit sort order to older visible `Master Data` and `Monitoring` pages to prevent navigation conflicts.
 - [x] Add table filters to the main SAP catalog document pages.
+- [x] Add date-range and completeness filters to the main SAP catalog document pages.
 - [x] Add `Open SAP Catalog` navigation action to legacy `SAP Items`, `SAP Suppliers`, and `SAP Warehouses` pages.
