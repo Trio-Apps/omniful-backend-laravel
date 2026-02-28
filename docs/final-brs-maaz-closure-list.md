@@ -18,11 +18,16 @@ Important:
   - configuration enablement,
   - and scope decisions for which Maaz items must become full transactional flows.
 
+Support commands now available:
+- `php artisan webhooks:audit-payloads`
+- `php artisan integration:check-readiness`
+
 ## 1. Must Do To Close The BRS
 
 These items are the true remaining tasks for BRS closure.
 
 - [ ] Collect real tenant payloads for all active operational webhooks and lock the field mapping to the live schema.
+- [ ] Run `php artisan webhooks:audit-payloads` on the target environment and export the current live webhook summary.
 - [ ] Validate the live tenant status values used by:
   - `Order`
   - `Return Order`
@@ -34,6 +39,7 @@ These items are the true remaining tasks for BRS closure.
   - `Card Fees JE`
   - `COGS JE`
   - `COGS Cancellation / Reversal JE`
+- [ ] Run `php artisan integration:check-readiness` on the target environment and resolve all `warning` / `missing` results.
 - [ ] Run end-to-end validation on the live SAP Service Layer tenant for all BRS-critical flows.
 - [ ] Confirm that the production queue worker and webhook endpoints are active and stable.
 - [ ] Confirm that all required migrations are applied in production.
