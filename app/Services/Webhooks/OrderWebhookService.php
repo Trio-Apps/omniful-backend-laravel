@@ -43,6 +43,9 @@ class OrderWebhookService
         $creditStatus = $this->extractStatusValue($data, [
             'cancel_status',
             'cancellation_status',
+            'shipment.delivery_status',
+            'shipment.status',
+            'shipment.shipping_partner_status',
             'status_code',
             'status',
             'order_status',

@@ -62,6 +62,7 @@ Current coverage:
 Already aligned to official docs:
 - Reads `status_code` and fallback status fields.
 - Reads `shipment.delivery_status`, `shipment.status`, and `shipment.shipping_partner_status` for delivery decisions.
+- The same shipment-status fields are now also checked for credit-note eligibility, including documented values like `returned` and `return_to_origin`.
 - Reads `payment_method`, `invoice.payment_mode`, and related payment fields.
 - Reads `is_cash_on_delivery` as an explicit COD signal.
 - Delivery status mapping now explicitly includes documented shipment lifecycle values such as `dispatched`, `out_for_delivery`, `in_transit`, and `partially_delivered`.

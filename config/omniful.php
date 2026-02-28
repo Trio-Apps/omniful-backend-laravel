@@ -123,7 +123,7 @@ return [
             'delivery_event_contains' => ['ship', 'deliver'],
             'delivery_statuses' => ['shipped', 'dispatched', 'out_for_delivery', 'in_transit', 'partially_delivered', 'delivered', 'completed'],
             'credit_note_event_contains' => ['cancel'],
-            'credit_note_statuses' => ['cancelled', 'canceled', 'returned'],
+            'credit_note_statuses' => ['cancelled', 'canceled', 'returned', 'return_to_origin'],
             'prepaid_indicators' => ['prepaid', 'online', 'card', 'credit_card', 'paid'],
             'cod_indicators' => ['cod', 'cash_on_delivery', 'cash on delivery'],
         ],
