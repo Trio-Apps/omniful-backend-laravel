@@ -250,3 +250,47 @@ Important distinction:
 - If the target is the signed BRS for Dkhoon, the project is close, but not fully closed yet.
 - If the target is the broader Maaz API checklist, the project is broadly covered at a basic connection level, but many items are not full operational workflows.
 - The two scopes are compatible, but they are not the same scope and should not be reported with the same wording.
+
+## Open Task List
+
+### Priority 1: Shared Gaps (Affect BRS + Maaz)
+
+- [ ] Implement transactional `Inventory Counting` flow (`Omniful -> SAP`) instead of snapshot-only coverage.
+- [ ] Confirm the real tenant cancel-event shape from Omniful:
+  if cancel comes as `order` status and not `return-order`, add direct `order canceled -> Credit Note` mapping.
+- [ ] Validate and enable accounting automations in production config:
+  `Card Fees JE`, `COGS JE`, and `COGS Cancellation / Reversal JE`.
+- [ ] Run full tenant validation against the live SAP Service Layer to confirm all endpoint names and payload assumptions used by the new snapshot connectors.
+
+### Priority 2: Maaz Scope Transaction Upgrades
+
+- [ ] Decide which Maaz APIs should stay `snapshot/basic connection only` and which must become full transactional posting flows.
+- [ ] If required, implement transactional `InventoryPosting` flow (`Omniful -> SAP`) instead of snapshot-only coverage.
+- [ ] If required, implement transactional `ProductionOrders` flow instead of snapshot-only coverage.
+- [ ] If required, implement direct transactional finance posting flows for:
+  `PurchaseInvoices`, `PurchaseCreditNotes`, `PurchaseDownPayments`, and `VendorPayments`.
+- [ ] If required, implement direct transactional banking posting flows for:
+  `VendorPayments`, `Deposits`, and `ChecksforPayment`.
+- [ ] If required, implement standalone direct sales posting flows for:
+  `Invoices` and `Returns` as native transactional posts, not only reserve-order / return-order derived behavior.
+
+### Priority 3: API Surface and Cross-System Use
+
+- [ ] Add explicit Laravel REST endpoints for the new snapshot/master-data tables if other projects need to consume these records through this application.
+- [ ] Define which modules should expose read-only APIs and which should expose write/trigger APIs.
+- [ ] Add lightweight status/history endpoints for background SAP sync jobs if external systems need sync monitoring.
+
+### Priority 4: Operational Closure
+
+- [ ] Ensure all 2026-02-28 migrations are applied in production.
+- [ ] Clear application caches after deploy (`config`, `route`, `view`, and compiled files).
+- [ ] Ensure the queue worker cron is active so `Queue SAP Sync` from the `Connections` page runs in the background.
+- [ ] If scheduled synchronization is needed, enable periodic `sap:queue-catalog-sync` cron execution.
+
+### Suggested Execution Order
+
+1. Close `Inventory Counting` transactional flow.
+2. Confirm the real Omniful cancel-event path and close `canceled -> Credit Note` if needed.
+3. Validate accounting configuration and enable JE automations.
+4. Decide which Maaz items remain snapshot-only versus full workflows.
+5. Build only the transactional upgrades that are explicitly required after that decision.
