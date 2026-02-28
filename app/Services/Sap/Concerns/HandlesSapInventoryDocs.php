@@ -106,6 +106,69 @@ trait HandlesSapInventoryDocs
         );
     }
 
+    public function createProductionOrder(
+        string $itemCode,
+        float $quantity,
+        ?string $warehouseCode = null,
+        ?string $dueDate = null,
+        string $remarks = ''
+    ): array {
+        $itemCode = trim($itemCode);
+        $warehouseCode = $warehouseCode !== null ? trim($warehouseCode) : null;
+
+        if ($itemCode === '' || $quantity <= 0) {
+            throw new \RuntimeException('Production order requires a valid item code and positive quantity');
+        }
+
+        $this->syncProductFromOmniful([
+            'seller_sku_code' => $itemCode,
+            'name' => $itemCode,
+        ], 'production_order');
+
+        $resolvedWarehouse = null;
+        if ($warehouseCode !== null && $warehouseCode !== '') {
+            $resolvedWarehouse = $this->ensureWarehouseExists($warehouseCode, 1);
+            $this->ensureItemWarehouseExists($itemCode, $resolvedWarehouse);
+        }
+
+        $docDate = $this->formatDate($dueDate);
+        $body = [
+            'ItemNo' => $itemCode,
+            'PlannedQuantity' => $quantity,
+            'PostingDate' => $docDate,
+            'DueDate' => $docDate,
+            'ProductionOrderType' => 'bopotStandard',
+        ];
+
+        if ($resolvedWarehouse !== null) {
+            $body['Warehouse'] = $resolvedWarehouse;
+        }
+
+        if ($remarks !== '') {
+            $body['Remarks'] = $remarks;
+        }
+
+        $attempts = [
+            $body,
+            array_diff_key($body, ['ProductionOrderType' => true]),
+        ];
+
+        $errors = [];
+        foreach ($attempts as $payload) {
+            $response = $this->post('/ProductionOrders', $payload);
+            if ($response->successful()) {
+                return $response->json() ?? [];
+            }
+
+            $errors[] = $response->status() . ' ' . $response->body();
+        }
+
+        throw new \RuntimeException(
+            'SAP production order create failed: ' . implode(' | ', $errors)
+            . ' | Payload: ' . json_encode($body, JSON_UNESCAPED_UNICODE)
+        );
+    }
+
 
     public function createInventoryGoodsReceipt(array $items, ?string $hubCode, string $remarks): array
     {

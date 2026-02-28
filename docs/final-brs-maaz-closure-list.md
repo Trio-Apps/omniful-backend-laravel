@@ -101,7 +101,7 @@ These items are connected and visible, but still snapshot-oriented unless explic
 ### Inventory
 
 - [x] Direct transactional `InventoryPosting`
-- [ ] Direct transactional `ProductionOrders`
+- [x] Direct transactional `ProductionOrders`
 
 ### Banking
 
@@ -114,7 +114,7 @@ These items are connected and visible, but still snapshot-oriented unless explic
 Build these only after the scope decision is explicit.
 
 - [x] Implement transactional `InventoryPosting` workflow.
-- [ ] Implement transactional `ProductionOrders` workflow.
+- [x] Implement transactional `ProductionOrders` workflow.
 - [ ] Implement transactional A/P finance posting workflows.
 - [ ] Implement transactional banking posting workflows.
 - [ ] Implement standalone direct sales posting for native SAP `Invoices`.

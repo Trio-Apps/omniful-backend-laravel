@@ -204,7 +204,7 @@ Important distinction:
 | InventoryTransferRequests | READY (Basic Connection) | Snapshot sync exists |
 | InventoryCounting | READY (Business Flow + Basic Connection) | Snapshot sync exists, and the webhook flow can now create SAP inventory-counting documents |
 | InventoryPosting | READY (Basic Connection) | Snapshot sync exists only |
-| ProductionOrders | READY (Basic Connection) | Snapshot sync exists only |
+| ProductionOrders | READY (Business Flow) | Direct manual SAP production-order posting now exists through an explicit transactional command |
 
 #### Remaining Inventory Gaps
 
@@ -212,7 +212,7 @@ Important distinction:
 | --- | --- | --- |
 | InventoryCounting transactional flow | READY (Business Flow) | Webhook-driven SAP inventory-counting creation is now implemented |
 | InventoryPosting transactional flow | READY (Business Flow) | `inventory` webhook can now create transactional SAP inventory-posting documents |
-| ProductionOrders transactional flow | MISSING | Snapshot only at the moment |
+| ProductionOrders transactional flow | READY (Business Flow) | Direct manual SAP production-order posting now exists through an explicit transactional command |
 
 ### Banking
 

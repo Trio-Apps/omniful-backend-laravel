@@ -68,7 +68,7 @@ Note:
 - [x] InventoryTransferRequests - Dedicated `InventoryTransferRequests` sync snapshot is implemented.
 - [x] InventoryCounting - Dedicated `InventoryCountings` snapshot sync exists, and webhook-driven transactional posting is implemented.
 - [x] InventoryPosting - Dedicated `InventoryPostings` sync snapshot is implemented, and webhook-driven transactional posting is implemented.
-- [x] ProductionOrders - Dedicated `ProductionOrders` sync snapshot is implemented.
+- [x] ProductionOrders - Dedicated `ProductionOrders` sync snapshot is implemented, and a direct manual transactional posting command is implemented.
 
 ## Banking
 
