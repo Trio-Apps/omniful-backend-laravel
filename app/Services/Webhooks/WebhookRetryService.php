@@ -3,6 +3,7 @@
 namespace App\Services\Webhooks;
 
 use App\Models\OmnifulInventoryEvent;
+use App\Models\OmnifulInwardingEvent;
 use App\Models\OmnifulOrder;
 use App\Models\OmnifulOrderEvent;
 use App\Models\OmnifulProductEvent;
@@ -154,6 +155,26 @@ class WebhookRetryService
             $event->sap_status = 'failed';
             $event->sap_error = $e->getMessage();
             $event->save();
+            return ['ok' => false, 'message' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * @return array{ok:bool,message:string}
+     */
+    public function retryInwardingEvent(OmnifulInwardingEvent $event): array
+    {
+        try {
+            $event->sap_error = null;
+            $event->save();
+            app(InwardingWebhookService::class)->process($event);
+
+            return ['ok' => true, 'message' => 'Inwarding event retried successfully'];
+        } catch (\Throwable $e) {
+            $event->sap_status = 'failed';
+            $event->sap_error = $e->getMessage();
+            $event->save();
+
             return ['ok' => false, 'message' => $e->getMessage()];
         }
     }

@@ -3,6 +3,7 @@
 namespace App\Filament\Pages;
 
 use App\Models\OmnifulInwardingEvent;
+use App\Services\Webhooks\WebhookRetryService;
 use Filament\Actions\Action;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
@@ -48,8 +49,16 @@ class OmnifulInwardingEvents extends Page implements HasTable
             TextColumn::make('sap_status')
                 ->label('SAP')
                 ->badge()
-                ->getStateUsing(fn () => 'not_implemented')
-                ->color('gray')
+                ->color(fn ($state) => match ($state) {
+                    'created' => 'success',
+                    'failed' => 'danger',
+                    'ignored' => 'gray',
+                    'skipped' => 'warning',
+                    default => 'gray',
+                })
+                ->toggleable(),
+            TextColumn::make('sap_doc_num')
+                ->label('SAP DocNum')
                 ->toggleable(),
             TextColumn::make('payload')
                 ->label('Payload')
@@ -66,15 +75,27 @@ class OmnifulInwardingEvents extends Page implements HasTable
                 ->label('View')
                 ->icon('heroicon-o-eye')
                 ->url(fn ($record) => OmnifulInwardingEventView::getUrl(['record' => $record])),
+            Action::make('sapError')
+                ->label('Reason')
+                ->icon('heroicon-o-exclamation-triangle')
+                ->color('warning')
+                ->visible(fn ($record) => (bool) $record->sap_error)
+                ->modalHeading('SAP / Ignore Reason')
+                ->modalSubmitAction(false)
+                ->modalCancelActionLabel('Close')
+                ->modalContent(fn ($record) => view('filament.pages.omniful-inventory-sap-error', [
+                    'error' => $record->sap_error,
+                ])),
             Action::make('retrySap')
                 ->label('Retry SAP')
                 ->icon('heroicon-o-arrow-path')
-                ->color('gray')
-                ->action(function () {
+                ->color('warning')
+                ->action(function ($record) {
+                    $result = app(WebhookRetryService::class)->retryInwardingEvent($record);
                     Notification::make()
-                        ->title('Not supported')
-                        ->body('Inwarding webhook is stored for monitoring only. No SAP push handler is implemented yet.')
-                        ->warning()
+                        ->title($result['ok'] ? 'Retry completed' : 'Retry failed')
+                        ->body($result['message'])
+                        ->{$result['ok'] ? 'success' : 'danger'}()
                         ->send();
                 }),
         ];

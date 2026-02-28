@@ -89,11 +89,13 @@ class StockTransferWebhookService
         $candidates = [
             data_get($data, 'from_hub_code'),
             data_get($data, 'source_hub_code'),
+            data_get($data, 'source_hub.code'),
             data_get($data, 'source_warehouse_code'),
             data_get($data, 'from_warehouse_code'),
             data_get($data, 'origin_hub_code'),
             data_get($payload, 'from_hub_code'),
             data_get($payload, 'source_hub_code'),
+            data_get($payload, 'source_hub.code'),
         ];
 
         foreach ($candidates as $value) {
@@ -113,10 +115,12 @@ class StockTransferWebhookService
         $candidates = [
             data_get($data, 'to_hub_code'),
             data_get($data, 'destination_hub_code'),
+            data_get($data, 'destination_hub.code'),
             data_get($data, 'destination_warehouse_code'),
             data_get($data, 'to_warehouse_code'),
             data_get($payload, 'to_hub_code'),
             data_get($payload, 'destination_hub_code'),
+            data_get($payload, 'destination_hub.code'),
         ];
 
         foreach ($candidates as $value) {
@@ -139,19 +143,17 @@ class StockTransferWebhookService
         $sources = [
             data_get($data, 'stock_transfer_items', []),
             data_get($data, 'transfer_items', []),
+            data_get($data, 'order_items', []),
             data_get($data, 'items', []),
             data_get($payload, 'stock_transfer_items', []),
+            data_get($payload, 'order_items', []),
             data_get($payload, 'items', []),
         ];
 
         foreach ($sources as $source) {
             $lines = [];
             foreach ((array) $source as $item) {
-                $itemCode = data_get($item, 'seller_sku_code')
-                    ?? data_get($item, 'sku_code')
-                    ?? data_get($item, 'item_code')
-                    ?? data_get($item, 'seller_sku.seller_sku_code')
-                    ?? data_get($item, 'seller_sku_id');
+                $itemCode = $this->extractTransferItemCode((array) $item);
                 if (!$itemCode) {
                     continue;
                 }
@@ -181,6 +183,31 @@ class StockTransferWebhookService
         }
 
         return [];
+    }
+
+    private function extractTransferItemCode(array $item): string
+    {
+        $candidates = [
+            data_get($item, 'seller_sku_code'),
+            data_get($item, 'sku_code'),
+            data_get($item, 'item_code'),
+            data_get($item, 'seller_sku.seller_sku_code'),
+            data_get($item, 'seller_sku.seller_sku_id'),
+            data_get($item, 'sku.seller_sku_code'),
+            data_get($item, 'sku.seller_sku_id'),
+            data_get($item, 'seller_sku_id'),
+        ];
+
+        foreach ($candidates as $value) {
+            if (is_string($value) && trim($value) !== '') {
+                return trim($value);
+            }
+            if (is_numeric($value)) {
+                return (string) $value;
+            }
+        }
+
+        return '';
     }
 
     private function extractInTransitWarehouse(array $data, array $payload): string

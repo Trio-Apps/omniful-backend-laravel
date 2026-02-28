@@ -53,7 +53,7 @@ Important distinction:
 | Suppliers sync (SAP -> Omniful) | READY (Business Flow) | Create and update flows exist |
 | Supplier integration control via UDF | READY (Business Flow) | UDF-based inclusion logic exists |
 | Purchase Order (Omniful -> SAP) | READY (Business Flow) | Purchase order creation/update flow exists |
-| GRN -> GRPO | READY (Business Flow) | GRPO flow exists |
+| GRN -> GRPO | READY (Business Flow) | GRPO flow exists from inventory receiving and documented inwarding `grn.qc.event` |
 | Support multiple GRPOs per PO | READY (Business Flow) | Explicitly supported in the current PO/GRPO logic |
 | Inventory Goods Issue | READY (Business Flow) | Inventory goods issue flow exists |
 | Inventory Goods Receipt | READY (Business Flow) | Inventory goods receipt flow exists |

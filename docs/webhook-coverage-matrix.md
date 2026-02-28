@@ -11,19 +11,25 @@ Important:
 
 ## What the Omniful Docs Support
 
-Across current Omniful integration docs, the stable model is:
-- `Orders`, `Catalog`, and `Inventory` are the main data domains.
-- `Hub Mapping` and `Order Status Mapping` determine which records and statuses flow into Omniful.
-- The docs describe operational topics and mapping rules, not a public one-to-one webhook schema for each downstream SAP document.
+Validated against the official docs on 2026-02-28:
+- Intro: <https://docs.omniful.tech/#intro>
+- Public Postman collection: <https://docs.omniful.tech/api/collections/34031863/2sA35K1Kqo?segregateAuth=true&versionTag=latest>
 
-This matches the implementation in this repository.
+What the official docs now confirm:
+- Base URLs are documented as:
+  - Staging: `https://api.staging.omniful.com`
+  - Production: `https://prodapi.omniful.com`
+- Authentication is `Authorization: Bearer <token>`
+- Webhooks are documented with sample request bodies under the tenant APIs
+- Webhooks must respond with HTTP `200`
+- Feature toggles in the Omniful dashboard directly gate API access
 
 ## Live API Validation (prodapi)
 
 Validated on 2026-02-28 against `https://prodapi.omniful.com`:
 
 - `prodapi` is live and reachable.
-- `stagingapi.omniful.com` does not currently resolve as a public hostname.
+- `api.staging.omniful.com` resolves publicly, but returned `503` on unauthenticated probe during validation.
 - Seller bearer token successfully accessed:
   - `GET /sales-channel/public/v1/suppliers`
 - Tenant bearer token successfully accessed:
@@ -35,8 +41,12 @@ Validated on 2026-02-28 against `https://prodapi.omniful.com`:
   - `meta` for pagination
 
 Important result:
-- Guessed direct pull endpoints for `orders`, `inventory`, and `items` returned `415 Unsupported Media Type`.
-- Because of that, transactional domains should still be mapped from webhook payloads unless the exact Omniful endpoint path and method are confirmed from the tenant docs or network traces.
+- Using the exact docs endpoints with the live demo tenant returns feature-toggle errors when the related switch is disabled:
+  - `GET /sales-channel/public/v1/seller/orders` -> `Please enable order sync`
+  - `GET /sales-channel/public/v1/skus` -> `Please enable product sync`
+  - `GET /sales-channel/public/v1/return_orders/return_orders` -> `Please enable return sync`
+  - `GET /sales-channel/public/v1/seller/inventory/hubs/:hub_code` -> `Please enable inventory sync`
+- Because of that, transactional domains should still be treated as webhook-driven first, with pull APIs used only when the corresponding Omniful feature is enabled.
 
 ## Implemented Webhook Topics in This Project
 
@@ -48,7 +58,7 @@ Important result:
 | Inventory | `/api/webhooks/omniful/inventory/whk_4b8e1c7d29f34a6ab5d203ef` | Receiving, adjustments, counting | ACTIVE |
 | Stock Transfer Request | `/api/webhooks/omniful/stock-transfer/whk_9a2d4f1c6b834e7da0c35b8f` | Warehouse transfer trigger | ACTIVE |
 | Product | `/api/webhooks/omniful/product/whk_5e2a7c19d8434fb6a0c21d9e` | Items and bundles trigger | ACTIVE |
-| Inwarding | `/api/webhooks/omniful/inwarding/whk_1f9b3d6e24c8475aa2e0b91c` | Currently only stores/logs events | PARTIAL |
+| Inwarding | `/api/webhooks/omniful/inwarding/whk_1f9b3d6e24c8475aa2e0b91c` | GRN QC receiving trigger | ACTIVE |
 
 ## Webhook-Driven Coverage
 
@@ -83,13 +93,14 @@ Important result:
 | --- | --- | --- | --- |
 | `inventory.update.event` + `receiving` + `purchase_order` | GRPO | BRS + Maaz | Uses PO matching and supports multiple GRPOs |
 | `inventory.update.event` + `manual_edit` + `hub_inventory` | Goods Receipt / Goods Issue | BRS + Maaz | Delta is computed against SAP on-hand |
+| `inventory.update.event` + `dispose` + `inventory_adjustment` | Goods Issue | BRS + Maaz | This now matches the official Omniful webhook sample |
 | `cycle_count`, `inventory_counting`, `counting` actions/entities | Inventory Counting | BRS + Maaz | New transactional SAP counting flow |
 
 ### Stock Transfer Request
 
 | Omniful Signals | SAP Outcomes | Scope Coverage | Notes |
 | --- | --- | --- | --- |
-| Transfer request payload with source/destination + items | Stock Transfer | BRS + Maaz | Direct stock transfer |
+| Transfer request payload with source/destination + items | Stock Transfer | BRS + Maaz | Supports the official nested `source_hub.code`, `destination_hub.code`, and `order_items` payload shape |
 | Same payload with in-transit flags/config | Two-step in-transit stock transfer | BRS | Uses transit warehouse logic |
 
 ### Product
@@ -103,7 +114,7 @@ Important result:
 
 | Omniful Signals | SAP Outcomes | Scope Coverage | Notes |
 | --- | --- | --- | --- |
-| Any inwarding payload | None yet | Gap / future | Event is stored, but no SAP business flow runs yet |
+| `grn.qc.event` + `entity_type=po` | GRPO | BRS + Maaz | Uses documented `grn_details.skus` and destination hub to create SAP GRPO |
 
 ## Snapshot / Manual Sync Driven Coverage
 
@@ -170,9 +181,14 @@ To harden the remaining webhook-driven logic against live tenant payload varianc
    - confirms bundle discriminator fields in the tenant payload
 
 6. Inwarding webhook payload
-   Need one real sample
+   Official docs sample is now mapped:
+   - `grn.qc.event`
+   - `data.entity_type = po`
+   - `data.grn_details.skus[]`
+   Still useful:
+   - one real tenant sample
    Why:
-   - this is still only logged today; the payload will decide whether it should drive GRPO, inventory posting, or another SAP document in the next phase
+   - confirms the exact quantity field used by your tenant inside `grn_details.skus[]`
 
 ## Recommended Next Work
 

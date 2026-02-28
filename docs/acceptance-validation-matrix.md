@@ -19,7 +19,7 @@
 | Supplier Sync (Create / Update) | READY | app/Services/MasterData/SapSupplierSyncService.php |  |
 | Supplier Integration Control via UDF | READY | app/Services/Sap/Concerns/HandlesSapMasterDataFetch.php |  |
 | Purchase Order Sync (OMNIFUL → SAP) | READY | app/Services/Sap/Concerns/HandlesSapPurchaseAndProducts.php |  |
-| Goods Receipt Note → GRPO | READY | app/Services/Sap/Concerns/HandlesSapPurchaseAndProducts.php |  |
+| Goods Receipt Note → GRPO | READY | app/Services/Sap/Concerns/HandlesSapPurchaseAndProducts.php | Supported from `inventory` receiving and documented `inwarding` `grn.qc.event` webhook paths |
 | Support Multiple GRPOs per PO | READY | app/Services/Sap/Concerns/HandlesSapPurchaseAndProducts.php |  |
 | Inventory Goods Issue Sync | READY | app/Services/Sap/Concerns/HandlesSapInventoryDocs.php |  |
 | Inventory Goods Receipt Sync | READY | app/Services/Sap/Concerns/HandlesSapInventoryDocs.php |  |

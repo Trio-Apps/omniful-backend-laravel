@@ -40,7 +40,7 @@ class InventoryWebhookService
                     ]
                 );
 
-                if ($sync->wasRecentlyCreated || $sync->sap_status === 'pending') {
+                if ($sync->wasRecentlyCreated || in_array((string) $sync->sap_status, ['pending', 'failed'], true)) {
                     if ($displayId) {
                         $poEvent = OmnifulPurchaseOrderEvent::where('external_id', $displayId)
                             ->whereNotNull('sap_doc_entry')
@@ -104,7 +104,7 @@ class InventoryWebhookService
                     ]
                 );
 
-                if ($sync->wasRecentlyCreated || $sync->sap_status === 'pending') {
+                if ($sync->wasRecentlyCreated || in_array((string) $sync->sap_status, ['pending', 'failed'], true)) {
                     $client = app(SapServiceLayerClient::class);
                     $result = $client->createInventoryCounting(
                         $items,
@@ -148,7 +148,11 @@ class InventoryWebhookService
             } elseif (($route['sap_action'] ?? null) === 'manual_inventory_adjustment') {
                 $items = is_array($items) ? $items : [];
                 $client = app(SapServiceLayerClient::class);
-                $deltas = $this->calculateInventoryAdjustmentsFromSap($items, $hubCode, $client);
+                $isDirectDispose = $this->isDirectDisposeAdjustment($payload);
+                $adjustmentRemarks = $isDirectDispose ? 'Omniful inventory dispose' : 'Omniful manual edit';
+                $deltas = $isDirectDispose
+                    ? $this->buildDirectInventoryAdjustments($items)
+                    : $this->calculateInventoryAdjustmentsFromSap($items, $hubCode, $client);
 
                 if ($deltas['receipt'] === [] && $deltas['issue'] === []) {
                     $event->sap_status = 'ignored';
@@ -172,9 +176,9 @@ class InventoryWebhookService
                                 'payload' => $payload,
                             ]
                         );
-                        if ($sync->wasRecentlyCreated || $sync->sap_status === 'pending') {
+                        if ($sync->wasRecentlyCreated || in_array((string) $sync->sap_status, ['pending', 'failed'], true)) {
                             $client->syncInventoryItems($deltas['receipt']);
-                            $result = $client->createInventoryGoodsReceipt($deltas['receipt'], $hubCode, 'Omniful manual edit');
+                            $result = $client->createInventoryGoodsReceipt($deltas['receipt'], $hubCode, $adjustmentRemarks);
                             $summary['gr'] = $result['DocNum'] ?? null;
                             $sync->sap_status = 'created';
                             $sync->sap_doc_entry = $result['DocEntry'] ?? null;
@@ -203,9 +207,9 @@ class InventoryWebhookService
                                 'payload' => $payload,
                             ]
                         );
-                        if ($sync->wasRecentlyCreated || $sync->sap_status === 'pending') {
+                        if ($sync->wasRecentlyCreated || in_array((string) $sync->sap_status, ['pending', 'failed'], true)) {
                             $client->syncInventoryItems($deltas['issue']);
-                            $result = $client->createInventoryGoodsIssue($deltas['issue'], $hubCode, 'Omniful manual edit');
+                            $result = $client->createInventoryGoodsIssue($deltas['issue'], $hubCode, $adjustmentRemarks);
                             $summary['gi'] = $result['DocNum'] ?? null;
                             $sync->sap_status = 'created';
                             $sync->sap_doc_entry = $result['DocEntry'] ?? null;
@@ -296,9 +300,7 @@ class InventoryWebhookService
 
         $normalized = [];
         foreach ($items as $item) {
-            $itemCode = data_get($item, 'seller_sku_code')
-                ?? data_get($item, 'sku_code')
-                ?? data_get($item, 'seller_sku_id');
+            $itemCode = $this->extractInventoryItemCode((array) $item);
             $qty = data_get($item, 'counted_quantity');
             if ($qty === null) {
                 $qty = data_get($item, 'count_quantity');
@@ -339,9 +341,7 @@ class InventoryWebhookService
         $noChange = 0;
 
         foreach ($items as $item) {
-            $itemCode = data_get($item, 'seller_sku_code')
-                ?? data_get($item, 'sku_code')
-                ?? data_get($item, 'seller_sku_id');
+            $itemCode = $this->extractInventoryItemCode((array) $item);
 
             if (!$itemCode) {
                 continue;
@@ -386,6 +386,50 @@ class InventoryWebhookService
         return ['receipt' => $receipt, 'issue' => $issue, 'reason' => $reason];
     }
 
+    private function isDirectDisposeAdjustment(array $payload): bool
+    {
+        $eventName = strtolower(trim((string) data_get($payload, 'event_name', '')));
+        $action = strtolower(trim((string) data_get($payload, 'action', '')));
+        $entity = strtolower(trim((string) data_get($payload, 'entity', '')));
+
+        return $eventName === 'inventory.update.event'
+            && $action === 'dispose'
+            && $entity === 'inventory_adjustment';
+    }
+
+    private function buildDirectInventoryAdjustments(array $items): array
+    {
+        $issue = [];
+
+        foreach ($items as $item) {
+            $itemCode = $this->extractInventoryItemCode((array) $item);
+            if ($itemCode === '') {
+                continue;
+            }
+
+            $qty = data_get($item, 'adjusted_quantity');
+            if ($qty === null) {
+                $qty = data_get($item, 'quantity');
+            }
+
+            $qty = (float) ($qty ?? 0);
+            if ($qty <= 0) {
+                continue;
+            }
+
+            $issue[] = [
+                'seller_sku_code' => $itemCode,
+                'quantity' => $qty,
+            ];
+        }
+
+        return [
+            'receipt' => [],
+            'issue' => $issue,
+            'reason' => $issue === [] ? 'Ignored: no disposal quantity found' : null,
+        ];
+    }
+
     private function normalizeQuantity(float $qty, string $uom): float
     {
         $uom = strtolower(trim($uom));
@@ -394,6 +438,31 @@ class InventoryWebhookService
         }
 
         return $qty;
+    }
+
+    private function extractInventoryItemCode(array $item): string
+    {
+        $candidates = [
+            data_get($item, 'seller_sku_code'),
+            data_get($item, 'sku_code'),
+            data_get($item, 'seller_sku.seller_sku_code'),
+            data_get($item, 'seller_sku.seller_sku_id'),
+            data_get($item, 'sku.seller_sku_code'),
+            data_get($item, 'sku.seller_sku_id'),
+            data_get($item, 'item_code'),
+            data_get($item, 'seller_sku_id'),
+        ];
+
+        foreach ($candidates as $value) {
+            if (is_string($value) && trim($value) !== '') {
+                return trim($value);
+            }
+            if (is_numeric($value)) {
+                return (string) $value;
+            }
+        }
+
+        return '';
     }
 
     private function buildInventoryCountingRemarks(array $payload): string

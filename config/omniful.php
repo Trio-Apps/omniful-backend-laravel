@@ -4,7 +4,7 @@ return [
     'sync_endpoints' => [
         'warehouses' => env('OMNIFUL_WAREHOUSES_ENDPOINT', '/sales-channel/public/v1/tenants/hubs'),
         'suppliers' => env('OMNIFUL_SUPPLIERS_ENDPOINT', '/sales-channel/public/v1/suppliers'),
-        'items' => env('OMNIFUL_ITEMS_ENDPOINT', '/items'),
+        'items' => env('OMNIFUL_ITEMS_ENDPOINT', '/sales-channel/public/v1/skus'),
     ],
     'sync_methods' => [
         'warehouses' => env('OMNIFUL_WAREHOUSES_METHOD', 'post'),
@@ -82,6 +82,7 @@ return [
             'strict' => true,
             'routes' => [
                 'inventory.update.event|receiving|purchase_order' => 'grpo',
+                'inventory.update.event|dispose|inventory_adjustment' => 'manual_inventory_adjustment',
                 'inventory.update.event|manual_edit|hub_inventory' => 'manual_inventory_adjustment',
                 'inventory.update.event|cycle_count|hub_inventory' => 'inventory_counting',
                 'inventory.update.event|inventory_counting|hub_inventory' => 'inventory_counting',
