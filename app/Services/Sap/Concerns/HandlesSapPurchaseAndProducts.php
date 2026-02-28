@@ -582,8 +582,10 @@ trait HandlesSapPurchaseAndProducts
         $hubCode = (string) (data_get($data, 'hub_code') ?? '');
         $baseDeliveryDocEntry = (int) ($options['base_delivery_doc_entry'] ?? 0);
         $baseOrderDocEntry = (int) ($options['base_order_doc_entry'] ?? 0);
-
-        $items = $this->buildReturnCreditLinesFromPayload($data);
+        $items = (array) ($options['parsed_items'] ?? []);
+        if ($items === []) {
+            $items = $this->buildReturnCreditLinesFromPayload($data);
+        }
         if ($items === []) {
             return [
                 'ignored' => true,

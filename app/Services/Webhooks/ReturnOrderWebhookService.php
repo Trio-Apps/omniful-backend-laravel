@@ -71,6 +71,7 @@ class ReturnOrderWebhookService
                 'external_id' => (string) ($event->external_id ?? ''),
                 'base_delivery_doc_entry' => (int) ($order->sap_delivery_doc_entry ?? 0),
                 'base_order_doc_entry' => (int) ($order->sap_doc_entry ?? 0),
+                'parsed_items' => $items,
             ]);
 
             if (($result['ignored'] ?? false) === true) {
