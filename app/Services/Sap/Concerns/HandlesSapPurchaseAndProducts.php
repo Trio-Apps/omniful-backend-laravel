@@ -2536,12 +2536,14 @@ trait HandlesSapPurchaseAndProducts
     {
         $items = data_get($data, 'order_items', []);
         $lines = [];
+        $grouped = [];
 
         foreach ((array) $items as $item) {
             $itemCode = data_get($item, 'seller_sku.seller_sku_code')
                 ?? data_get($item, 'seller_sku.seller_sku_id')
                 ?? data_get($item, 'seller_sku_code')
-                ?? data_get($item, 'sku_code');
+                ?? data_get($item, 'sku_code')
+                ?? data_get($item, 'code');
             if (!$itemCode) {
                 continue;
             }
@@ -2581,12 +2583,29 @@ trait HandlesSapPurchaseAndProducts
             if ($unitPrice === null) {
                 $unitPrice = data_get($item, 'display_price');
             }
+            if ($unitPrice === null) {
+                $unitPrice = data_get($item, 'seller_sku.retail_price');
+            }
 
-            $lines[] = [
-                'item_code' => (string) $itemCode,
-                'quantity' => $qty,
-                'unit_price' => (float) ($unitPrice ?? 0),
-            ];
+            $itemCode = (string) $itemCode;
+            if (!isset($grouped[$itemCode])) {
+                $grouped[$itemCode] = [
+                    'item_code' => $itemCode,
+                    'quantity' => 0.0,
+                    'unit_price' => 0.0,
+                ];
+            }
+
+            $grouped[$itemCode]['quantity'] += $qty;
+
+            $resolvedPrice = (float) ($unitPrice ?? 0);
+            if ($resolvedPrice > 0 && (float) $grouped[$itemCode]['unit_price'] <= 0) {
+                $grouped[$itemCode]['unit_price'] = $resolvedPrice;
+            }
+        }
+
+        foreach ($grouped as $line) {
+            $lines[] = $line;
         }
 
         return $lines;
