@@ -24,6 +24,7 @@ Operational meaning for this project:
 - Transactional SAP actions should be webhook-driven first.
 - GET APIs are for lookup, sync, validation, or fallback, not the primary source of truth for live document creation.
 - The shared `inventory` sync direction now gates `Inventory`, `Stock Transfer Request`, and `Inwarding` webhook pushes into SAP.
+- Invalid or rejected webhook requests are now acknowledged with `HTTP 200` and marked as ignored at the controller layer, instead of returning `400/401`.
 
 ## Active Webhooks In This Project
 

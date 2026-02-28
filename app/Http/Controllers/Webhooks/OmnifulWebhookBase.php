@@ -33,12 +33,20 @@ abstract class OmnifulWebhookBase
     {
         $raw = (string) $request->getContent();
         if ($raw === '') {
-            return ['response' => response()->json(['message' => 'Empty payload'], 400)];
+            Log::warning('Omniful webhook ignored: empty payload', [
+                'event_type' => $eventType,
+            ]);
+
+            return ['response' => $this->acknowledgeIgnored('Empty payload')];
         }
 
         $payload = $request->json()->all();
         if (!is_array($payload) || $payload === []) {
-            return ['response' => response()->json(['message' => 'Invalid JSON payload'], 400)];
+            Log::warning('Omniful webhook ignored: invalid JSON payload', [
+                'event_type' => $eventType,
+            ]);
+
+            return ['response' => $this->acknowledgeIgnored('Invalid JSON payload')];
         }
 
         $payloadHash = hash('sha256', $raw);
@@ -61,7 +69,12 @@ abstract class OmnifulWebhookBase
         $signatureValid = null;
         if ($staticToken) {
             if (!$staticValue || !hash_equals((string) $staticToken, trim((string) $staticValue))) {
-                return ['response' => response()->json(['message' => 'Invalid static token'], 401)];
+                Log::warning('Omniful webhook ignored: invalid static token', [
+                    'event_type' => $eventType,
+                    'header' => $staticHeader,
+                ]);
+
+                return ['response' => $this->acknowledgeIgnored('Invalid static token')];
             }
         } else {
             $hasAnySecret = (bool) ($tenantSecret || $sellerSecret);
@@ -69,12 +82,22 @@ abstract class OmnifulWebhookBase
             if ($signature) {
                 $signatureValid = $this->verifySignatureAgainstSecrets($raw, $signature, $tenantSecret, $sellerSecret);
                 if (!$signatureValid) {
-                    return ['response' => response()->json(['message' => 'Invalid signature'], 401)];
+                    Log::warning('Omniful webhook ignored: invalid signature', [
+                        'event_type' => $eventType,
+                        'header' => $signatureHeader,
+                    ]);
+
+                    return ['response' => $this->acknowledgeIgnored('Invalid signature')];
                 }
             } elseif ($token) {
                 $signatureValid = $this->verifyTokenAgainstSecrets($token, $tenantSecret, $sellerSecret);
                 if (!$signatureValid) {
-                    return ['response' => response()->json(['message' => 'Invalid token'], 401)];
+                    Log::warning('Omniful webhook ignored: invalid token', [
+                        'event_type' => $eventType,
+                        'header' => $tokenHeader,
+                    ]);
+
+                    return ['response' => $this->acknowledgeIgnored('Invalid token')];
                 }
             } else {
                 Log::warning('Omniful webhook missing signature header', [
@@ -82,7 +105,7 @@ abstract class OmnifulWebhookBase
                     'token_header' => $tokenHeader,
                     'event_type' => $eventType,
                 ]);
-                return ['response' => response()->json(['message' => 'Missing signature'], 401)];
+                return ['response' => $this->acknowledgeIgnored('Missing signature')];
             }
             }
         }
@@ -117,6 +140,15 @@ abstract class OmnifulWebhookBase
         }
 
         return ['event' => $event, 'duplicate' => false];
+    }
+
+    protected function acknowledgeIgnored(string $message): \Illuminate\Http\JsonResponse
+    {
+        return response()->json([
+            'status' => 'ok',
+            'ignored' => true,
+            'message' => $message,
+        ]);
     }
 
     protected function verifySignature(string $raw, string $secret, string $signature): bool
