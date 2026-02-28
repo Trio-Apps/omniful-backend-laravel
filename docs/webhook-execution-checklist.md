@@ -119,6 +119,8 @@ Current coverage:
 - Status mapping supports create, update, receive, and cancel variants.
 - Status extraction now checks `status`, `status_code`, `purchase_order_status`, and `po_status`.
 - Rule matching now requires all defined rule conditions instead of broad `event OR status` matching.
+- The documented create status `ordered` is now accepted explicitly.
+- If Omniful keeps the PO status as `ordered` but `order_details.grn_pass_quantity` or `put_away_pass_quantity` increases, the event is promoted to SAP `received_logged`.
 - SAP PO creation now accepts documented supplier identifiers beyond `supplier.code`, including `supplier.id`, and derives a deterministic vendor code when needed.
 - PO line mapping now supports quantity/price fallbacks such as `ordered_quantity`, `approved_quantity`, `buying_price`, and `cost`.
 - PO line item-code extraction now accepts broader Omniful item shapes, and zero-quantity lines are skipped before posting to SAP.

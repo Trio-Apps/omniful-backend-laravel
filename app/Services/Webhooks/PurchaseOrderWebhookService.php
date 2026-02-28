@@ -72,7 +72,10 @@ class PurchaseOrderWebhookService
                 ));
                 $client->appendPurchaseOrderComment((int) $event->sap_doc_entry, $comment);
                 $mark('appendPurchaseOrderComment:done');
-                $event->sap_status = (string) ($mapping['sap_status'] ?? $event->sap_status ?? 'logged');
+                $event->sap_status = $this->resolveSapStatusFromOrderDetails(
+                    $data,
+                    (string) ($mapping['sap_status'] ?? $event->sap_status ?? 'logged')
+                );
 
                 $event->save();
             }
@@ -119,5 +122,20 @@ class PurchaseOrderWebhookService
         }
 
         return '';
+    }
+
+    /**
+     * @param array<string,mixed> $data
+     */
+    private function resolveSapStatusFromOrderDetails(array $data, string $fallback): string
+    {
+        $grnPassed = data_get($data, 'order_details.grn_pass_quantity');
+        $putAwayPassed = data_get($data, 'order_details.put_away_pass_quantity');
+
+        if ((is_numeric($grnPassed) && (float) $grnPassed > 0) || (is_numeric($putAwayPassed) && (float) $putAwayPassed > 0)) {
+            return 'received_logged';
+        }
+
+        return $fallback;
     }
 }

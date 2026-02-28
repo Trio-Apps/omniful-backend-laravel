@@ -54,7 +54,7 @@ return [
                 [
                     'name' => 'created',
                     'event_contains' => ['create'],
-                    'statuses' => ['created', 'pending', 'open', 'processing'],
+                    'statuses' => ['created', 'pending', 'open', 'processing', 'ordered'],
                     'sap_status' => 'logged',
                 ],
                 [
