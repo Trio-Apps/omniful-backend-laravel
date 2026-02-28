@@ -9,6 +9,32 @@ trait HandlesSapMasterDataFetch
     /**
      * @return array<int,array>
      */
+    public function fetchCollectionByPath(string $path): array
+    {
+        return $this->fetchAll($path);
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    public function fetchRawResource(string $path): array
+    {
+        if (!str_starts_with($path, '/')) {
+            $path = '/' . ltrim($path, '/');
+        }
+
+        $response = $this->get($path);
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP fetch failed: ' . $response->status() . ' ' . $response->body() . ' | Path: ' . $path);
+        }
+
+        $payload = $response->json();
+        return is_array($payload) ? $payload : [];
+    }
+
+    /**
+     * @return array<int,array>
+     */
     public function fetchWarehouses(): array
     {
         return $this->fetchAll('/Warehouses?$select=WarehouseCode,WarehouseName,EnableBinLocations');
@@ -266,4 +292,3 @@ trait HandlesSapMasterDataFetch
      * @return array{series:?int,docDate:string,indicator:?string}
      */
 }
-
