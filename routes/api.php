@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\IntegrationReadApiController;
 use App\Http\Controllers\Webhooks\OmnifulInwardingWebhookController;
 use App\Http\Controllers\Webhooks\OmnifulInventoryWebhookController;
 use App\Http\Controllers\Webhooks\OmnifulOrderWebhookController;
@@ -16,3 +17,9 @@ Route::post('webhooks/omniful/product/whk_5e2a7c19d8434fb6a0c21d9e', OmnifulProd
 Route::post('webhooks/omniful/inwarding/whk_1f9b3d6e24c8475aa2e0b91c', OmnifulInwardingWebhookController::class);
 Route::post('webhooks/omniful/inventory/whk_4b8e1c7d29f34a6ab5d203ef', OmnifulInventoryWebhookController::class);
 Route::post('webhooks/omniful/stock-transfer/whk_9a2d4f1c6b834e7da0c35b8f', OmnifulStockTransferWebhookController::class);
+
+Route::prefix('integration/sap')->group(function (): void {
+    Route::get('resources', [IntegrationReadApiController::class, 'resources']);
+    Route::get('resources/{resource}', [IntegrationReadApiController::class, 'resourceIndex']);
+    Route::get('sync-status', [IntegrationReadApiController::class, 'syncStatus']);
+});

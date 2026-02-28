@@ -35,4 +35,8 @@ return [
         ],
     ],
 
+    'integration' => [
+        'read_api_token' => env('INTEGRATION_READ_API_TOKEN'),
+    ],
+
 ];

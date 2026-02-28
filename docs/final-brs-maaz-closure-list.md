@@ -78,8 +78,9 @@ These are not broad code gaps anymore. These are scope decisions that must be ma
 
 - [ ] Decide which Maaz items remain `Basic Connection` only.
 - [ ] Decide which Maaz items must be upgraded to full `Transactional Posting` flows.
-- [ ] Decide whether other systems need public Laravel APIs for the new snapshot/master-data tables.
-- [ ] Decide whether external systems need sync status/history APIs for background SAP sync jobs.
+- [x] Decide whether other systems need public Laravel APIs for the new snapshot/master-data tables. Current decision: expose selected token-protected read-only APIs.
+- [x] Decide whether external systems need sync status/history APIs for background SAP sync jobs. Current decision: expose token-protected read-only sync status endpoints.
+- [x] Define the current external API scope. Snapshot/master-data and sync monitoring are read-only; write/trigger APIs remain deferred.
 
 ## 5. Maaz Items That Are Still Snapshot-Only
 
@@ -118,8 +119,8 @@ Build these only after the scope decision is explicit.
 - [ ] Implement transactional banking posting workflows.
 - [ ] Implement standalone direct sales posting for native SAP `Invoices`.
 - [ ] Implement standalone direct sales posting for native SAP `Returns`.
-- [ ] Add REST API endpoints for selected snapshot/master-data tables if they must be consumed by another project.
-- [ ] Add lightweight monitoring APIs for background sync jobs if external systems need status visibility.
+- [x] Add REST API endpoints for selected snapshot/master-data tables if they must be consumed by another project. Implemented under `/api/integration/sap/resources`.
+- [x] Add lightweight monitoring APIs for background sync jobs if external systems need status visibility. Implemented under `/api/integration/sap/sync-status`.
 
 ## 7. Deployment / Operations Checklist
 
