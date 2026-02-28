@@ -171,9 +171,11 @@ class ReturnOrderWebhookService
         $candidates = [
             data_get($data, 'order_reference_id'),
             data_get($data, 'order_id'),
+            data_get($data, 'omniful_order_id'),
             data_get($data, 'reference_id'),
             data_get($payload, 'order_reference_id'),
             data_get($payload, 'order_id'),
+            data_get($payload, 'omniful_order_id'),
             data_get($payload, 'reference_id'),
         ];
 
@@ -195,6 +197,7 @@ class ReturnOrderWebhookService
             data_get($data, 'status'),
             data_get($data, 'status_code'),
             data_get($data, 'return_status'),
+            data_get($data, 'refund_status'),
             data_get($data, 'shipment.status'),
         ];
 

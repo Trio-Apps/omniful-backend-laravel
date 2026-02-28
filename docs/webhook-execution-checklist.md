@@ -93,6 +93,7 @@ Current coverage:
 - Aggregates duplicate SKU lines before sending quantities into SAP.
 - Credit memo line building now also aggregates duplicate return SKUs inside the SAP client path, so the webhook and posting layers stay consistent.
 - Return-line extraction now supports both `order_items` and documented `return_items`, plus `refunded_quantity`.
+- Reference/status extraction now also checks documented fields like `omniful_order_id` and `refund_status`.
 
 Still needed:
 - One real return-order payload from your tenant.
