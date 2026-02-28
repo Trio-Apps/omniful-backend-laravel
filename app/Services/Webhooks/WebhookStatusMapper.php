@@ -103,6 +103,12 @@ class WebhookStatusMapper
             return ['allowed' => true, 'reason' => null];
         }
 
+        // Omniful officially documents statuses like `return_shipment_created` on return-order webhooks.
+        // The webhook topic itself is specific enough to allow broader return lifecycle statuses.
+        if ($eventAllowed && $this->isReturnLifecycleStatus($status)) {
+            return ['allowed' => true, 'reason' => null];
+        }
+
         if ($strict) {
             return ['allowed' => false, 'reason' => 'Unmapped return-order status/event'];
         }
@@ -263,6 +269,16 @@ class WebhookStatusMapper
         }
 
         return $normalized;
+    }
+
+    private function isReturnLifecycleStatus(string $status): bool
+    {
+        if ($status === '') {
+            return true;
+        }
+
+        return str_contains($status, 'return')
+            || str_contains($status, 'refund');
     }
 
     private function isOrderInitialStatus(string $status): bool

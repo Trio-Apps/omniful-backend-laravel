@@ -14,7 +14,7 @@ class ReturnOrderWebhookService
         $payload = $event->payload ?? [];
         $data = data_get($payload, 'data', []);
         $eventName = (string) data_get($payload, 'event_name', '');
-        $status = (string) data_get($data, 'status', '');
+        $status = $this->extractReturnStatus((array) $data);
         $validation = $mapper->validateReturnOrder($eventName, $status);
 
         if (!($validation['allowed'] ?? false)) {
@@ -97,6 +97,7 @@ class ReturnOrderWebhookService
     {
         $items = data_get($data, 'order_items', []);
         $lines = [];
+        $totals = [];
 
         foreach ((array) $items as $item) {
             $itemCode = data_get($item, 'seller_sku.seller_sku_code')
@@ -121,6 +122,14 @@ class ReturnOrderWebhookService
                 continue;
             }
 
+            if (!isset($totals[$itemCode])) {
+                $totals[$itemCode] = 0.0;
+            }
+
+            $totals[$itemCode] += $qty;
+        }
+
+        foreach ($totals as $itemCode => $qty) {
             $lines[] = [
                 'seller_sku_code' => $itemCode,
                 'quantity' => $qty,
@@ -173,6 +182,24 @@ class ReturnOrderWebhookService
         }
 
         return null;
+    }
+
+    private function extractReturnStatus(array $data): string
+    {
+        $candidates = [
+            data_get($data, 'status'),
+            data_get($data, 'status_code'),
+            data_get($data, 'return_status'),
+            data_get($data, 'shipment.status'),
+        ];
+
+        foreach ($candidates as $value) {
+            if (is_string($value) && trim($value) !== '') {
+                return trim($value);
+            }
+        }
+
+        return '';
     }
 
     private function createReturnCogsReversalIfEligible(OmnifulReturnOrderEvent $event): void

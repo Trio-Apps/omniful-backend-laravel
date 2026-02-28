@@ -93,7 +93,7 @@ return [
         ],
         'return_order' => [
             'strict' => true,
-            'allowed_statuses' => ['created', 'pending', 'approved', 'received', 'completed', 'cancelled', 'canceled'],
+            'allowed_statuses' => ['created', 'pending', 'approved', 'received', 'completed', 'cancelled', 'canceled', 'return_shipment_created'],
             'allowed_event_contains' => ['return'],
         ],
         'order' => [

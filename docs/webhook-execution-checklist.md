@@ -85,6 +85,8 @@ Priority:
 Current coverage:
 - Creates A/R Credit Memo from return webhook.
 - Can create return COGS reversal journal.
+- Supports the official docs sample state `return_shipment_created`.
+- Aggregates duplicate SKU lines before sending quantities into SAP.
 
 Still needed:
 - One real return-order payload from your tenant.

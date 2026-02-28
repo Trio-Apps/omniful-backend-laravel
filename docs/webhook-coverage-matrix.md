@@ -81,7 +81,7 @@ Important result:
 
 | Omniful Signals | SAP Outcomes | Scope Coverage | Notes |
 | --- | --- | --- | --- |
-| Allowed `return-order` statuses/events | Credit Note | BRS + Maaz | Existing return-based credit memo flow |
+| Allowed `return-order` statuses/events | Credit Note | BRS + Maaz | Existing return-based credit memo flow, now explicitly aligned with official statuses like `return_shipment_created` |
 | Same event after credit note exists | Return COGS reversal JE | BRS | Config dependent |
 
 ### Purchase Order
