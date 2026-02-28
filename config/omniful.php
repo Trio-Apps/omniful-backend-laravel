@@ -121,7 +121,7 @@ return [
             'invoice_statuses' => ['created', 'new', 'pending', 'confirmed'],
             'initial_statuses' => ['created', 'new', 'pending', 'confirmed', 'on_hold'],
             'delivery_event_contains' => ['ship', 'deliver'],
-            'delivery_statuses' => ['shipped', 'delivered', 'completed'],
+            'delivery_statuses' => ['shipped', 'dispatched', 'out_for_delivery', 'in_transit', 'partially_delivered', 'delivered', 'completed'],
             'credit_note_event_contains' => ['cancel'],
             'credit_note_statuses' => ['cancelled', 'canceled', 'returned'],
             'prepaid_indicators' => ['prepaid', 'online', 'card', 'credit_card', 'paid'],

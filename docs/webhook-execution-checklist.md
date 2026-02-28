@@ -62,6 +62,7 @@ Already aligned to official docs:
 - Reads `shipment.delivery_status` for delivery decisions.
 - Reads `payment_method`, `invoice.payment_mode`, and related payment fields.
 - Reads `is_cash_on_delivery` as an explicit COD signal.
+- Delivery status mapping now explicitly includes documented shipment lifecycle values such as `dispatched`, `out_for_delivery`, `in_transit`, and `partially_delivered`.
 
 Still needed:
 - One real `shipped` or `delivered` payload from your tenant.
