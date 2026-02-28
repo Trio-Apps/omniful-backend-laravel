@@ -33,16 +33,16 @@ Note:
 
 ## Sales
 
-- [ ] Quotations - Basic catalog path configured; no dedicated business flow yet.
+- [x] Quotations - Dedicated `/Quotations` sync snapshot is implemented.
 - [x] SalesOrders - Sales order / AR reserve order flow is implemented.
 - [x] DeliveryNotes - Delivery creation is implemented.
 - [x] Invoices - Dedicated `/Invoices` sync snapshot is implemented.
 - [x] CreditNotes - AR credit memo flow is implemented.
-- [ ] Returns - Return processing currently maps to AR credit memo, not a dedicated `/Returns` document flow.
+- [x] Returns - Dedicated `/Returns` sync snapshot is implemented, while business processing still maps returns to AR credit memo.
 - [x] IncomingPayments - Customer collection flow is implemented.
 - [x] BusinessPartners - Customer create/ensure logic is implemented.
 - [x] Items - Item create/update sync is implemented.
-- [ ] ItemGroups - Basic catalog path configured; no dedicated flow yet.
+- [x] ItemGroups - Dedicated item group sync table and service are implemented.
 - [x] Warehouses - Warehouse sync is implemented.
 
 ## Purchasing
@@ -58,7 +58,7 @@ Note:
 ## Inventory
 
 - [x] Items - Item sync is implemented.
-- [ ] ItemGroups - Basic catalog path configured; no dedicated flow yet.
+- [x] ItemGroups - Dedicated item group sync table and service are implemented.
 - [x] Warehouses - Warehouse sync is implemented.
 - [x] BinLocations - Bin-aware inventory logic is implemented.
 - [x] ItemWarehouseInfoCollection - Item/warehouse reads and assignment logic are implemented.
@@ -80,15 +80,15 @@ Note:
 ## Current Ready Count
 
 - Finance ready: 15
-- Sales ready: 8
+- Sales ready: 11
 - Purchasing ready: 7
-- Inventory ready: 7
+- Inventory ready: 8
 - Banking ready: 2
 
 ## Next Recommended Build Order
 
 - [x] Finance master data: ChartOfAccounts, FinancialPeriods, Banks / BankAccounts, PaymentTermsTypes
 - [x] Direct finance docs: PurchaseInvoices, VendorPayments, DownPayments
-- [ ] Sales gaps: Quotations, direct Invoices, Returns, ItemGroups
+- [x] Sales gaps: Quotations, direct Invoices, Returns, ItemGroups
 - [ ] Inventory gaps: InventoryTransferRequests, InventoryCounting, InventoryPosting, ProductionOrders
 - [ ] Banking gaps: Deposits, ChecksforPayment

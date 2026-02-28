@@ -111,6 +111,42 @@ trait HandlesSapMasterDataFetch
     /**
      * @return array<int,array>
      */
+    public function fetchItemGroups(): array
+    {
+        return $this->fetchAllWithFallback([
+            '/ItemGroups?$select=Number,GroupName&$top=200',
+            '/ItemGroups?$top=200',
+            '/ItemGroups',
+        ]);
+    }
+
+    /**
+     * @return array<int,array>
+     */
+    public function fetchQuotations(): array
+    {
+        return $this->fetchAllWithFallback([
+            '/Quotations?$select=DocEntry,DocNum,CardCode,DocDate,DocTotal,DocStatus&$top=200',
+            '/Quotations?$top=200',
+            '/Quotations',
+        ]);
+    }
+
+    /**
+     * @return array<int,array>
+     */
+    public function fetchReturnsDocuments(): array
+    {
+        return $this->fetchAllWithFallback([
+            '/Returns?$select=DocEntry,DocNum,CardCode,DocDate,DocTotal,DocStatus&$top=200',
+            '/Returns?$top=200',
+            '/Returns',
+        ]);
+    }
+
+    /**
+     * @return array<int,array>
+     */
     public function fetchArInvoices(): array
     {
         return $this->fetchAllWithFallback([
