@@ -15,7 +15,7 @@ Note:
 - [x] ChartOfAccounts - Dedicated sync method, model, and table are implemented.
 - [x] AccountCategories - Dedicated sync method, model, and table are implemented.
 - [x] FinancialPeriods - Dedicated sync method, model, and table are implemented.
-- [ ] AR / Customer finance - Covered indirectly through order/customer flows, not as a dedicated finance module.
+- [x] AR / Customer finance - Dedicated customer finance snapshot sync is implemented.
 - [x] Invoices - Dedicated `/Invoices` sync snapshot is implemented, and AR reserve invoice flow already exists.
 - [x] CreditNotes - AR credit memo creation is implemented.
 - [x] DownPayments - Dedicated `/DownPayments` sync snapshot is implemented.
@@ -25,11 +25,11 @@ Note:
 - [x] PurchaseDownPayments - Dedicated `/PurchaseDownPayments` sync snapshot is implemented.
 - [x] VendorPayments - Dedicated `/VendorPayments` sync snapshot is implemented.
 - [x] Banks / BankAccounts - Dedicated sync methods, models, and tables are implemented.
-- [ ] Currencies / ExchangeRates - Currency validation exists; full dedicated sync/use is not complete.
+- [x] Currencies / ExchangeRates - Dedicated currency and exchange rate sync is implemented.
 - [x] PaymentTermsTypes - Dedicated sync method, model, and table are implemented.
-- [ ] ProfitCenters - No dedicated `ProfitCenters` integration yet.
+- [x] ProfitCenters - Dedicated `ProfitCenters` sync is implemented.
 - [x] DistributionRules - Cost center sync reads distribution rules.
-- [ ] Branches - Basic catalog path configured; no dedicated flow yet.
+- [x] Branches - Dedicated branch sync is implemented.
 
 ## Sales
 
@@ -79,7 +79,7 @@ Note:
 
 ## Current Ready Count
 
-- Finance ready: 15
+- Finance ready: 19
 - Sales ready: 11
 - Purchasing ready: 7
 - Inventory ready: 12
@@ -92,3 +92,4 @@ Note:
 - [x] Sales gaps: Quotations, direct Invoices, Returns, ItemGroups
 - [x] Inventory gaps: InventoryTransferRequests, InventoryCounting, InventoryPosting, ProductionOrders
 - [x] Banking gaps: Deposits, ChecksforPayment
+- [x] Finance leftovers: AR / Customer finance, Currencies / ExchangeRates, ProfitCenters, Branches

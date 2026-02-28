@@ -218,6 +218,114 @@ trait HandlesSapMasterDataFetch
     /**
      * @return array<int,array>
      */
+    public function fetchCurrenciesList(): array
+    {
+        return $this->fetchAllWithFallback([
+            '/Currencies?$select=Code,Name&$top=200',
+            '/Currencies?$top=200',
+            '/Currencies',
+        ]);
+    }
+
+    /**
+     * @return array<int,array>
+     */
+    public function fetchExchangeRates(?string $rateDate = null): array
+    {
+        try {
+            return $this->fetchAllWithFallback([
+                '/CurrencyRates?$select=Currency,CurrencyCode,RateDate,Rate&$top=200',
+                '/CurrencyRates?$select=Currency,RateDate,Rate&$top=200',
+                '/CurrencyRates?$top=200',
+                '/CurrencyRates',
+            ]);
+        } catch (\Throwable) {
+            // Fallback to the SBOBob service call when CurrencyRates is not exposed by the tenant.
+        }
+
+        $date = $this->formatDate($rateDate);
+        $serviceDate = str_replace('-', '', $date);
+        $rates = [];
+
+        foreach ($this->fetchCurrenciesList() as $currency) {
+            $code = trim((string) ($currency['Code'] ?? ''));
+            if ($code === '') {
+                continue;
+            }
+
+            try {
+                $response = $this->post('/SBOBobService_GetCurrencyRate', [
+                    'Currency' => $code,
+                    'Date' => $serviceDate,
+                ]);
+            } catch (\Throwable) {
+                continue;
+            }
+
+            if (!$response->successful()) {
+                continue;
+            }
+
+            $payload = $response->json() ?? [];
+            $rate = $payload['CurrencyRate'] ?? $payload['Rate'] ?? $payload['Value'] ?? null;
+            if (!is_numeric($rate)) {
+                continue;
+            }
+
+            $rates[] = [
+                'Currency' => $code,
+                'RateDate' => $date,
+                'Rate' => (float) $rate,
+                'Source' => 'SBOBobService_GetCurrencyRate',
+            ];
+        }
+
+        return $rates;
+    }
+
+    /**
+     * @return array<int,array>
+     */
+    public function fetchProfitCentersCatalog(): array
+    {
+        return $this->fetchAllWithFallback([
+            '/ProfitCenters?$select=CenterCode,CenterName,InWhichDimension,Active&$top=200',
+            '/ProfitCenters?$top=200',
+            '/ProfitCenters',
+        ]);
+    }
+
+    /**
+     * @return array<int,array>
+     */
+    public function fetchBranchesCatalog(): array
+    {
+        return $this->fetchAllWithFallback([
+            '/Branches?$select=Code,Name,Disabled&$top=200',
+            '/Branches?$top=200',
+            '/Branches',
+            '/BusinessPlaces?$select=BPLID,BPLName,Disabled&$top=200',
+            '/BusinessPlaces?$top=200',
+            '/BusinessPlaces',
+        ]);
+    }
+
+    /**
+     * @return array<int,array>
+     */
+    public function fetchCustomerFinanceSnapshots(): array
+    {
+        return $this->fetchAllWithFallback([
+            '/BusinessPartners?$filter=CardType%20eq%20\'C\'&$select=CardCode,CardName,Balance,CurrentAccountBalance,Currency&$top=200',
+            '/BusinessPartners?$filter=CardType%20eq%20\'C\'&$select=CardCode,CardName,Balance,Currency&$top=200',
+            '/BusinessPartners?$filter=CardType%20eq%20\'C\'&$select=CardCode,CardName&$top=200',
+            '/BusinessPartners?$filter=CardType%20eq%20\'C\'&$top=200',
+        ]);
+    }
+
+    /**
+     * @return array<int,array>
+     */
     public function fetchArInvoices(): array
     {
         return $this->fetchAllWithFallback([
