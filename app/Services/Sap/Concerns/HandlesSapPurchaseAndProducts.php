@@ -51,6 +51,18 @@ trait HandlesSapPurchaseAndProducts
             if ($unitPrice === null) {
                 $unitPrice = data_get($item, 'price');
             }
+            if ($unitPrice === null) {
+                $unitPrice = data_get($item, 'selling_price');
+            }
+            if ($unitPrice === null) {
+                $unitPrice = data_get($item, 'display_price');
+            }
+            if ($unitPrice === null) {
+                $lineTotal = data_get($item, 'total');
+                if (is_numeric($lineTotal) && $qty > 0) {
+                    $unitPrice = round(((float) $lineTotal) / $qty, 6);
+                }
+            }
 
             $line = [
                 'ItemCode' => (string) $itemCode,

@@ -111,8 +111,10 @@ Not as:
 To harden the remaining webhook-driven logic against live tenant payload variance, the most useful payloads to collect are:
 
 1. Order webhook payloads
-   Need one real sample for each:
-   - prepaid `new_order` / initial create
+   Already confirmed:
+   - prepaid `new_order` as `order.update.event`
+   - current tenant uses `status_code`, `payment_method`, `invoice.total`, `invoice.total_paid`, and line `selling_price` / `unit_price`
+   Still needed:
    - `shipped` or `delivered`
    - `canceled` or `cancelled`
    Why:

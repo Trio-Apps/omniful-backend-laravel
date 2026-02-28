@@ -125,7 +125,7 @@ class OrderWebhookService
         $result = $client->createIncomingPaymentForInvoice([
             'invoice_doc_entry' => $invoiceDocEntry,
             'card_code' => data_get($invoiceResult ?? [], 'CardCode') ?? data_get($data, 'customer.code'),
-            'sum_applied' => data_get($invoiceResult ?? [], 'DocTotal') ?? data_get($data, 'invoice.grand_total') ?? data_get($data, 'total_amount') ?? 0,
+            'sum_applied' => $this->resolveIncomingPaymentAmount($data, $invoiceResult),
             'transfer_date' => data_get($data, 'order_created_at') ?? data_get($data, 'created_at'),
             'transfer_account' => config('omniful.order_payment.transfer_account'),
             'invoice_type_candidates' => config('omniful.order_payment.invoice_type_candidates', [17, 13]),
@@ -143,6 +143,26 @@ class OrderWebhookService
         $order->sap_payment_doc_num = (string) ($result['DocNum'] ?? '');
         $order->sap_payment_error = null;
         $order->save();
+    }
+
+    private function resolveIncomingPaymentAmount(array $data, ?array $invoiceResult): float
+    {
+        $candidates = [
+            data_get($invoiceResult ?? [], 'DocTotal'),
+            data_get($data, 'invoice.grand_total'),
+            data_get($data, 'invoice.total_paid'),
+            data_get($data, 'invoice.total'),
+            data_get($data, 'total_amount'),
+            data_get($data, 'invoice.subtotal'),
+        ];
+
+        foreach ($candidates as $value) {
+            if (is_numeric($value) && (float) $value > 0) {
+                return (float) $value;
+            }
+        }
+
+        return 0.0;
     }
 
     private function createCardFeeJournalIfEligible(OmnifulOrder $order, array $data): void
