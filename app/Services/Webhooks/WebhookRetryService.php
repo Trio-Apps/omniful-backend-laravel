@@ -97,14 +97,6 @@ class WebhookRetryService
      */
     public function retryProductEvent(OmnifulProductEvent $event): array
     {
-        if (app(IntegrationDirectionService::class)->isSapToOmniful('items')) {
-            $event->sap_status = 'ignored';
-            $event->sap_error = 'Ignored: items sync direction is SAP -> Omniful';
-            $event->save();
-
-            return ['ok' => false, 'message' => 'Items direction is SAP -> Omniful'];
-        }
-
         try {
             $event->sap_error = null;
             $event->save();

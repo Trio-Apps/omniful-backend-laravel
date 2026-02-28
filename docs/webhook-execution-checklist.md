@@ -219,6 +219,7 @@ Current coverage:
 - Bundle / BOM / kit webhook syncs bundle structures.
 - The documented SKU webhook `data` array is now processed row-by-row instead of only syncing the first element.
 - Product retry now uses the same row-by-row batch handling as the live webhook path.
+- `items` sync direction now controls only SAP-driven sync jobs and manual sync actions; product webhooks are still accepted so the item flow can run bidirectionally.
 
 Still needed:
 - Confirm the exact bundle discriminator fields used by your tenant.
