@@ -176,6 +176,8 @@ Current coverage:
   - `order_items[].approved_quantity`
 - Prevents duplicate SAP stock transfers for the same stock-transfer request when later lifecycle events arrive.
 - The webhook is ignored safely when `inventory` direction is set to `SAP -> Omniful`.
+- Duplicate SKU lines are now aggregated before posting to SAP.
+- Status extraction now also checks `status_code` variants.
 
 Already aligned to official docs:
 - Supports nested warehouse fields like:

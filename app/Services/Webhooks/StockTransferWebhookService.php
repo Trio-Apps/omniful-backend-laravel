@@ -12,7 +12,7 @@ class StockTransferWebhookService
         $payload = (array) ($event->payload ?? []);
         $data = (array) data_get($payload, 'data', []);
         $eventName = strtolower(trim((string) data_get($payload, 'event_name', '')));
-        $status = strtolower(trim((string) data_get($data, 'status', '')));
+        $status = strtolower(trim($this->extractTransferStatus($data, $payload)));
 
         if (!$this->isActionableStockTransferEvent($eventName, $status)) {
             $event->sap_status = 'ignored';
@@ -216,7 +216,7 @@ class StockTransferWebhookService
             }
 
             if ($lines !== []) {
-                return $lines;
+                return $this->aggregateTransferLines($lines);
             }
         }
 
@@ -242,6 +242,7 @@ class StockTransferWebhookService
     {
         $candidates = [
             data_get($data, 'sto_request_id'),
+            data_get($data, 'status_reference_id'),
             data_get($data, 'display_id'),
             data_get($data, 'id'),
             data_get($payload, 'sto_request_id'),
@@ -259,6 +260,25 @@ class StockTransferWebhookService
         }
 
         return null;
+    }
+
+    private function extractTransferStatus(array $data, array $payload): string
+    {
+        $candidates = [
+            data_get($data, 'status'),
+            data_get($data, 'status_code'),
+            data_get($payload, 'status'),
+            data_get($payload, 'status_code'),
+        ];
+
+        foreach ($candidates as $candidate) {
+            $value = trim((string) $candidate);
+            if ($value !== '') {
+                return $value;
+            }
+        }
+
+        return '';
     }
 
     private function extractTransferItemCode(array $item): string
@@ -284,6 +304,35 @@ class StockTransferWebhookService
         }
 
         return '';
+    }
+
+    /**
+     * @param array<int,array{seller_sku_code:string,quantity:float}> $lines
+     * @return array<int,array{seller_sku_code:string,quantity:float}>
+     */
+    private function aggregateTransferLines(array $lines): array
+    {
+        $grouped = [];
+
+        foreach ($lines as $line) {
+            $itemCode = (string) ($line['seller_sku_code'] ?? '');
+            $quantity = (float) ($line['quantity'] ?? 0);
+            if ($itemCode === '' || $quantity <= 0) {
+                continue;
+            }
+
+            $grouped[$itemCode] = ($grouped[$itemCode] ?? 0.0) + $quantity;
+        }
+
+        $result = [];
+        foreach ($grouped as $itemCode => $quantity) {
+            $result[] = [
+                'seller_sku_code' => $itemCode,
+                'quantity' => $quantity,
+            ];
+        }
+
+        return $result;
     }
 
     private function extractInTransitWarehouse(array $data, array $payload): string
