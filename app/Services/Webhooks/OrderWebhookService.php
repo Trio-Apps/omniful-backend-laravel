@@ -32,6 +32,8 @@ class OrderWebhookService
         ]);
         $deliveryStatus = $this->extractStatusValue($data, [
             'shipment.delivery_status',
+            'shipment.status',
+            'shipment.shipping_partner_status',
             'delivery_status',
             'shipment_status',
             'status_code',
