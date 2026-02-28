@@ -141,6 +141,57 @@ class InventoryWebhookService
                     $event->sap_error = (string) ($sync->sap_error ?: 'Ignored: duplicate inventory counting event already synced');
                     $event->save();
                 }
+            } elseif (($route['sap_action'] ?? null) === 'inventory_posting') {
+                $items = is_array($items) ? $items : [];
+                $eventKey = $this->buildInventoryEventKey($payload, $items, null, 'inventory_posting');
+
+                $sync = $this->firstOrCreateSyncEvent(
+                    $eventKey,
+                    [
+                        'source_type' => 'omniful_inventory_event',
+                        'source_id' => $event->id,
+                        'sap_action' => 'inventory_posting',
+                        'sap_status' => 'pending',
+                        'payload' => $payload,
+                    ]
+                );
+
+                if ($sync->wasRecentlyCreated || in_array((string) $sync->sap_status, ['pending', 'failed'], true)) {
+                    $client = app(SapServiceLayerClient::class);
+                    $result = $client->createInventoryPosting(
+                        $items,
+                        $hubCode,
+                        $this->buildInventoryPostingRemarks($payload),
+                        $this->extractInventoryEventTimestamp($data, $items, $payload)
+                    );
+
+                    if (($result['ignored'] ?? false) === true) {
+                        $event->sap_status = 'ignored';
+                        $event->sap_error = (string) ($result['reason'] ?? 'Ignored: no inventory posting lines found');
+
+                        $sync->sap_status = 'ignored';
+                        $sync->sap_error = $event->sap_error;
+                    } else {
+                        $event->sap_status = 'created';
+                        $event->sap_doc_entry = $result['DocEntry'] ?? $result['DocumentEntry'] ?? null;
+                        $event->sap_doc_num = $result['DocNum'] ?? $result['DocumentNumber'] ?? null;
+                        $event->sap_error = null;
+
+                        $sync->sap_status = 'created';
+                        $sync->sap_doc_entry = $event->sap_doc_entry;
+                        $sync->sap_doc_num = $event->sap_doc_num;
+                        $sync->sap_error = null;
+                    }
+
+                    $event->save();
+                    $sync->save();
+                } else {
+                    $event->sap_status = (string) ($sync->sap_status === 'failed' ? 'failed' : 'ignored');
+                    $event->sap_doc_entry = $sync->sap_doc_entry;
+                    $event->sap_doc_num = $sync->sap_doc_num;
+                    $event->sap_error = (string) ($sync->sap_error ?: 'Ignored: duplicate inventory posting event already synced');
+                    $event->save();
+                }
             } elseif (($route['sap_action'] ?? null) === 'manual_inventory_adjustment') {
                 $items = is_array($items) ? $items : [];
                 $client = app(SapServiceLayerClient::class);
@@ -641,6 +692,38 @@ class InventoryWebhookService
 
         $reference = data_get($payload, 'data.inventory_count_id')
             ?? data_get($payload, 'data.count_id')
+            ?? data_get($payload, 'entity_identifier')
+            ?? data_get($payload, 'data.id')
+            ?? data_get($payload, 'id');
+        if ($reference) {
+            $parts[] = (string) $reference;
+        }
+
+        $action = (string) data_get($payload, 'action', '');
+        if ($action !== '') {
+            $parts[] = $action;
+        }
+
+        $entity = (string) data_get($payload, 'entity', '');
+        if ($entity !== '') {
+            $parts[] = $entity;
+        }
+
+        $hubCode = (string) data_get($payload, 'data.hub_code', '');
+        if ($hubCode !== '') {
+            $parts[] = 'Hub ' . $hubCode;
+        }
+
+        return implode(' | ', $parts);
+    }
+
+    private function buildInventoryPostingRemarks(array $payload): string
+    {
+        $parts = ['Omniful Inventory Posting'];
+
+        $reference = data_get($payload, 'data.inventory_posting_id')
+            ?? data_get($payload, 'data.posting_id')
+            ?? data_get($payload, 'data.inventory_count_id')
             ?? data_get($payload, 'entity_identifier')
             ?? data_get($payload, 'data.id')
             ?? data_get($payload, 'id');

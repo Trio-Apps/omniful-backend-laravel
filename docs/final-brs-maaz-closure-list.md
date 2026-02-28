@@ -100,7 +100,7 @@ These items are connected and visible, but still snapshot-oriented unless explic
 
 ### Inventory
 
-- [ ] Direct transactional `InventoryPosting`
+- [x] Direct transactional `InventoryPosting`
 - [ ] Direct transactional `ProductionOrders`
 
 ### Banking
@@ -113,7 +113,7 @@ These items are connected and visible, but still snapshot-oriented unless explic
 
 Build these only after the scope decision is explicit.
 
-- [ ] Implement transactional `InventoryPosting` workflow.
+- [x] Implement transactional `InventoryPosting` workflow.
 - [ ] Implement transactional `ProductionOrders` workflow.
 - [ ] Implement transactional A/P finance posting workflows.
 - [ ] Implement transactional banking posting workflows.

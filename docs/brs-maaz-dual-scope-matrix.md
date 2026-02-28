@@ -211,7 +211,7 @@ Important distinction:
 | Gap | Status | Notes |
 | --- | --- | --- |
 | InventoryCounting transactional flow | READY (Business Flow) | Webhook-driven SAP inventory-counting creation is now implemented |
-| InventoryPosting transactional flow | MISSING | Snapshot only at the moment |
+| InventoryPosting transactional flow | READY (Business Flow) | `inventory` webhook can now create transactional SAP inventory-posting documents |
 | ProductionOrders transactional flow | MISSING | Snapshot only at the moment |
 
 ### Banking

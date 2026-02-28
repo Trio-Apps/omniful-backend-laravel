@@ -64,6 +64,48 @@ trait HandlesSapInventoryDocs
         );
     }
 
+    public function createInventoryPosting(array $items, ?string $hubCode, string $remarks, ?string $postingDate = null): array
+    {
+        $lines = $this->buildInventoryPostingLines($items, $hubCode);
+        if ($lines === []) {
+            return [
+                'ignored' => true,
+                'reason' => 'No inventory posting lines found',
+            ];
+        }
+
+        $body = [
+            'CountDate' => $this->formatDate($postingDate),
+            'PostingDate' => $this->formatDate($postingDate),
+            'Remarks' => $remarks,
+            'InventoryPostingLines' => $lines,
+        ];
+
+        $attempts = [
+            ['/InventoryPostings', $body],
+            ['/InventoryPostingsService_Add', ['InventoryPosting' => $body]],
+            ['/InventoryPostingsService_Add', $body],
+        ];
+
+        $errors = [];
+        foreach ($attempts as [$path, $payload]) {
+            $response = $this->post($path, $payload);
+            if ($response->successful()) {
+                $result = $response->json() ?? [];
+                $result['ignored'] = false;
+
+                return $result;
+            }
+
+            $errors[] = $path . ': ' . $response->status() . ' ' . $response->body();
+        }
+
+        throw new \RuntimeException(
+            'SAP inventory posting create failed: ' . implode(' | ', $errors)
+            . ' | Payload: ' . json_encode($body, JSON_UNESCAPED_UNICODE)
+        );
+    }
+
 
     public function createInventoryGoodsReceipt(array $items, ?string $hubCode, string $remarks): array
     {
@@ -354,6 +396,40 @@ trait HandlesSapInventoryDocs
             }
 
             $lines[] = $line;
+        }
+
+        return $lines;
+    }
+
+    private function buildInventoryPostingLines(array $items, ?string $hubCode): array
+    {
+        $countingLines = $this->buildInventoryCountingLines($items, $hubCode);
+        $lines = [];
+
+        foreach ($countingLines as $line) {
+            $postingLine = [
+                'ItemCode' => $line['ItemCode'] ?? null,
+                'CountedQuantity' => $line['CountedQuantity'] ?? null,
+            ];
+
+            if (isset($line['WarehouseCode'])) {
+                $postingLine['WarehouseCode'] = $line['WarehouseCode'];
+            }
+
+            if (isset($line['BinEntry'])) {
+                $postingLine['BinEntry'] = $line['BinEntry'];
+            }
+
+            $postingLine = array_filter(
+                $postingLine,
+                fn ($value) => $value !== null && $value !== ''
+            );
+
+            if (!isset($postingLine['ItemCode'], $postingLine['CountedQuantity'])) {
+                continue;
+            }
+
+            $lines[] = $postingLine;
         }
 
         return $lines;
