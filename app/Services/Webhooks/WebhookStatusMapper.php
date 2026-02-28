@@ -164,7 +164,7 @@ class WebhookStatusMapper
         $eventOk = $eventRules === [] || $this->containsAny($eventName, $eventRules);
         $statusOk = $statusRules === [] || in_array($status, $statusRules, true);
 
-        if ($eventOk && $statusOk) {
+        if ($eventOk || $statusOk) {
             return ['eligible' => true, 'reason' => null];
         }
 
@@ -172,7 +172,7 @@ class WebhookStatusMapper
             return ['eligible' => false, 'reason' => 'Unmapped order event/status for delivery creation'];
         }
 
-        return ['eligible' => $eventOk || $statusOk, 'reason' => null];
+        return ['eligible' => false, 'reason' => null];
     }
 
     /**
