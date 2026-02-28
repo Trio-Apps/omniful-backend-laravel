@@ -91,7 +91,7 @@ These items are connected and visible, but still snapshot-oriented unless explic
 - [x] Direct transactional `PurchaseInvoices`
 - [x] Direct transactional `PurchaseCreditNotes`
 - [x] Direct transactional `PurchaseDownPayments`
-- [ ] Direct transactional `VendorPayments`
+- [x] Direct transactional `VendorPayments`
 
 ### Sales
 
@@ -105,7 +105,7 @@ These items are connected and visible, but still snapshot-oriented unless explic
 
 ### Banking
 
-- [ ] Direct transactional `VendorPayments`
+- [x] Direct transactional `VendorPayments`
 - [ ] Direct transactional `Deposits`
 - [ ] Direct transactional `ChecksforPayment`
 
@@ -115,7 +115,7 @@ Build these only after the scope decision is explicit.
 
 - [x] Implement transactional `InventoryPosting` workflow.
 - [x] Implement transactional `ProductionOrders` workflow.
-- [ ] Implement transactional A/P finance posting workflows.
+- [x] Implement transactional A/P finance posting workflows.
 - [ ] Implement transactional banking posting workflows.
 - [ ] Implement standalone direct sales posting for native SAP `Invoices`.
 - [ ] Implement standalone direct sales posting for native SAP `Returns`.

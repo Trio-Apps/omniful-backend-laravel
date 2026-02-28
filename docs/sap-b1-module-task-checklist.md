@@ -23,7 +23,7 @@ Note:
 - [x] PurchaseInvoices - Dedicated `/PurchaseInvoices` sync snapshot is implemented, and a direct manual transactional posting command is implemented.
 - [x] PurchaseCreditNotes - Dedicated `/PurchaseCreditNotes` sync snapshot is implemented, and a direct manual transactional posting command is implemented.
 - [x] PurchaseDownPayments - Dedicated `/PurchaseDownPayments` sync snapshot is implemented, and a direct manual transactional posting command is implemented.
-- [x] VendorPayments - Dedicated `/VendorPayments` sync snapshot is implemented.
+- [x] VendorPayments - Dedicated `/VendorPayments` sync snapshot is implemented, and a direct manual transactional posting command is implemented.
 - [x] Banks / BankAccounts - Dedicated sync methods, models, and tables are implemented.
 - [x] Currencies / ExchangeRates - Dedicated currency and exchange rate sync is implemented.
 - [x] PaymentTermsTypes - Dedicated sync method, model, and table are implemented.
@@ -53,7 +53,7 @@ Note:
 - [x] PurchaseInvoices - Dedicated `/PurchaseInvoices` sync snapshot is implemented, and a direct manual transactional posting command is implemented.
 - [x] PurchaseCreditNotes - Dedicated `/PurchaseCreditNotes` sync snapshot is implemented, and a direct manual transactional posting command is implemented.
 - [x] PurchaseDownPayments - Dedicated `/PurchaseDownPayments` sync snapshot is implemented, and a direct manual transactional posting command is implemented.
-- [x] VendorPayments - Dedicated `/VendorPayments` sync snapshot is implemented.
+- [x] VendorPayments - Dedicated `/VendorPayments` sync snapshot is implemented, and a direct manual transactional posting command is implemented.
 
 ## Inventory
 
@@ -73,7 +73,7 @@ Note:
 ## Banking
 
 - [x] IncomingPayments - Customer receipt creation is implemented.
-- [x] VendorPayments - Dedicated `/VendorPayments` sync snapshot is implemented.
+- [x] VendorPayments - Dedicated `/VendorPayments` sync snapshot is implemented, and a direct manual transactional posting command is implemented.
 - [x] DepositsService / Deposits - Dedicated `/Deposits` sync snapshot is implemented.
 - [x] ChecksforPayment - Dedicated `/ChecksforPayment` sync snapshot is implemented.
 

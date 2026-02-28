@@ -180,7 +180,7 @@ Important distinction:
 
 | Gap | Status | Notes |
 | --- | --- | --- |
-| Direct transactional A/P finance posting flows | MISSING | Snapshot only at the moment |
+| Direct transactional A/P finance posting flows | READY (Business Flow) | Direct manual SAP posting now exists for `PurchaseInvoices`, `PurchaseCreditNotes`, `PurchaseDownPayments`, and `VendorPayments` |
 
 ### Inventory
 
@@ -234,7 +234,7 @@ Important distinction:
 
 | Gap | Status | Notes |
 | --- | --- | --- |
-| Direct transactional VendorPayments / Deposits / Checks posting flows | MISSING | Current implementation is read/snapshot oriented |
+| Direct transactional VendorPayments / Deposits / Checks posting flows | MISSING | `VendorPayments` is now implemented through a direct manual SAP posting command, but `Deposits` and `ChecksforPayment` remain snapshot-only |
 
 ## Combined Decision View
 

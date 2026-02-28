@@ -888,6 +888,68 @@ trait HandlesSapPurchaseAndProducts
         return $payload;
     }
 
+    public function createVendorPayment(array $data): array
+    {
+        $invoiceDocEntry = (int) ($data['invoice_doc_entry'] ?? 0);
+        if ($invoiceDocEntry <= 0) {
+            throw new \RuntimeException('Missing invoice doc entry for vendor payment');
+        }
+
+        $cardCode = trim((string) ($data['card_code'] ?? ''));
+        if ($cardCode === '') {
+            throw new \RuntimeException('Missing CardCode for vendor payment');
+        }
+
+        $transferAccount = trim((string) ($data['transfer_account'] ?? ''));
+        if ($transferAccount === '') {
+            return [
+                'ignored' => true,
+                'reason' => 'Missing vendor payment transfer account',
+            ];
+        }
+
+        $sumApplied = (float) ($data['sum_applied'] ?? 0);
+        if ($sumApplied <= 0) {
+            return [
+                'ignored' => true,
+                'reason' => 'Vendor payment skipped: non-positive amount',
+            ];
+        }
+
+        $invoiceType = (int) ($data['invoice_type'] ?? 18);
+        $transferDate = $this->formatDate((string) ($data['transfer_date'] ?? now()->format('Y-m-d')));
+        $remarks = trim((string) ($data['remarks'] ?? 'Vendor payment from integration'));
+
+        $body = [
+            'CardCode' => $cardCode,
+            'DocType' => 'rSupplier',
+            'TransferAccount' => $transferAccount,
+            'TransferDate' => $transferDate,
+            'TransferSum' => $sumApplied,
+            'PaymentInvoices' => [
+                [
+                    'DocEntry' => $invoiceDocEntry,
+                    'InvoiceType' => $invoiceType,
+                    'SumApplied' => $sumApplied,
+                ],
+            ],
+            'Remarks' => $remarks,
+        ];
+
+        $response = $this->post('/VendorPayments', $body);
+        if (!$response->successful()) {
+            throw new \RuntimeException(
+                'SAP vendor payment create failed: ' . $response->status() . ' ' . $response->body()
+                . ' | Payload: ' . json_encode($body, JSON_UNESCAPED_UNICODE)
+            );
+        }
+
+        $payload = $response->json() ?? [];
+        $payload['ignored'] = false;
+
+        return $payload;
+    }
+
     private function resolvePurchaseOrderSupplierCode(array $data): string
     {
         $candidates = [
