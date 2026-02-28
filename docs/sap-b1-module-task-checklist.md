@@ -74,8 +74,8 @@ Note:
 
 - [x] IncomingPayments - Customer receipt creation is implemented.
 - [x] VendorPayments - Dedicated `/VendorPayments` sync snapshot is implemented, and a direct manual transactional posting command is implemented.
-- [x] DepositsService / Deposits - Dedicated `/Deposits` sync snapshot is implemented.
-- [x] ChecksforPayment - Dedicated `/ChecksforPayment` sync snapshot is implemented.
+- [x] DepositsService / Deposits - Dedicated `/Deposits` sync snapshot is implemented, and a direct manual transactional posting command is implemented.
+- [x] ChecksforPayment - Dedicated `/ChecksforPayment` sync snapshot is implemented, and a direct manual transactional posting command is implemented.
 
 ## Current Ready Count
 

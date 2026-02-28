@@ -1012,6 +1012,94 @@ trait HandlesSapPurchaseAndProducts
         return $payload;
     }
 
+    public function createDeposit(array $data): array
+    {
+        $absId = (int) ($data['abs_id'] ?? 0);
+        $depositAccount = trim((string) ($data['deposit_account'] ?? ''));
+        $voucherAccount = trim((string) ($data['voucher_account'] ?? ''));
+        $depositType = trim((string) ($data['deposit_type'] ?? 'dtCredit'));
+
+        if ($absId <= 0) {
+            throw new \RuntimeException('Deposit requires a valid credit line AbsId');
+        }
+
+        if ($depositAccount === '' || $voucherAccount === '') {
+            throw new \RuntimeException('Deposit requires deposit_account and voucher_account');
+        }
+
+        $body = [
+            'CreditLines' => [
+                ['AbsId' => $absId],
+            ],
+            'DepositAccount' => $depositAccount,
+            'DepositType' => $depositType,
+            'VoucherAccount' => $voucherAccount,
+        ];
+
+        $response = $this->post('/Deposits', $body);
+        if (!$response->successful()) {
+            throw new \RuntimeException(
+                'SAP deposit create failed: ' . $response->status() . ' ' . $response->body()
+                . ' | Payload: ' . json_encode($body, JSON_UNESCAPED_UNICODE)
+            );
+        }
+
+        $payload = $response->json() ?? [];
+        $payload['ignored'] = false;
+
+        return $payload;
+    }
+
+    public function createCheckForPayment(array $data): array
+    {
+        $bankCode = trim((string) ($data['bank_code'] ?? ''));
+        $customerAccountCode = trim((string) ($data['customer_account_code'] ?? ''));
+        $countryCode = trim((string) ($data['country_code'] ?? ''));
+        $rowTotal = (float) ($data['amount'] ?? 0);
+
+        if ($bankCode === '' || $customerAccountCode === '' || $countryCode === '' || $rowTotal <= 0) {
+            throw new \RuntimeException('Check for payment requires bank_code, customer_account_code, country_code, and positive amount');
+        }
+
+        $body = [
+            'BankCode' => $bankCode,
+            'CustomerAccountCode' => $customerAccountCode,
+            'CountryCode' => $countryCode,
+            'CardOrAccount' => trim((string) ($data['card_or_account'] ?? 'cfp_Account')),
+            'ChecksforPaymentLines' => [
+                [
+                    'RowTotal' => $rowTotal,
+                ],
+            ],
+        ];
+
+        $optionalFields = [
+            'AccountNumber' => trim((string) ($data['account_number'] ?? '')),
+            'Branch' => trim((string) ($data['branch'] ?? '')),
+            'Details' => trim((string) ($data['details'] ?? '')),
+            'VendorCode' => trim((string) ($data['vendor_code'] ?? '')),
+        ];
+
+        foreach ($optionalFields as $field => $value) {
+            if ($value !== '') {
+                $body[$field] = $value;
+            }
+        }
+
+        $response = $this->post('/ChecksforPayment', $body);
+        if (!$response->successful()) {
+            throw new \RuntimeException(
+                'SAP check for payment create failed: ' . $response->status() . ' ' . $response->body()
+                . ' | Payload: ' . json_encode($body, JSON_UNESCAPED_UNICODE)
+            );
+        }
+
+        $payload = $response->json() ?? [];
+        $payload['ignored'] = false;
+
+        return $payload;
+    }
+
     private function resolvePurchaseOrderSupplierCode(array $data): string
     {
         $candidates = [

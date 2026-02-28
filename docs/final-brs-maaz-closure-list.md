@@ -106,8 +106,8 @@ These items are connected and visible, but still snapshot-oriented unless explic
 ### Banking
 
 - [x] Direct transactional `VendorPayments`
-- [ ] Direct transactional `Deposits`
-- [ ] Direct transactional `ChecksforPayment`
+- [x] Direct transactional `Deposits`
+- [x] Direct transactional `ChecksforPayment`
 
 ## 6. Phase 2 Build Tasks (Only If Maaz Requires Full Posting)
 
@@ -116,7 +116,7 @@ Build these only after the scope decision is explicit.
 - [x] Implement transactional `InventoryPosting` workflow.
 - [x] Implement transactional `ProductionOrders` workflow.
 - [x] Implement transactional A/P finance posting workflows.
-- [ ] Implement transactional banking posting workflows.
+- [x] Implement transactional banking posting workflows.
 - [x] Implement standalone direct sales posting for native SAP `Invoices`.
 - [x] Implement standalone direct sales posting for native SAP `Returns`.
 - [x] Add REST API endpoints for selected snapshot/master-data tables if they must be consumed by another project. Implemented under `/api/integration/sap/resources`.

@@ -114,7 +114,7 @@ Important distinction:
 | PurchaseInvoices | READY (Basic Connection) | Snapshot sync exists in local table |
 | PurchaseCreditNotes | READY (Basic Connection) | Snapshot sync exists in local table |
 | PurchaseDownPayments | READY (Basic Connection) | Snapshot sync exists in local table |
-| VendorPayments | READY (Basic Connection) | Snapshot sync exists in local table |
+| VendorPayments | READY (Basic Connection) | Snapshot sync exists in local table, and direct manual SAP posting now exists |
 | Banks / BankAccounts | READY (Basic Connection) | Dedicated sync, tables, and dashboard pages exist |
 | Currencies / ExchangeRates | READY (Basic Connection) | Dedicated sync, tables, and dashboard pages exist |
 | PaymentTermsTypes | READY (Basic Connection) | Dedicated sync, table, and dashboard page exist |
@@ -174,7 +174,7 @@ Important distinction:
 | PurchaseInvoices | READY (Basic Connection) | Snapshot sync exists |
 | PurchaseCreditNotes | READY (Basic Connection) | Snapshot sync exists |
 | PurchaseDownPayments | READY (Basic Connection) | Snapshot sync exists |
-| VendorPayments | READY (Basic Connection) | Snapshot sync exists |
+| VendorPayments | READY (Basic Connection) | Snapshot sync exists, and direct manual SAP posting now exists |
 
 #### Remaining Purchasing Gaps
 
@@ -226,15 +226,15 @@ Important distinction:
 
 | API / Capability | Status | Notes |
 | --- | --- | --- |
-| VendorPayments | READY (Basic Connection) | Snapshot sync exists |
-| DepositsService / Deposits | READY (Basic Connection) | Snapshot sync exists |
-| ChecksforPayment | READY (Basic Connection) | Snapshot sync exists |
+| VendorPayments | READY (Basic Connection) | Snapshot sync exists, and direct manual SAP posting now exists |
+| DepositsService / Deposits | READY (Basic Connection) | Snapshot sync exists, and direct manual SAP posting now exists |
+| ChecksforPayment | READY (Basic Connection) | Snapshot sync exists, and direct manual SAP posting now exists |
 
 #### Remaining Banking Gaps
 
 | Gap | Status | Notes |
 | --- | --- | --- |
-| Direct transactional VendorPayments / Deposits / Checks posting flows | MISSING | `VendorPayments` is now implemented through a direct manual SAP posting command, but `Deposits` and `ChecksforPayment` remain snapshot-only |
+| Direct transactional VendorPayments / Deposits / Checks posting flows | READY (Business Flow) | Direct manual SAP posting now exists for `VendorPayments`, `Deposits`, and `ChecksforPayment` |
 
 ## Combined Decision View
 
