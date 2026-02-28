@@ -676,6 +676,41 @@ trait HandlesSapPurchaseAndProducts
         }
     }
 
+    public function syncSalesOrderFromOmnifulEvent(int $docEntry, string $eventName, string $status): void
+    {
+        if ($docEntry <= 0) {
+            throw new \RuntimeException('Missing SAP sales order doc entry for sync');
+        }
+
+        $salesOrder = $this->getSalesOrder($docEntry);
+        $payload = $this->buildSalesOrderSyncPayload($salesOrder, $eventName, $status);
+        if ($payload === []) {
+            return;
+        }
+
+        $response = $this->patch('/Orders(' . $docEntry . ')', $payload);
+        if (!$response->successful() && count($payload) > 1) {
+            $fallback = $payload;
+            foreach (array_keys($payload) as $field) {
+                if ($field === 'Comments') {
+                    continue;
+                }
+
+                if ($this->isInvalidSapPropertyError((string) $response->body(), $field)) {
+                    unset($fallback[$field]);
+                }
+            }
+
+            if ($fallback !== $payload && $fallback !== []) {
+                $response = $this->patch('/Orders(' . $docEntry . ')', $fallback);
+            }
+        }
+
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP sales order update failed: ' . $response->status() . ' ' . $response->body());
+        }
+    }
+
 
 
 
@@ -1440,6 +1475,40 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return $response->json() ?? [];
+    }
+
+    private function buildSalesOrderSyncPayload(array $salesOrder, string $eventName, string $status): array
+    {
+        $payload = [];
+
+        if ((bool) config('omniful.order_sync.append_comment', true)) {
+            $message = trim(sprintf(
+                '[%s] %s %s',
+                now()->format('Y-m-d H:i:s'),
+                trim($eventName) !== '' ? $eventName : 'order.event',
+                trim($status) !== '' ? $status : '-'
+            ));
+
+            $existing = trim((string) ($salesOrder['Comments'] ?? ''));
+            $payload['Comments'] = $existing === '' ? $message : ($existing . "\n" . $message);
+        }
+
+        $statusField = trim((string) config('omniful.order_sync.status_udf_field', ''));
+        if ($statusField !== '' && trim($status) !== '') {
+            $payload[$statusField] = trim($status);
+        }
+
+        $eventField = trim((string) config('omniful.order_sync.event_udf_field', ''));
+        if ($eventField !== '' && trim($eventName) !== '') {
+            $payload[$eventField] = trim($eventName);
+        }
+
+        $updatedAtField = trim((string) config('omniful.order_sync.updated_at_udf_field', ''));
+        if ($updatedAtField !== '') {
+            $payload[$updatedAtField] = now()->format('Y-m-d H:i:s');
+        }
+
+        return $payload;
     }
 
     private function getDeliveryNote(int $docEntry): array
@@ -2886,4 +2955,3 @@ trait HandlesSapPurchaseAndProducts
     }
 
 }
-

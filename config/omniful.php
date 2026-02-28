@@ -119,6 +119,12 @@ return [
         'inventory_offset_account' => env('OMNIFUL_COGS_INVENTORY_OFFSET_ACCOUNT', ''),
         'return_cogs_reversal_enabled' => (bool) env('OMNIFUL_RETURN_COGS_REVERSAL_ENABLED', false),
     ],
+    'order_sync' => [
+        'append_comment' => (bool) env('OMNIFUL_ORDER_SYNC_APPEND_COMMENT', true),
+        'status_udf_field' => env('OMNIFUL_ORDER_STATUS_UDF_FIELD', ''),
+        'event_udf_field' => env('OMNIFUL_ORDER_EVENT_UDF_FIELD', ''),
+        'updated_at_udf_field' => env('OMNIFUL_ORDER_UPDATED_AT_UDF_FIELD', ''),
+    ],
     'order_fallback' => [
         'customer_code' => env('OMNIFUL_FALLBACK_CUSTOMER_CODE', ''),
     ],

@@ -5,6 +5,7 @@ namespace App\Services\Webhooks;
 use App\Models\OmnifulOrder;
 use App\Models\OmnifulOrderEvent;
 use App\Services\SapServiceLayerClient;
+use Illuminate\Support\Facades\Log;
 
 class OrderWebhookService
 {
@@ -31,6 +32,11 @@ class OrderWebhookService
         $deliveryEligibility = $mapper->resolveOrderDeliveryEligibility($eventName, $status);
 
         if (!($invoiceEligibility['eligible'] ?? false) && !($deliveryEligibility['eligible'] ?? false)) {
+            if (!empty($order->sap_doc_entry)) {
+                $this->syncSalesOrderMetadata($order, $eventName, $status);
+                return;
+            }
+
             $order->sap_status = 'ignored';
             $order->sap_error = (string) (
                 $invoiceEligibility['reason']
@@ -69,6 +75,7 @@ class OrderWebhookService
         }
 
         $this->createCogsJournalIfEligible($order);
+        $this->syncSalesOrderMetadata($order, $eventName, $status);
     }
 
     /**
@@ -295,5 +302,26 @@ class OrderWebhookService
         $order->sap_cogs_journal_num = (string) ($result['Number'] ?? $result['JdtNum'] ?? '');
         $order->sap_cogs_error = null;
         $order->save();
+    }
+
+    private function syncSalesOrderMetadata(OmnifulOrder $order, string $eventName, string $status): void
+    {
+        $docEntry = (int) ($order->sap_doc_entry ?? 0);
+        if ($docEntry <= 0) {
+            return;
+        }
+
+        try {
+            $client = app(SapServiceLayerClient::class);
+            $client->syncSalesOrderFromOmnifulEvent($docEntry, $eventName, $status);
+        } catch (\Throwable $e) {
+            Log::warning('SAP sales order metadata sync failed', [
+                'external_id' => $order->external_id,
+                'sap_doc_entry' => $docEntry,
+                'event_name' => $eventName,
+                'status' => $status,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 }
