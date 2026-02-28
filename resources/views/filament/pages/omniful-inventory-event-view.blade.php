@@ -130,7 +130,25 @@
             </div>
         </x-filament::section>
 
-        @if ($record->sap_error)
+        @if ($hasSapResultSummary)
+            <x-filament::section class="po-section-gap">
+                <x-slot name="heading">SAP Result</x-slot>
+                <div class="po-grid po-grid-2 po-section-pad">
+                    @if (array_key_exists('gr', $sapResultSummary))
+                        <div class="po-kv">
+                            <div class="po-label">Goods Receipt</div>
+                            <div class="po-value">{{ $sapResultSummary['gr'] ?: '-' }}</div>
+                        </div>
+                    @endif
+                    @if (array_key_exists('gi', $sapResultSummary))
+                        <div class="po-kv">
+                            <div class="po-label">Goods Issue</div>
+                            <div class="po-value">{{ $sapResultSummary['gi'] ?: '-' }}</div>
+                        </div>
+                    @endif
+                </div>
+            </x-filament::section>
+        @elseif ($record->sap_error)
             <x-filament::section class="po-section-gap">
                 <x-slot name="heading">SAP Error</x-slot>
                 <div class="po-json">{{ $record->sap_error }}</div>

@@ -22,6 +22,10 @@ class OmnifulInventoryEventView extends Page
 
     public string $payloadJson = '';
 
+    public bool $hasSapResultSummary = false;
+
+    public array $sapResultSummary = [];
+
     public function mount(int|string|null $record = null): void
     {
         $recordId = $record ?? request()->query('record');
@@ -45,6 +49,16 @@ class OmnifulInventoryEventView extends Page
             $this->items = data_get($this->data, 'hub_inventory_items', data_get($this->data, 'items', []));
         }
         $this->payloadJson = json_encode($model->payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) ?: '';
+
+        $decodedSummary = json_decode((string) ($model->sap_error ?? ''), true);
+        if (
+            is_array($decodedSummary)
+            && $decodedSummary !== []
+            && array_filter(array_keys($decodedSummary), fn ($key) => in_array((string) $key, ['gr', 'gi'], true)) !== []
+        ) {
+            $this->hasSapResultSummary = true;
+            $this->sapResultSummary = $decodedSummary;
+        }
     }
 
     public function getTitle(): string

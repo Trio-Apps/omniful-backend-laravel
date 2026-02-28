@@ -276,7 +276,9 @@ class InventoryWebhookService
                     if ($summary !== []) {
                         $event->sap_status = count($summary) > 1 ? 'created_mixed' : 'created';
                         $event->sap_doc_num = $summary['gr'] ?? $summary['gi'] ?? null;
-                        $event->sap_error = $summary ? json_encode($summary, JSON_UNESCAPED_UNICODE) : null;
+                        $event->sap_error = count($summary) > 1
+                            ? json_encode($summary, JSON_UNESCAPED_UNICODE)
+                            : null;
                         $event->save();
                     } elseif ($existingErrors !== []) {
                         $event->sap_status = 'failed';
