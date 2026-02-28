@@ -154,8 +154,8 @@ Important distinction:
 
 | Gap | Status | Notes |
 | --- | --- | --- |
-| Standalone direct `/Invoices` posting flow | MISSING | Not implemented as a separate transactional flow |
-| Standalone direct `/Returns` transactional posting flow | MISSING | Current business handling is based on return-order to credit memo |
+| Standalone direct `/Invoices` posting flow | READY (Business Flow) | Direct manual SAP posting now exists through an explicit transactional command |
+| Standalone direct `/Returns` transactional posting flow | READY (Business Flow) | Direct manual SAP posting now exists through an explicit transactional command |
 
 ### Purchasing
 

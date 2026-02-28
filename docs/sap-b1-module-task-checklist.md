@@ -16,7 +16,7 @@ Note:
 - [x] AccountCategories - Dedicated sync method, model, and table are implemented.
 - [x] FinancialPeriods - Dedicated sync method, model, and table are implemented.
 - [x] AR / Customer finance - Dedicated customer finance snapshot sync is implemented.
-- [x] Invoices - Dedicated `/Invoices` sync snapshot is implemented, and AR reserve invoice flow already exists.
+- [x] Invoices - Dedicated `/Invoices` sync snapshot is implemented, AR reserve invoice flow exists, and a direct manual transactional posting command is implemented.
 - [x] CreditNotes - AR credit memo creation is implemented.
 - [x] DownPayments - Dedicated `/DownPayments` sync snapshot is implemented.
 - [x] IncomingPayments - Customer receipt creation exists and dedicated snapshot sync is implemented.
@@ -36,9 +36,9 @@ Note:
 - [x] Quotations - Dedicated `/Quotations` sync snapshot is implemented.
 - [x] SalesOrders - Sales order / AR reserve order flow is implemented.
 - [x] DeliveryNotes - Delivery creation is implemented.
-- [x] Invoices - Dedicated `/Invoices` sync snapshot is implemented.
+- [x] Invoices - Dedicated `/Invoices` sync snapshot is implemented, and a direct manual transactional posting command is implemented.
 - [x] CreditNotes - AR credit memo flow is implemented.
-- [x] Returns - Dedicated `/Returns` sync snapshot is implemented, while business processing still maps returns to AR credit memo.
+- [x] Returns - Dedicated `/Returns` sync snapshot is implemented, business processing maps returns to AR credit memo, and a direct manual transactional posting command is implemented.
 - [x] IncomingPayments - Customer collection flow is implemented.
 - [x] BusinessPartners - Customer create/ensure logic is implemented.
 - [x] Items - Item create/update sync is implemented.

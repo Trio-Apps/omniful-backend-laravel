@@ -950,6 +950,68 @@ trait HandlesSapPurchaseAndProducts
         return $payload;
     }
 
+    public function createAccountsReceivableDocument(string $documentType, array $data): array
+    {
+        $config = $this->resolveAccountsReceivableDocumentConfig($documentType);
+        $cardCode = trim((string) (
+            data_get($data, 'card_code')
+            ?? data_get($data, 'customer.code')
+            ?? ''
+        ));
+
+        if ($cardCode === '') {
+            $externalId = trim((string) (
+                data_get($data, 'external_id')
+                ?? data_get($data, 'display_id')
+                ?? data_get($data, 'id')
+                ?? ''
+            ));
+            $cardCode = $this->buildCustomerCode($data, $externalId !== '' ? $externalId : 'manual-ar-document');
+        }
+
+        $cardCode = $this->ensureCustomerExists($cardCode, $data, (string) ($data['external_id'] ?? $cardCode));
+
+        $lines = $this->buildAccountsReceivableDocumentLines($data);
+        if ($lines === []) {
+            return [
+                'ignored' => true,
+                'reason' => 'No A/R document lines found',
+            ];
+        }
+        $lines = $this->applyDefaultCostCentersToLines($lines);
+
+        $docDate = $this->formatDate((string) ($data['doc_date'] ?? now()->format('Y-m-d')));
+        $body = [
+            'CardCode' => $cardCode,
+            'DocDate' => $docDate,
+            'DocDueDate' => $docDate,
+            'Comments' => trim((string) ($data['remarks'] ?? $config['label'] . ' from integration')),
+            'DocumentLines' => $lines,
+        ];
+
+        $currency = trim((string) ($data['currency'] ?? ''));
+        if ($currency !== '') {
+            if (!$this->isValidCurrency($currency)) {
+                throw new \RuntimeException('Invalid SAP currency for A/R document: ' . $currency);
+            }
+            $body['DocCurrency'] = $currency;
+        }
+
+        $response = $this->post($config['path'], $body);
+        if (!$response->successful()) {
+            throw new \RuntimeException(
+                'SAP ' . $config['label'] . ' create failed: ' . $response->status() . ' ' . $response->body()
+                . ' | Payload: ' . json_encode($body, JSON_UNESCAPED_UNICODE)
+            );
+        }
+
+        $payload = $response->json() ?? [];
+        $payload['ignored'] = false;
+        $payload['document_type'] = $config['type'];
+
+        return $payload;
+    }
+
     private function resolvePurchaseOrderSupplierCode(array $data): string
     {
         $candidates = [
@@ -1077,6 +1139,28 @@ trait HandlesSapPurchaseAndProducts
     }
 
     /**
+     * @return array{path:string,label:string,type:string}
+     */
+    private function resolveAccountsReceivableDocumentConfig(string $documentType): array
+    {
+        $normalized = strtolower(trim($documentType));
+
+        return match ($normalized) {
+            'invoice', 'ar_invoice', 'ar-invoice' => [
+                'path' => '/Invoices',
+                'label' => 'A/R invoice',
+                'type' => 'invoice',
+            ],
+            'return', 'returns', 'ar_return', 'ar-return' => [
+                'path' => '/Returns',
+                'label' => 'A/R return',
+                'type' => 'return',
+            ],
+            default => throw new \RuntimeException('Unsupported A/R document type: ' . $documentType),
+        };
+    }
+
+    /**
      * @return array<int,array<string,mixed>>
      */
     private function buildAccountsPayableDocumentLines(array $data): array
@@ -1099,6 +1183,55 @@ trait HandlesSapPurchaseAndProducts
             }
 
             $this->ensureItemExists($itemCode, (array) $item, $lineIndex);
+
+            $line = [
+                'ItemCode' => $itemCode,
+                'Quantity' => $quantity,
+                'UnitPrice' => $this->resolvePurchaseOrderLineUnitPrice((array) $item),
+            ];
+
+            $lineWarehouse = trim((string) (
+                data_get($item, 'warehouse_code')
+                ?? data_get($item, 'warehouse')
+                ?? data_get($item, 'hub_code')
+                ?? $hubCode
+            ));
+
+            if ($lineWarehouse !== '') {
+                $line['WarehouseCode'] = $this->ensureWarehouseExists($lineWarehouse, $lineIndex);
+                $this->ensureItemWarehouseExists($itemCode, $line['WarehouseCode']);
+            }
+
+            $lines[] = $line;
+        }
+
+        return $lines;
+    }
+
+    /**
+     * @return array<int,array<string,mixed>>
+     */
+    private function buildAccountsReceivableDocumentLines(array $data): array
+    {
+        $items = $this->extractAccountsPayableDocumentItems($data);
+        $hubCode = trim((string) (
+            data_get($data, 'hub_code')
+            ?? data_get($data, 'warehouse_code')
+            ?? ''
+        ));
+
+        $lines = [];
+        $lineIndex = 0;
+        foreach ($items as $item) {
+            $lineIndex++;
+            $itemCode = $this->resolvePurchaseOrderLineItemCode((array) $item);
+            $quantity = $this->resolvePurchaseOrderLineQuantity((array) $item);
+            if ($itemCode === '' || $quantity <= 0) {
+                continue;
+            }
+
+            $this->ensureItemExists($itemCode, (array) $item, $lineIndex);
+            $this->ensureItemCanBeSold($itemCode, $lineIndex);
 
             $line = [
                 'ItemCode' => $itemCode,

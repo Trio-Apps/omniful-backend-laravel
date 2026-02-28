@@ -95,8 +95,8 @@ These items are connected and visible, but still snapshot-oriented unless explic
 
 ### Sales
 
-- [ ] Standalone direct transactional `Invoices`
-- [ ] Standalone direct transactional `Returns`
+- [x] Standalone direct transactional `Invoices`
+- [x] Standalone direct transactional `Returns`
 
 ### Inventory
 
@@ -117,8 +117,8 @@ Build these only after the scope decision is explicit.
 - [x] Implement transactional `ProductionOrders` workflow.
 - [x] Implement transactional A/P finance posting workflows.
 - [ ] Implement transactional banking posting workflows.
-- [ ] Implement standalone direct sales posting for native SAP `Invoices`.
-- [ ] Implement standalone direct sales posting for native SAP `Returns`.
+- [x] Implement standalone direct sales posting for native SAP `Invoices`.
+- [x] Implement standalone direct sales posting for native SAP `Returns`.
 - [x] Add REST API endpoints for selected snapshot/master-data tables if they must be consumed by another project. Implemented under `/api/integration/sap/resources`.
 - [x] Add lightweight monitoring APIs for background sync jobs if external systems need status visibility. Implemented under `/api/integration/sap/sync-status`.
 
