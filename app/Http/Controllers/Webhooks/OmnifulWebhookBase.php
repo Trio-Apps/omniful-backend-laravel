@@ -62,9 +62,19 @@ abstract class OmnifulWebhookBase
         $tokenHeader = config('omniful.webhook_token_header', 'X-Omniful-Token');
         $staticHeader = config('omniful.webhook_static_header', 'X-Omniful-Auth');
         $staticToken = config('omniful.webhook_static_token');
-        $signature = $signatureHeader ? $request->headers->get($signatureHeader) : null;
-        $token = $tokenHeader ? $request->headers->get($tokenHeader) : null;
-        $staticValue = $staticHeader ? $request->headers->get($staticHeader) : null;
+        $signature = $this->getHeaderValue($request, array_filter([
+            $signatureHeader,
+            'webhook-signature',
+        ]));
+        $token = $this->getHeaderValue($request, array_filter([
+            $tokenHeader,
+            'webhook-secret-key',
+            'secret-key',
+            'x-omniful-token',
+        ]));
+        $staticValue = $this->getHeaderValue($request, array_filter([
+            $staticHeader,
+        ]));
 
         $signatureValid = null;
         if ($staticToken) {
@@ -149,6 +159,21 @@ abstract class OmnifulWebhookBase
             'ignored' => true,
             'message' => $message,
         ]);
+    }
+
+    /**
+     * @param array<int,string> $headerNames
+     */
+    protected function getHeaderValue(Request $request, array $headerNames): ?string
+    {
+        foreach ($headerNames as $headerName) {
+            $value = trim((string) $request->headers->get($headerName));
+            if ($value !== '') {
+                return $value;
+            }
+        }
+
+        return null;
     }
 
     protected function verifySignature(string $raw, string $secret, string $signature): bool
