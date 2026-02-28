@@ -74,8 +74,8 @@ Note:
 
 - [x] IncomingPayments - Customer receipt creation is implemented.
 - [x] VendorPayments - Dedicated `/VendorPayments` sync snapshot is implemented.
-- [ ] DepositsService / Deposits - Basic catalog path configured; no dedicated business flow yet.
-- [ ] ChecksforPayment - Basic catalog path configured; no dedicated business flow yet.
+- [x] DepositsService / Deposits - Dedicated `/Deposits` sync snapshot is implemented.
+- [x] ChecksforPayment - Dedicated `/ChecksforPayment` sync snapshot is implemented.
 
 ## Current Ready Count
 
@@ -83,7 +83,7 @@ Note:
 - Sales ready: 11
 - Purchasing ready: 7
 - Inventory ready: 12
-- Banking ready: 2
+- Banking ready: 4
 
 ## Next Recommended Build Order
 
@@ -91,4 +91,4 @@ Note:
 - [x] Direct finance docs: PurchaseInvoices, VendorPayments, DownPayments
 - [x] Sales gaps: Quotations, direct Invoices, Returns, ItemGroups
 - [x] Inventory gaps: InventoryTransferRequests, InventoryCounting, InventoryPosting, ProductionOrders
-- [ ] Banking gaps: Deposits, ChecksforPayment
+- [x] Banking gaps: Deposits, ChecksforPayment

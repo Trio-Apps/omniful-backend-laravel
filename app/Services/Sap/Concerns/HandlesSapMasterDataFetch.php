@@ -195,6 +195,29 @@ trait HandlesSapMasterDataFetch
     /**
      * @return array<int,array>
      */
+    public function fetchDepositsDocuments(): array
+    {
+        return $this->fetchAllWithFallback([
+            '/Deposits?$select=DepositNum,DepositType,DepositDate,DepositAccount&$top=200',
+            '/Deposits?$top=200',
+            '/Deposits',
+        ]);
+    }
+
+    /**
+     * @return array<int,array>
+     */
+    public function fetchChecksForPaymentDocuments(): array
+    {
+        return $this->fetchAllWithFallback([
+            '/ChecksforPayment?$top=200',
+            '/ChecksforPayment',
+        ]);
+    }
+
+    /**
+     * @return array<int,array>
+     */
     public function fetchArInvoices(): array
     {
         return $this->fetchAllWithFallback([
