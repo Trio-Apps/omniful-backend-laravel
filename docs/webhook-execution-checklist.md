@@ -87,6 +87,7 @@ Current coverage:
 - Creates A/R Credit Memo from return webhook.
 - Can create return COGS reversal journal.
 - Supports the official docs sample state `return_shipment_created`.
+- The explicit return lifecycle table from the official docs is now included in strict status mapping.
 - Aggregates duplicate SKU lines before sending quantities into SAP.
 
 Still needed:
