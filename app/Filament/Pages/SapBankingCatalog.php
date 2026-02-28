@@ -101,6 +101,16 @@ class SapBankingCatalog extends Page implements HasTable
         ];
     }
 
+    public function getQuickLinks(): array
+    {
+        return [
+            ['label' => 'SAP Catalog Hub', 'description' => 'Back to central SAP workspace', 'url' => SapCatalogOverview::getUrl()],
+            ['label' => 'Banks', 'description' => 'Bank master records', 'url' => SapBanksCatalog::getUrl()],
+            ['label' => 'Bank Accounts', 'description' => 'House bank account details', 'url' => SapBankAccountsCatalog::getUrl()],
+            ['label' => 'Finance Documents', 'description' => 'Incoming and outgoing payment snapshots', 'url' => SapFinanceDocuments::getUrl()],
+        ];
+    }
+
     public function syncBankingCatalog(SapServiceLayerClient $client): void
     {
         @ini_set('max_execution_time', '0');

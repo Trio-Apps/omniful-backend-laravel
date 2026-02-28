@@ -93,6 +93,11 @@ class SapItems extends Page implements HasTable
     protected function getHeaderActions(): array
     {
         return [
+            Action::make('openCatalog')
+                ->label('Open SAP Catalog')
+                ->icon('heroicon-o-table-cells')
+                ->color('gray')
+                ->url(SapCatalogOverview::getUrl()),
             Action::make('syncItems')
                 ->label(fn () => app(IntegrationDirectionService::class)->isSapToOmniful('items')
                     ? 'Sync SAP Items'

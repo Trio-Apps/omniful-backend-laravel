@@ -92,6 +92,11 @@ class SapWarehouses extends Page implements HasTable
     protected function getHeaderActions(): array
     {
         return [
+            Action::make('openCatalog')
+                ->label('Open SAP Catalog')
+                ->icon('heroicon-o-table-cells')
+                ->color('gray')
+                ->url(SapCatalogOverview::getUrl()),
             Action::make('syncWarehouses')
                 ->label(fn () => app(IntegrationDirectionService::class)->isSapToOmniful('warehouses')
                     ? 'Sync SAP Warehouses'

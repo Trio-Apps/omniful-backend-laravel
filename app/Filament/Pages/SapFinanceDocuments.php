@@ -117,6 +117,16 @@ class SapFinanceDocuments extends Page implements HasTable
         ];
     }
 
+    public function getQuickLinks(): array
+    {
+        return [
+            ['label' => 'SAP Catalog Hub', 'description' => 'Back to central SAP workspace', 'url' => SapCatalogOverview::getUrl()],
+            ['label' => 'Finance Master', 'description' => 'Master data summary and drill-downs', 'url' => SapFinanceMasterData::getUrl()],
+            ['label' => 'Customer Finance', 'description' => 'Customer balances and A/R snapshots', 'url' => SapCustomerFinanceCatalog::getUrl()],
+            ['label' => 'Banking Catalog', 'description' => 'Deposits and checks snapshots', 'url' => SapBankingCatalog::getUrl()],
+        ];
+    }
+
     public function syncFinanceDocuments(SapServiceLayerClient $client): void
     {
         @ini_set('max_execution_time', '0');

@@ -107,6 +107,17 @@ class SapSalesCatalog extends Page implements HasTable
         ];
     }
 
+    public function getQuickLinks(): array
+    {
+        return [
+            ['label' => 'SAP Catalog Hub', 'description' => 'Back to central SAP workspace', 'url' => SapCatalogOverview::getUrl()],
+            ['label' => 'Item Groups', 'description' => 'Sales analysis grouping data', 'url' => SapItemGroupsCatalog::getUrl()],
+            ['label' => 'SAP Items', 'description' => 'Live item sync workspace', 'url' => SapItems::getUrl()],
+            ['label' => 'SAP Warehouses', 'description' => 'Warehouse sync workspace', 'url' => SapWarehouses::getUrl()],
+            ['label' => 'Inventory Catalog', 'description' => 'Inventory movement snapshots', 'url' => SapInventoryCatalog::getUrl()],
+        ];
+    }
+
     public function syncSalesCatalog(SapServiceLayerClient $client): void
     {
         @ini_set('max_execution_time', '0');
