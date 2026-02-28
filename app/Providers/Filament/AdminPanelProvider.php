@@ -41,6 +41,7 @@ class AdminPanelProvider extends PanelProvider
             ])
             ->navigationGroups([
                 'Master Data',
+                'SAP Catalog',
                 'Monitoring',
                 'Settings',
             ])

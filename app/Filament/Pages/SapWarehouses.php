@@ -25,6 +25,8 @@ class SapWarehouses extends Page implements HasTable
 
     protected static string | \UnitEnum | null $navigationGroup = 'Master Data';
 
+    protected static ?int $navigationSort = 10;
+
     protected string $view = 'filament.pages.sap-warehouses';
 
     protected function getTableQuery(): Builder

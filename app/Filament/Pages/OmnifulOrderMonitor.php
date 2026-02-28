@@ -24,6 +24,8 @@ class OmnifulOrderMonitor extends Page implements HasTable
 
     protected static string | \UnitEnum | null $navigationGroup = 'Monitoring';
 
+    protected static ?int $navigationSort = 10;
+
     protected string $view = 'filament.pages.omniful-order-monitor';
 
     protected function getTableQuery(): Builder

@@ -93,3 +93,14 @@ Note:
 - [x] Inventory gaps: InventoryTransferRequests, InventoryCounting, InventoryPosting, ProductionOrders
 - [x] Banking gaps: Deposits, ChecksforPayment
 - [x] Finance leftovers: AR / Customer finance, Currencies / ExchangeRates, ProfitCenters, Branches
+
+## Dashboard Tasks
+
+- [x] Add `SAP Finance Master` Filament page for finance master snapshots and sync.
+- [x] Add `SAP Finance Documents` Filament page for finance document snapshots and sync.
+- [x] Add `SAP Sales Catalog` Filament page for sales snapshots and sync.
+- [x] Add `SAP Inventory Catalog` Filament page for inventory snapshots and sync.
+- [x] Add `SAP Banking Catalog` Filament page for banking snapshots and sync.
+- [x] Add a shared SAP catalog dashboard view for cards + table rendering.
+- [x] Reorder the sidebar groups to include `SAP Catalog`.
+- [x] Add explicit sort order to older visible `Master Data` and `Monitoring` pages to prevent navigation conflicts.

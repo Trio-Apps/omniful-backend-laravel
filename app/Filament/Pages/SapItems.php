@@ -25,6 +25,8 @@ class SapItems extends Page implements HasTable
 
     protected static string | \UnitEnum | null $navigationGroup = 'Master Data';
 
+    protected static ?int $navigationSort = 30;
+
     protected string $view = 'filament.pages.sap-items';
 
     protected function getTableQuery(): Builder

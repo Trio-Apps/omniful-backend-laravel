@@ -22,6 +22,8 @@ class OmnifulProductEvents extends Page implements HasTable
 
     protected static string | \UnitEnum | null $navigationGroup = 'Monitoring';
 
+    protected static ?int $navigationSort = 30;
+
     protected string $view = 'filament.pages.omniful-product-events';
 
     protected function getTableQuery(): Builder

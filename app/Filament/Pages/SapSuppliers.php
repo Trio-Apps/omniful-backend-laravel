@@ -25,6 +25,8 @@ class SapSuppliers extends Page implements HasTable
 
     protected static string | \UnitEnum | null $navigationGroup = 'Master Data';
 
+    protected static ?int $navigationSort = 20;
+
     protected string $view = 'filament.pages.sap-suppliers';
 
     protected function getTableQuery(): Builder
