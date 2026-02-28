@@ -180,6 +180,7 @@ abstract class OmnifulWebhookBase
             Arr::get($payload, 'data.return_order_id'),
             Arr::get($payload, 'data.order_reference_id'),
             Arr::get($payload, 'data.reference_id'),
+            Arr::get($payload, 'data.sto_request_id'),
             Arr::get($payload, 'data.entity_id'),
             Arr::get($payload, 'data.grn_id'),
             Arr::get($payload, 'data.grn_details.grn_id'),

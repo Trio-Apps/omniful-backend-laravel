@@ -162,6 +162,11 @@ Priority:
 Current coverage:
 - Creates normal Stock Transfer.
 - Creates two-step in-transit Stock Transfer when enabled.
+- Accepts the official docs shape:
+  - `sto_request_id`
+  - `status=accepted`
+  - `order_items[].approved_quantity`
+- Prevents duplicate SAP stock transfers for the same stock-transfer request when later lifecycle events arrive.
 
 Already aligned to official docs:
 - Supports nested warehouse fields like:

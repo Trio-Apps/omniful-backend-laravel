@@ -11,6 +11,38 @@ class StockTransferWebhookService
     {
         $payload = (array) ($event->payload ?? []);
         $data = (array) data_get($payload, 'data', []);
+        $eventName = strtolower(trim((string) data_get($payload, 'event_name', '')));
+        $status = strtolower(trim((string) data_get($data, 'status', '')));
+
+        if (!$this->isActionableStockTransferEvent($eventName, $status)) {
+            $event->sap_status = 'ignored';
+            $event->sap_error = 'Ignored: stock transfer request event/status is not actionable';
+            $event->save();
+            return;
+        }
+
+        $requestId = $this->extractStockTransferRequestId($data, $payload);
+        if ($requestId !== null && $requestId !== '' && $event->external_id !== $requestId) {
+            $event->external_id = $requestId;
+            $event->save();
+        }
+
+        if ($event->external_id) {
+            $existing = OmnifulInventoryEvent::where('external_id', $event->external_id)
+                ->where('id', '!=', $event->id)
+                ->whereNotNull('sap_doc_entry')
+                ->latest()
+                ->first();
+
+            if ($existing) {
+                $event->sap_status = 'skipped';
+                $event->sap_doc_entry = $existing->sap_doc_entry;
+                $event->sap_doc_num = $existing->sap_doc_num;
+                $event->sap_error = $existing->sap_error;
+                $event->save();
+                return;
+            }
+        }
 
         $fromWarehouse = $this->extractFromWarehouse($data, $payload);
         $toWarehouse = $this->extractToWarehouse($data, $payload);
@@ -40,8 +72,8 @@ class StockTransferWebhookService
         $client = app(SapServiceLayerClient::class);
         $client->syncInventoryItems($lines);
 
-        $eventName = (string) data_get($payload, 'event_name', 'stock_transfer');
-        $remarks = trim('Omniful stock transfer | ' . $eventName . ' | ' . (string) ($event->external_id ?? ''));
+        $rawEventName = (string) data_get($payload, 'event_name', 'stock_transfer');
+        $remarks = trim('Omniful stock transfer | ' . $rawEventName . ' | ' . $status . ' | ' . (string) ($event->external_id ?? ''));
         $inTransitWarehouse = $this->extractInTransitWarehouse($data, $payload);
         $useInTransit = $this->shouldUseInTransit($data, $payload, $inTransitWarehouse);
 
@@ -160,6 +192,12 @@ class StockTransferWebhookService
 
                 $qty = data_get($item, 'transfer_quantity');
                 if ($qty === null) {
+                    $qty = data_get($item, 'approved_quantity');
+                }
+                if ($qty === null) {
+                    $qty = data_get($item, 'received_quantity');
+                }
+                if ($qty === null) {
                     $qty = data_get($item, 'requested_quantity');
                 }
                 if ($qty === null) {
@@ -183,6 +221,44 @@ class StockTransferWebhookService
         }
 
         return [];
+    }
+
+    private function isActionableStockTransferEvent(string $eventName, string $status): bool
+    {
+        if ($eventName !== '') {
+            if (str_contains($eventName, 'request-approve') || str_contains($eventName, '.received.')) {
+                return true;
+            }
+        }
+
+        if ($status === '') {
+            return false;
+        }
+
+        return in_array($status, ['accepted', 'approved', 'received', 'completed'], true);
+    }
+
+    private function extractStockTransferRequestId(array $data, array $payload): ?string
+    {
+        $candidates = [
+            data_get($data, 'sto_request_id'),
+            data_get($data, 'display_id'),
+            data_get($data, 'id'),
+            data_get($payload, 'sto_request_id'),
+            data_get($payload, 'display_id'),
+            data_get($payload, 'id'),
+        ];
+
+        foreach ($candidates as $value) {
+            if (is_string($value) && trim($value) !== '') {
+                return trim($value);
+            }
+            if (is_numeric($value)) {
+                return (string) $value;
+            }
+        }
+
+        return null;
     }
 
     private function extractTransferItemCode(array $item): string

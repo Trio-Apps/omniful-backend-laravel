@@ -103,7 +103,7 @@ Important result:
 
 | Omniful Signals | SAP Outcomes | Scope Coverage | Notes |
 | --- | --- | --- | --- |
-| Transfer request payload with source/destination + items | Stock Transfer | BRS + Maaz | Supports the official nested `source_hub.code`, `destination_hub.code`, and `order_items` payload shape |
+| Transfer request payload with source/destination + items | Stock Transfer | BRS + Maaz | Supports the official nested `source_hub.code`, `destination_hub.code`, `sto_request_id`, and `order_items[].approved_quantity` payload shape |
 | Same payload with in-transit flags/config | Two-step in-transit stock transfer | BRS | Uses transit warehouse logic |
 
 ### Product
