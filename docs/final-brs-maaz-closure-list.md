@@ -88,9 +88,9 @@ These items are connected and visible, but still snapshot-oriented unless explic
 
 ### Finance
 
-- [ ] Direct transactional `PurchaseInvoices`
-- [ ] Direct transactional `PurchaseCreditNotes`
-- [ ] Direct transactional `PurchaseDownPayments`
+- [x] Direct transactional `PurchaseInvoices`
+- [x] Direct transactional `PurchaseCreditNotes`
+- [x] Direct transactional `PurchaseDownPayments`
 - [ ] Direct transactional `VendorPayments`
 
 ### Sales

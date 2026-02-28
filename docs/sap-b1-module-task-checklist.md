@@ -20,9 +20,9 @@ Note:
 - [x] CreditNotes - AR credit memo creation is implemented.
 - [x] DownPayments - Dedicated `/DownPayments` sync snapshot is implemented.
 - [x] IncomingPayments - Customer receipt creation exists and dedicated snapshot sync is implemented.
-- [x] PurchaseInvoices - Dedicated `/PurchaseInvoices` sync snapshot is implemented.
-- [x] PurchaseCreditNotes - Dedicated `/PurchaseCreditNotes` sync snapshot is implemented.
-- [x] PurchaseDownPayments - Dedicated `/PurchaseDownPayments` sync snapshot is implemented.
+- [x] PurchaseInvoices - Dedicated `/PurchaseInvoices` sync snapshot is implemented, and a direct manual transactional posting command is implemented.
+- [x] PurchaseCreditNotes - Dedicated `/PurchaseCreditNotes` sync snapshot is implemented, and a direct manual transactional posting command is implemented.
+- [x] PurchaseDownPayments - Dedicated `/PurchaseDownPayments` sync snapshot is implemented, and a direct manual transactional posting command is implemented.
 - [x] VendorPayments - Dedicated `/VendorPayments` sync snapshot is implemented.
 - [x] Banks / BankAccounts - Dedicated sync methods, models, and tables are implemented.
 - [x] Currencies / ExchangeRates - Dedicated currency and exchange rate sync is implemented.
@@ -50,9 +50,9 @@ Note:
 - [x] PurchaseOrders - Purchase order creation/update flow is implemented.
 - [x] GRPO / PurchaseDeliveryNotes - Goods receipt PO flow is implemented.
 - [x] Suppliers - Supplier create/update sync is implemented.
-- [x] PurchaseInvoices - Dedicated `/PurchaseInvoices` sync snapshot is implemented.
-- [x] PurchaseCreditNotes - Dedicated `/PurchaseCreditNotes` sync snapshot is implemented.
-- [x] PurchaseDownPayments - Dedicated `/PurchaseDownPayments` sync snapshot is implemented.
+- [x] PurchaseInvoices - Dedicated `/PurchaseInvoices` sync snapshot is implemented, and a direct manual transactional posting command is implemented.
+- [x] PurchaseCreditNotes - Dedicated `/PurchaseCreditNotes` sync snapshot is implemented, and a direct manual transactional posting command is implemented.
+- [x] PurchaseDownPayments - Dedicated `/PurchaseDownPayments` sync snapshot is implemented, and a direct manual transactional posting command is implemented.
 - [x] VendorPayments - Dedicated `/VendorPayments` sync snapshot is implemented.
 
 ## Inventory

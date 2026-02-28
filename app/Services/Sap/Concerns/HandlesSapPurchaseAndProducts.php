@@ -831,6 +831,63 @@ trait HandlesSapPurchaseAndProducts
         return $response->json() ?? [];
     }
 
+    public function createAccountsPayableDocument(string $documentType, array $data): array
+    {
+        $config = $this->resolveAccountsPayableDocumentConfig($documentType);
+        $cardCode = trim((string) (
+            data_get($data, 'card_code')
+            ?? data_get($data, 'supplier.code')
+            ?? data_get($data, 'supplier.supplier_code')
+            ?? data_get($data, 'supplier.vendor_code')
+            ?? ''
+        ));
+
+        if ($cardCode === '') {
+            $cardCode = $this->resolvePurchaseOrderSupplierCode($data);
+        }
+        $cardCode = $this->ensureSupplierExists($cardCode, $data);
+
+        $lines = $this->buildAccountsPayableDocumentLines($data);
+        if ($lines === []) {
+            return [
+                'ignored' => true,
+                'reason' => 'No A/P document lines found',
+            ];
+        }
+        $lines = $this->applyDefaultCostCentersToLines($lines);
+
+        $docDate = $this->formatDate((string) ($data['doc_date'] ?? now()->format('Y-m-d')));
+        $body = [
+            'CardCode' => $cardCode,
+            'DocDate' => $docDate,
+            'DocDueDate' => $docDate,
+            'Comments' => trim((string) ($data['remarks'] ?? $config['label'] . ' from integration')),
+            'DocumentLines' => $lines,
+        ];
+
+        $currency = trim((string) ($data['currency'] ?? ''));
+        if ($currency !== '') {
+            if (!$this->isValidCurrency($currency)) {
+                throw new \RuntimeException('Invalid SAP currency for A/P document: ' . $currency);
+            }
+            $body['DocCurrency'] = $currency;
+        }
+
+        $response = $this->post($config['path'], $body);
+        if (!$response->successful()) {
+            throw new \RuntimeException(
+                'SAP ' . $config['label'] . ' create failed: ' . $response->status() . ' ' . $response->body()
+                . ' | Payload: ' . json_encode($body, JSON_UNESCAPED_UNICODE)
+            );
+        }
+
+        $payload = $response->json() ?? [];
+        $payload['ignored'] = false;
+        $payload['document_type'] = $config['type'];
+
+        return $payload;
+    }
+
     private function resolvePurchaseOrderSupplierCode(array $data): string
     {
         $candidates = [
@@ -928,6 +985,128 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return 0.0;
+    }
+
+    /**
+     * @return array{path:string,label:string,type:string}
+     */
+    private function resolveAccountsPayableDocumentConfig(string $documentType): array
+    {
+        $normalized = strtolower(trim($documentType));
+
+        return match ($normalized) {
+            'invoice', 'purchase_invoice', 'purchase-invoice' => [
+                'path' => '/PurchaseInvoices',
+                'label' => 'purchase invoice',
+                'type' => 'purchase_invoice',
+            ],
+            'credit_note', 'credit-note', 'purchase_credit_note', 'purchase-credit-note' => [
+                'path' => '/PurchaseCreditNotes',
+                'label' => 'purchase credit note',
+                'type' => 'purchase_credit_note',
+            ],
+            'down_payment', 'down-payment', 'purchase_down_payment', 'purchase-down-payment' => [
+                'path' => '/PurchaseDownPayments',
+                'label' => 'purchase down payment',
+                'type' => 'purchase_down_payment',
+            ],
+            default => throw new \RuntimeException('Unsupported A/P document type: ' . $documentType),
+        };
+    }
+
+    /**
+     * @return array<int,array<string,mixed>>
+     */
+    private function buildAccountsPayableDocumentLines(array $data): array
+    {
+        $items = $this->extractAccountsPayableDocumentItems($data);
+        $hubCode = trim((string) (
+            data_get($data, 'hub_code')
+            ?? data_get($data, 'warehouse_code')
+            ?? ''
+        ));
+
+        $lines = [];
+        $lineIndex = 0;
+        foreach ($items as $item) {
+            $lineIndex++;
+            $itemCode = $this->resolvePurchaseOrderLineItemCode((array) $item);
+            $quantity = $this->resolvePurchaseOrderLineQuantity((array) $item);
+            if ($itemCode === '' || $quantity <= 0) {
+                continue;
+            }
+
+            $this->ensureItemExists($itemCode, (array) $item, $lineIndex);
+
+            $line = [
+                'ItemCode' => $itemCode,
+                'Quantity' => $quantity,
+                'UnitPrice' => $this->resolvePurchaseOrderLineUnitPrice((array) $item),
+            ];
+
+            $lineWarehouse = trim((string) (
+                data_get($item, 'warehouse_code')
+                ?? data_get($item, 'warehouse')
+                ?? data_get($item, 'hub_code')
+                ?? $hubCode
+            ));
+
+            if ($lineWarehouse !== '') {
+                $line['WarehouseCode'] = $this->ensureWarehouseExists($lineWarehouse, $lineIndex);
+                $this->ensureItemWarehouseExists($itemCode, $line['WarehouseCode']);
+            }
+
+            $lines[] = $line;
+        }
+
+        return $lines;
+    }
+
+    /**
+     * @return array<int,array<string,mixed>>
+     */
+    private function extractAccountsPayableDocumentItems(array $data): array
+    {
+        $sources = [
+            data_get($data, 'items', []),
+            data_get($data, 'order_items', []),
+            data_get($data, 'document_lines', []),
+        ];
+
+        foreach ($sources as $source) {
+            if (!is_array($source) || $source === []) {
+                continue;
+            }
+
+            $rows = [];
+            foreach ($source as $row) {
+                if (is_array($row)) {
+                    $rows[] = $row;
+                }
+            }
+
+            if ($rows !== []) {
+                return $rows;
+            }
+        }
+
+        $itemCode = trim((string) (
+            data_get($data, 'item_code')
+            ?? data_get($data, 'sku_code')
+            ?? ''
+        ));
+        $quantity = data_get($data, 'quantity');
+
+        if ($itemCode !== '' && is_numeric($quantity) && (float) $quantity > 0) {
+            return [[
+                'item_code' => $itemCode,
+                'quantity' => (float) $quantity,
+                'unit_price' => (float) (data_get($data, 'unit_price') ?? data_get($data, 'price') ?? 0),
+                'warehouse_code' => data_get($data, 'warehouse_code') ?? data_get($data, 'hub_code'),
+            ]];
+        }
+
+        return [];
     }
 
 
