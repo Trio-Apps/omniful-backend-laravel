@@ -97,7 +97,7 @@ Important result:
 | `inventory.update.event` + `receiving` + `purchase_order` | GRPO | BRS + Maaz | Uses PO matching and supports multiple GRPOs |
 | `inventory.update.event` + `manual_edit` + `hub_inventory` | Goods Receipt / Goods Issue | BRS + Maaz | Delta is computed against SAP on-hand |
 | `inventory.update.event` + `dispose` + `inventory_adjustment` | Goods Issue | BRS + Maaz | This now matches the official Omniful webhook sample |
-| `cycle_count`, `inventory_counting`, `counting` actions/entities | Inventory Counting | BRS + Maaz | New transactional SAP counting flow |
+| `cycle_count`, `inventory_counting`, `counting` actions/entities | Inventory Counting | BRS + Maaz | New transactional SAP counting flow; supports the documented `data` line-array webhook shape |
 | Any of the above while `inventory` direction is `SAP -> Omniful` | Ignore webhook safely | Operational | Keeps webhook ACK behavior correct without pushing into SAP |
 
 ### Stock Transfer Request
@@ -119,7 +119,8 @@ Important result:
 
 | Omniful Signals | SAP Outcomes | Scope Coverage | Notes |
 | --- | --- | --- | --- |
-| `grn.qc.event` + `entity_type=po` | GRPO | BRS + Maaz | Uses documented `grn_details.skus` and destination hub to create SAP GRPO |
+| `grn.qc.event` + `entity_type=po` | GRPO | BRS + Maaz | Uses documented `grn_details.skus`, including `code` and `qc_passed_items`, plus destination hub to create SAP GRPO |
+| `grn.qc.event` + `entity_type=sto` | Ignore webhook safely | Operational | Officially documented, but intentionally not mapped because stock transfers are handled by the stock-transfer webhook path |
 | Same payload while `inventory` direction is `SAP -> Omniful` | Ignore webhook safely | Operational | Shares the inventory-domain sync-direction gate |
 
 ## Snapshot / Manual Sync Driven Coverage

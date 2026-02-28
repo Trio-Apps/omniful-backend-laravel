@@ -18,9 +18,17 @@ class InwardingWebhookService
         $eventName = strtolower(trim((string) data_get($payload, 'event_name', '')));
         $entityType = strtolower(trim((string) data_get($data, 'entity_type', '')));
 
-        if (!$this->isGrnQcEvent($eventName, $entityType)) {
+        if (!str_contains($eventName, 'grn.qc')) {
             $event->sap_status = 'ignored';
-            $event->sap_error = 'Ignored: inwarding event is not a documented GRN QC purchase-order event';
+            $event->sap_error = 'Ignored: inwarding event is not a documented GRN QC event';
+            $event->save();
+
+            return;
+        }
+
+        if (!$this->isSupportedPurchaseOrderEntityType($entityType)) {
+            $event->sap_status = 'ignored';
+            $event->sap_error = 'Ignored: documented GRN QC event for entity_type=' . ($entityType !== '' ? $entityType : '-') . ' is not mapped in this project';
             $event->save();
 
             return;
@@ -100,17 +108,9 @@ class InwardingWebhookService
         $sync->save();
     }
 
-    private function isGrnQcEvent(string $eventName, string $entityType): bool
+    private function isSupportedPurchaseOrderEntityType(string $entityType): bool
     {
-        if (!str_contains($eventName, 'grn.qc')) {
-            return false;
-        }
-
-        if ($entityType === '') {
-            return true;
-        }
-
-        return in_array($entityType, ['po', 'purchase_order'], true);
+        return $entityType === '' || in_array($entityType, ['po', 'purchase_order'], true);
     }
 
     /**
@@ -140,10 +140,16 @@ class InwardingWebhookService
                     $qty = data_get($item, 'accepted_quantity');
                 }
                 if ($qty === null) {
+                    $qty = data_get($item, 'qc_passed_quantity');
+                }
+                if ($qty === null) {
                     $qty = data_get($item, 'qc_pass_quantity');
                 }
                 if ($qty === null) {
                     $qty = data_get($item, 'passed_quantity');
+                }
+                if ($qty === null) {
+                    $qty = data_get($item, 'qc_passed_items');
                 }
                 if ($qty === null) {
                     $qty = data_get($item, 'putaway_quantity');
@@ -167,7 +173,7 @@ class InwardingWebhookService
             }
 
             if ($lines !== []) {
-                return $lines;
+                return $this->aggregateGrnItems($lines);
             }
         }
 
@@ -179,6 +185,8 @@ class InwardingWebhookService
         $candidates = [
             data_get($item, 'seller_sku_code'),
             data_get($item, 'sku_code'),
+            data_get($item, 'code'),
+            data_get($item, 'sku.code'),
             data_get($item, 'sku.seller_sku_code'),
             data_get($item, 'sku.seller_sku_id'),
             data_get($item, 'seller_sku.seller_sku_code'),
@@ -197,6 +205,35 @@ class InwardingWebhookService
         }
 
         return '';
+    }
+
+    /**
+     * @param array<int,array{seller_sku_code:string,quantity:float}> $items
+     * @return array<int,array{seller_sku_code:string,quantity:float}>
+     */
+    private function aggregateGrnItems(array $items): array
+    {
+        $grouped = [];
+
+        foreach ($items as $item) {
+            $itemCode = (string) ($item['seller_sku_code'] ?? '');
+            $quantity = (float) ($item['quantity'] ?? 0);
+            if ($itemCode === '' || $quantity <= 0) {
+                continue;
+            }
+
+            $grouped[$itemCode] = ($grouped[$itemCode] ?? 0.0) + $quantity;
+        }
+
+        $lines = [];
+        foreach ($grouped as $itemCode => $quantity) {
+            $lines[] = [
+                'seller_sku_code' => $itemCode,
+                'quantity' => $quantity,
+            ];
+        }
+
+        return $lines;
     }
 
     private function extractGrnReferenceId(array $data, array $grnDetails, array $payload): ?string

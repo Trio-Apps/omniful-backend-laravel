@@ -139,6 +139,7 @@ Current coverage:
 - `dispose + inventory_adjustment` -> Goods Issue
 - counting-related routes -> Inventory Counting
 - The webhook is ignored safely when `inventory` direction is set to `SAP -> Omniful`.
+- The documented Omniful shape with `data` as a direct line array is now supported.
 
 Already aligned to official docs:
 - The official documented `dispose + inventory_adjustment` path is now mapped.
@@ -221,11 +222,16 @@ Current coverage:
 - Inwarding rows now track SAP status, DocEntry, DocNum, and error.
 - Retry from monitoring is supported.
 - The webhook is ignored safely when `inventory` direction is set to `SAP -> Omniful`.
+- Documented GRN lines using `code` and `qc_passed_items` are now supported.
 
 Already aligned to official docs:
 - Uses documented `grn_details.skus[]`
 - Uses documented `grn_details.destination_hub_code`
 - Uses documented `entity_type=po`
+
+Current limitation:
+- The official docs also show `grn.qc.event` samples for `entity_type=sto`.
+- This project now acknowledges that shape as documented, but intentionally ignores it because stock transfers are handled by the `Stock Transfer Request` webhook path.
 
 Still needed:
 - Confirm the exact quantity field the tenant sends inside `grn_details.skus[]`.

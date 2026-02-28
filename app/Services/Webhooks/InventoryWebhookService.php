@@ -19,9 +19,10 @@ class InventoryWebhookService
             $eventName = strtolower(trim((string) data_get($payload, 'event_name', '')));
             $action = strtolower(trim((string) data_get($payload, 'action', '')));
             $entity = strtolower(trim((string) data_get($payload, 'entity', '')));
-            $data = data_get($payload, 'data', []);
-            $items = data_get($data, 'hub_inventory_items', data_get($data, 'items', []));
-            $hubCode = data_get($data, 'hub_code');
+            $rawData = data_get($payload, 'data', []);
+            $data = $this->extractInventoryDataContext($rawData);
+            $items = $this->extractInventoryItems($rawData, $payload);
+            $hubCode = $this->extractInventoryHubCode($rawData, $payload, $items);
             $route = $mapper->mapInventoryRoute($eventName, $action, $entity);
 
             if (($route['sap_action'] ?? null) === 'grpo') {
@@ -110,12 +111,7 @@ class InventoryWebhookService
                         $items,
                         $hubCode,
                         $this->buildInventoryCountingRemarks($payload),
-                        (string) (
-                            data_get($data, 'counted_at')
-                            ?? data_get($data, 'updated_at')
-                            ?? data_get($data, 'created_at')
-                            ?? ''
-                        )
+                        $this->extractInventoryEventTimestamp($data, $items, $payload)
                     );
 
                     if (($result['ignored'] ?? false) === true) {
@@ -271,10 +267,14 @@ class InventoryWebhookService
     private function extractPurchaseOrderDisplayId(array $payload): ?string
     {
         $candidates = [
+            data_get($payload, 'entity_identifier'),
+            data_get($payload, 'entity_id'),
             data_get($payload, 'data.display_id'),
             data_get($payload, 'data.purchase_order_display_id'),
             data_get($payload, 'data.purchase_order_id'),
             data_get($payload, 'data.po_id'),
+            data_get($payload, 'data.entity_identifier'),
+            data_get($payload, 'data.entity_id'),
             data_get($payload, 'data.reference_id'),
             data_get($payload, 'data.order_id'),
         ];
@@ -296,7 +296,24 @@ class InventoryWebhookService
         $action = (string) data_get($payload, 'action', '');
         $entity = (string) data_get($payload, 'entity', '');
         $eventName = (string) data_get($payload, 'event_name', '');
-        $hubCode = (string) data_get($payload, 'data.hub_code', '');
+        $hubCode = (string) (
+            data_get($payload, 'data.hub_code')
+            ?? data_get($payload, 'hub_code')
+            ?? ''
+        );
+        if ($hubCode === '') {
+            foreach ($items as $item) {
+                $candidate = trim((string) (
+                    data_get($item, 'hub_code')
+                    ?? data_get($item, 'warehouse_code')
+                    ?? ''
+                ));
+                if ($candidate !== '') {
+                    $hubCode = $candidate;
+                    break;
+                }
+            }
+        }
 
         $normalized = [];
         foreach ($items as $item) {
@@ -325,6 +342,11 @@ class InventoryWebhookService
             'action' => $action,
             'entity' => $entity,
             'hub' => $hubCode,
+            'entity_identifier' => (string) (
+                data_get($payload, 'entity_identifier')
+                ?? data_get($payload, 'data.entity_identifier')
+                ?? ''
+            ),
             'display_id' => $displayId,
             'items' => $normalized,
             'suffix' => $suffix,
@@ -332,6 +354,150 @@ class InventoryWebhookService
         ];
 
         return hash('sha256', json_encode($keyPayload));
+    }
+
+    /**
+     * @param mixed $rawData
+     * @return array<string,mixed>
+     */
+    private function extractInventoryDataContext($rawData): array
+    {
+        if (!is_array($rawData) || $rawData === []) {
+            return [];
+        }
+
+        if ($this->isSequentialArray($rawData)) {
+            foreach ($rawData as $row) {
+                if (is_array($row)) {
+                    return $row;
+                }
+            }
+
+            return [];
+        }
+
+        return $rawData;
+    }
+
+    /**
+     * @param mixed $rawData
+     * @param array<string,mixed> $payload
+     * @return array<int,array<string,mixed>>
+     */
+    private function extractInventoryItems($rawData, array $payload): array
+    {
+        $sources = [];
+
+        if (is_array($rawData)) {
+            if ($this->isSequentialArray($rawData)) {
+                $sources[] = $rawData;
+            } else {
+                $sources[] = data_get($rawData, 'hub_inventory_items', []);
+                $sources[] = data_get($rawData, 'items', []);
+                $sources[] = data_get($rawData, 'order_items', []);
+                $sources[] = data_get($rawData, 'skus', []);
+            }
+        }
+
+        $sources[] = data_get($payload, 'items', []);
+        $sources[] = data_get($payload, 'order_items', []);
+
+        foreach ($sources as $source) {
+            if (!is_array($source) || $source === []) {
+                continue;
+            }
+
+            $lines = [];
+            foreach ($source as $row) {
+                if (is_array($row)) {
+                    $lines[] = $row;
+                }
+            }
+
+            if ($lines !== []) {
+                return $lines;
+            }
+        }
+
+        return [];
+    }
+
+    /**
+     * @param mixed $rawData
+     * @param array<string,mixed> $payload
+     * @param array<int,array<string,mixed>> $items
+     */
+    private function extractInventoryHubCode($rawData, array $payload, array $items): ?string
+    {
+        $candidates = [];
+
+        if (is_array($rawData) && !$this->isSequentialArray($rawData)) {
+            $candidates[] = data_get($rawData, 'hub_code');
+            $candidates[] = data_get($rawData, 'destination_hub_code');
+        }
+
+        $candidates[] = data_get($payload, 'data.hub_code');
+        $candidates[] = data_get($payload, 'hub_code');
+        $candidates[] = data_get($payload, 'destination_hub_code');
+
+        foreach ($items as $item) {
+            $candidates[] = data_get($item, 'hub_code');
+            $candidates[] = data_get($item, 'warehouse_code');
+        }
+
+        foreach ($candidates as $candidate) {
+            if (is_string($candidate) && trim($candidate) !== '') {
+                return trim($candidate);
+            }
+            if (is_numeric($candidate)) {
+                return (string) $candidate;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<string,mixed> $data
+     * @param array<int,array<string,mixed>> $items
+     * @param array<string,mixed> $payload
+     */
+    private function extractInventoryEventTimestamp(array $data, array $items, array $payload): string
+    {
+        $candidates = [
+            data_get($data, 'counted_at'),
+            data_get($data, 'updated_at'),
+            data_get($data, 'created_at'),
+            data_get($payload, 'updated_at'),
+            data_get($payload, 'created_at'),
+        ];
+
+        foreach ($items as $item) {
+            $candidates[] = data_get($item, 'counted_at');
+            $candidates[] = data_get($item, 'updated_at');
+            $candidates[] = data_get($item, 'created_at');
+        }
+
+        foreach ($candidates as $candidate) {
+            $value = trim((string) $candidate);
+            if ($value !== '') {
+                return $value;
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * @param array<int|string,mixed> $value
+     */
+    private function isSequentialArray(array $value): bool
+    {
+        if ($value === []) {
+            return false;
+        }
+
+        return array_keys($value) === range(0, count($value) - 1);
     }
 
     private function calculateInventoryAdjustmentsFromSap(array $items, ?string $hubCode, SapServiceLayerClient $client): array
