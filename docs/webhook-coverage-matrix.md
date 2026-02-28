@@ -4,6 +4,9 @@ Updated: 2026-02-28
 
 This file maps the actual Omniful webhook topics configured in this project to the SAP capabilities they drive.
 
+Execution checklist:
+- See `docs/webhook-execution-checklist.md` for the per-webhook action list and the exact payloads still needed.
+
 Important:
 - Omniful is not modeled here as `one webhook per SAP API`.
 - A single webhook topic can drive multiple SAP actions depending on `event_name`, `status`, `action`, and `entity`.

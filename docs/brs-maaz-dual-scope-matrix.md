@@ -1,5 +1,8 @@
 # BRS + Maaz Dual Scope Matrix
 
+Webhook execution detail:
+- See `docs/webhook-execution-checklist.md` for the active webhook-by-webhook implementation order and remaining payload needs.
+
 Updated: 2026-02-28
 
 This file tracks two parallel scopes that now exist in the project:
