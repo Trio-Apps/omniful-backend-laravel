@@ -121,6 +121,7 @@ Current coverage:
 - Rule matching now requires all defined rule conditions instead of broad `event OR status` matching.
 - SAP PO creation now accepts documented supplier identifiers beyond `supplier.code`, including `supplier.id`, and derives a deterministic vendor code when needed.
 - PO line mapping now supports quantity/price fallbacks such as `ordered_quantity`, `approved_quantity`, `buying_price`, and `cost`.
+- PO line item-code extraction now accepts broader Omniful item shapes, and zero-quantity lines are skipped before posting to SAP.
 
 Still needed:
 - Validate exact tenant status names for non-create events.

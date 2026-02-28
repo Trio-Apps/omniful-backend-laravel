@@ -751,19 +751,21 @@ trait HandlesSapPurchaseAndProducts
         $lineIndex = 0;
         foreach ((array) data_get($data, 'purchase_order_items', []) as $item) {
             $lineIndex++;
-            $itemCode = data_get($item, 'sku.seller_sku_code')
-                ?? data_get($item, 'sku.seller_sku_id')
-                ?? data_get($item, 'sku_code');
+            $itemCode = $this->resolvePurchaseOrderLineItemCode((array) $item);
 
             if (!$itemCode) {
                 throw new \RuntimeException('Missing item code for SAP PO line');
             }
 
             $this->ensureItemExists($itemCode, $item, $lineIndex);
+            $quantity = $this->resolvePurchaseOrderLineQuantity((array) $item);
+            if ($quantity <= 0) {
+                continue;
+            }
 
             $line = [
                 'ItemCode' => $itemCode,
-                'Quantity' => $this->resolvePurchaseOrderLineQuantity((array) $item),
+                'Quantity' => $quantity,
                 'UnitPrice' => $this->resolvePurchaseOrderLineUnitPrice((array) $item),
             ];
 
@@ -858,6 +860,27 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return 'OMNS' . strtoupper(substr(sha1($seed), 0, 10));
+    }
+
+    private function resolvePurchaseOrderLineItemCode(array $item): string
+    {
+        $candidates = [
+            data_get($item, 'sku.seller_sku_code'),
+            data_get($item, 'sku.seller_sku_id'),
+            data_get($item, 'seller_sku_code'),
+            data_get($item, 'sku_code'),
+            data_get($item, 'sku.code'),
+            data_get($item, 'item_code'),
+        ];
+
+        foreach ($candidates as $candidate) {
+            $value = trim((string) $candidate);
+            if ($value !== '') {
+                return $value;
+            }
+        }
+
+        return '';
     }
 
     private function resolvePurchaseOrderLineQuantity(array $item): float
