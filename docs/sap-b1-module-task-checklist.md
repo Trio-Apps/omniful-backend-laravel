@@ -123,3 +123,6 @@ Note:
 - [x] Add table filters to the main SAP catalog document pages.
 - [x] Add date-range and completeness filters to the main SAP catalog document pages.
 - [x] Add `Open SAP Catalog` navigation action to legacy `SAP Items`, `SAP Suppliers`, and `SAP Warehouses` pages.
+- [x] Add `Queue SAP Sync` action in `Connections` to run a full SAP catalog sync in the background.
+- [x] Add background sync status panel on the `Connections` page.
+- [x] Add an Artisan command for background SAP sync dispatch (`sap:queue-catalog-sync`).

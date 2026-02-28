@@ -3,6 +3,8 @@
 namespace App\Filament\Pages;
 
 use App\Models\IntegrationSetting;
+use App\Models\SapSyncEvent;
+use App\Services\SapCatalogBackgroundSyncService;
 use App\Services\Connections\IntegrationConnectionTester;
 use Filament\Actions\Action;
 use Filament\Forms\Components\TextInput;
@@ -130,14 +132,7 @@ class IntegrationSettings extends Page implements HasForms
 
     public function save(): void
     {
-        $state = $this->form->getState();
-        IntegrationSetting::updateOrCreate(['id' => 1], $state);
-        $this->form->fill(IntegrationSetting::first()?->toArray() ?? []);
-
-        Notification::make()
-            ->title('Connections saved')
-            ->success()
-            ->send();
+        $this->persistSettings();
     }
 
     public function testConnection(): void
@@ -180,6 +175,97 @@ class IntegrationSettings extends Page implements HasForms
         return array_merge($stored, $state);
     }
 
+    public function queueSapCatalogSync(SapCatalogBackgroundSyncService $dispatcher): void
+    {
+        $this->persistSettings(false);
+
+        $result = $dispatcher->dispatch('connections_page');
+        $event = $result['event'];
+
+        if ((bool) $result['already_running']) {
+            Notification::make()
+                ->title('SAP sync already queued')
+                ->body('Current event: ' . $event->event_key)
+                ->warning()
+                ->send();
+
+            return;
+        }
+
+        Notification::make()
+            ->title('SAP sync queued')
+            ->body('Background job queued: ' . $event->event_key)
+            ->success()
+            ->send();
+    }
+
+    public function getCatalogSyncPanel(): array
+    {
+        $event = SapSyncEvent::query()
+            ->where('source_type', 'sap_catalog')
+            ->latest('id')
+            ->first();
+
+        if ($event === null) {
+            return [
+                'has_event' => false,
+                'status' => 'idle',
+                'status_label' => 'Idle',
+                'tone' => 'gray',
+                'event_key' => null,
+                'requested_at' => null,
+                'updated_at' => null,
+                'summary_lines' => [],
+                'error' => null,
+            ];
+        }
+
+        $payload = (array) ($event->payload ?? []);
+        $summary = (array) ($payload['summary'] ?? []);
+        $summaryLines = [];
+        foreach ($summary as $key => $value) {
+            $summaryLines[] = ucwords(str_replace('_', ' ', (string) $key)) . ': ' . $value;
+        }
+
+        $status = (string) ($event->sap_status ?? 'unknown');
+
+        return [
+            'has_event' => true,
+            'status' => $status,
+            'status_label' => ucwords(str_replace('_', ' ', $status)),
+            'tone' => $this->statusTone($status),
+            'event_key' => $event->event_key,
+            'requested_at' => $event->created_at?->toDateTimeString(),
+            'updated_at' => $event->updated_at?->toDateTimeString(),
+            'summary_lines' => $summaryLines,
+            'error' => $event->sap_error,
+        ];
+    }
+
+    private function persistSettings(bool $notify = true): void
+    {
+        $state = $this->form->getState();
+        IntegrationSetting::updateOrCreate(['id' => 1], $state);
+        $this->form->fill(IntegrationSetting::first()?->toArray() ?? []);
+
+        if ($notify) {
+            Notification::make()
+                ->title('Connections saved')
+                ->success()
+                ->send();
+        }
+    }
+
+    private function statusTone(string $status): string
+    {
+        return match ($status) {
+            'completed' => 'success',
+            'queued', 'running' => 'warning',
+            'failed' => 'danger',
+            default => 'gray',
+        };
+    }
+
     protected function getHeaderActions(): array
     {
         return [
@@ -195,7 +281,16 @@ class IntegrationSettings extends Page implements HasForms
                 ->label('Test Connection')
                 ->action('testConnection')
                 ->color('gray'),
+            Action::make('queueSapCatalogSync')
+                ->label('Queue SAP Sync')
+                ->icon('heroicon-o-arrow-path-rounded-square')
+                ->action('queueSapCatalogSync')
+                ->color('warning'),
+            Action::make('openSapCatalog')
+                ->label('Open SAP Catalog')
+                ->icon('heroicon-o-table-cells')
+                ->url(SapCatalogOverview::getUrl())
+                ->color('gray'),
         ];
     }
 }
-
