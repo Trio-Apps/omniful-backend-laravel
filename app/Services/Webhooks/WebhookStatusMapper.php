@@ -21,7 +21,7 @@ class WebhookStatusMapper
             $eventMatch = $eventContains === [] || $this->containsAny($eventName, $eventContains);
             $statusMatch = $statuses === [] || in_array($status, $statuses, true);
 
-            if ($eventMatch || $statusMatch) {
+            if ($eventMatch && $statusMatch) {
                 return [
                     'mapped' => true,
                     'sap_status' => (string) ($rule['sap_status'] ?? $this->defaultPurchaseOrderStatus($fallback)),

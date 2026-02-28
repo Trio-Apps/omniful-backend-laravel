@@ -88,7 +88,7 @@ Important result:
 
 | Omniful Signals | SAP Outcomes | Scope Coverage | Notes |
 | --- | --- | --- | --- |
-| Create/update/receive/cancel variants mapped through status rules | Purchase Order logging / create-update flow | BRS + Maaz | Primary procurement webhook |
+| Create/update/receive/cancel variants mapped through status rules | Purchase Order logging / create-update flow | BRS + Maaz | Primary procurement webhook; PO rule matching now requires the defined event/status signals instead of broad OR matching |
 
 ### Inventory
 

@@ -113,6 +113,8 @@ Priority:
 Current coverage:
 - Purchase Order webhook creates and updates SAP Purchase Orders.
 - Status mapping supports create, update, receive, and cancel variants.
+- Status extraction now checks `status`, `status_code`, `purchase_order_status`, and `po_status`.
+- Rule matching now requires all defined rule conditions instead of broad `event OR status` matching.
 
 Still needed:
 - Validate exact tenant status names for non-create events.
