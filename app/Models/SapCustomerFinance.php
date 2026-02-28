@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class SapCustomerFinance extends Model
 {
+    protected $table = 'sap_customer_finance';
+
     protected $fillable = [
         'customer_code',
         'customer_name',
