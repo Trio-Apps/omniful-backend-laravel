@@ -18,6 +18,26 @@ Across current Omniful integration docs, the stable model is:
 
 This matches the implementation in this repository.
 
+## Live API Validation (prodapi)
+
+Validated on 2026-02-28 against `https://prodapi.omniful.com`:
+
+- `prodapi` is live and reachable.
+- `stagingapi.omniful.com` does not currently resolve as a public hostname.
+- Seller bearer token successfully accessed:
+  - `GET /sales-channel/public/v1/suppliers`
+- Tenant bearer token successfully accessed:
+  - `GET /sales-channel/public/v1/tenants/hubs`
+- Both successful responses currently use this broad envelope shape:
+  - `is_success`
+  - `status_code`
+  - `data` as a direct list
+  - `meta` for pagination
+
+Important result:
+- Guessed direct pull endpoints for `orders`, `inventory`, and `items` returned `415 Unsupported Media Type`.
+- Because of that, transactional domains should still be mapped from webhook payloads unless the exact Omniful endpoint path and method are confirmed from the tenant docs or network traces.
+
 ## Implemented Webhook Topics in This Project
 
 | Topic | Route | Current Role | Status |
