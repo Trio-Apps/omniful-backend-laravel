@@ -145,6 +145,7 @@ To harden the remaining webhook-driven logic against live tenant payload varianc
    Already confirmed:
    - prepaid `new_order` as `order.update.event`
    - current tenant uses `status_code`, `payment_method`, `invoice.total`, `invoice.total_paid`, and line `selling_price` / `unit_price`
+   - official docs sample also includes `shipment.delivery_status`, `invoice.payment_mode`, and `is_cash_on_delivery`
    Still needed:
    - `shipped` or `delivered`
    - `canceled` or `cancelled`

@@ -24,13 +24,33 @@ class OrderWebhookService
         $payload = (array) ($event->payload ?? []);
         $data = (array) data_get($payload, 'data', []);
         $eventName = (string) data_get($payload, 'event_name', '');
-        $status = (string) (data_get($data, 'status_code') ?? data_get($data, 'status') ?? '');
+        $primaryStatus = $this->extractStatusValue($data, [
+            'status_code',
+            'status',
+            'order_status',
+            'order.status',
+        ]);
+        $deliveryStatus = $this->extractStatusValue($data, [
+            'shipment.delivery_status',
+            'delivery_status',
+            'shipment_status',
+            'status_code',
+            'status',
+            'order_status',
+        ]);
+        $creditStatus = $this->extractStatusValue($data, [
+            'cancel_status',
+            'cancellation_status',
+            'status_code',
+            'status',
+            'order_status',
+        ]);
         $paymentSignals = $this->extractPaymentSignals($data);
 
         $mapper = app(WebhookStatusMapper::class);
-        $invoiceEligibility = $mapper->resolveOrderInvoiceEligibility($eventName, $status, $paymentSignals);
-        $deliveryEligibility = $mapper->resolveOrderDeliveryEligibility($eventName, $status);
-        $creditEligibility = $mapper->resolveOrderCreditEligibility($eventName, $status);
+        $invoiceEligibility = $mapper->resolveOrderInvoiceEligibility($eventName, $primaryStatus, $paymentSignals);
+        $deliveryEligibility = $mapper->resolveOrderDeliveryEligibility($eventName, $deliveryStatus);
+        $creditEligibility = $mapper->resolveOrderCreditEligibility($eventName, $creditStatus);
 
         if (
             !($invoiceEligibility['eligible'] ?? false)
@@ -38,7 +58,11 @@ class OrderWebhookService
             && !($creditEligibility['eligible'] ?? false)
         ) {
             if (!empty($order->sap_doc_entry)) {
-                $this->syncSalesOrderMetadata($order, $eventName, $status);
+                $this->syncSalesOrderMetadata(
+                    $order,
+                    $eventName,
+                    $primaryStatus !== '' ? $primaryStatus : $deliveryStatus
+                );
                 return;
             }
 
@@ -83,7 +107,7 @@ class OrderWebhookService
         if (($creditEligibility['eligible'] ?? false)) {
             $this->createCreditNoteIfEligible($order, $data);
         }
-        $this->syncSalesOrderMetadata($order, $eventName, $status);
+        $this->syncSalesOrderMetadata($order, $eventName, $primaryStatus !== '' ? $primaryStatus : $deliveryStatus);
     }
 
     /**
@@ -97,9 +121,47 @@ class OrderWebhookService
             (string) (data_get($data, 'payment_mode') ?? ''),
             (string) (data_get($data, 'payment.method') ?? ''),
             (string) (data_get($data, 'payment.status') ?? ''),
+            (string) (data_get($data, 'invoice.payment_mode') ?? ''),
             (string) (data_get($data, 'invoice.payment_method') ?? ''),
             (string) (data_get($data, 'invoice.payment_type') ?? ''),
+            (string) (data_get($data, 'invoice.payment_status') ?? ''),
+            $this->extractCodSignal($data),
         ], fn ($v) => trim($v) !== ''));
+    }
+
+    /**
+     * @param array<int,string> $paths
+     */
+    private function extractStatusValue(array $data, array $paths): string
+    {
+        foreach ($paths as $path) {
+            $value = data_get($data, $path);
+            if (is_string($value) && trim($value) !== '') {
+                return trim($value);
+            }
+        }
+
+        return '';
+    }
+
+    private function extractCodSignal(array $data): string
+    {
+        $value = data_get($data, 'is_cash_on_delivery');
+
+        if (is_bool($value)) {
+            return $value ? 'cod' : '';
+        }
+
+        if (is_numeric($value)) {
+            return ((int) $value) === 1 ? 'cod' : '';
+        }
+
+        if (is_string($value)) {
+            $normalized = strtolower(trim($value));
+            return in_array($normalized, ['1', 'true', 'yes', 'y'], true) ? 'cod' : '';
+        }
+
+        return '';
     }
 
     private function createIncomingPaymentIfEligible(OmnifulOrder $order, array $data, ?array $invoiceResult): void
