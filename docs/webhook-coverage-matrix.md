@@ -71,7 +71,7 @@ Important result:
 | --- | --- | --- | --- |
 | `order.create` / `order.update` + prepaid + initial status (`new`, `created`, `pending`, `confirmed`, `on_hold`) | A/R Reserve Invoice via `/Orders` | BRS + Maaz | Same webhook drives sales and finance outputs |
 | Same event after reserve invoice exists | Incoming Payment | BRS + Maaz | Depends on payment config |
-| `ship` / `deliver` event or shipped/delivered/completed status | Delivery | BRS + Maaz | Uses existing reserve order as base |
+| `ship` / `deliver` event or shipped/delivered/completed status | Delivery | BRS + Maaz | Uses existing reserve order as base and now allocates line quantities from webhook items when present |
 | Same event after delivery exists | COGS JE | BRS | Config dependent |
 | `cancel` event or canceled/cancelled status | Credit Note | BRS + Maaz | New direct `order canceled -> Credit Note` path |
 | Same canceled flow after credit note exists | Cancel COGS reversal JE | BRS | Config dependent |

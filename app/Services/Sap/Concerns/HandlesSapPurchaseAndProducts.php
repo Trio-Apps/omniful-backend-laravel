@@ -295,30 +295,34 @@ trait HandlesSapPurchaseAndProducts
         $seriesInfo = $this->resolveSeriesForDocument('15', $docDate);
         $docDate = $seriesInfo['docDate'];
 
-        $lines = [];
-        foreach ((array) ($salesDoc['DocumentLines'] ?? []) as $line) {
-            $lineNum = $line['LineNum'] ?? null;
-            if (!is_numeric($lineNum)) {
-                continue;
+        $orderItems = (array) ($data['order_items'] ?? []);
+        $lines = $this->buildDeliveryLinesFromRequestedItems($salesDoc, $orderItems, $orderDocEntry, $hubCode);
+
+        if ($lines === []) {
+            foreach ((array) ($salesDoc['DocumentLines'] ?? []) as $line) {
+                $lineNum = $line['LineNum'] ?? null;
+                if (!is_numeric($lineNum)) {
+                    continue;
+                }
+
+                $openQty = $this->extractOpenOrderLineQuantity($line);
+                if ($openQty <= 0) {
+                    continue;
+                }
+
+                $deliveryLine = [
+                    'BaseType' => 17,
+                    'BaseEntry' => $orderDocEntry,
+                    'BaseLine' => (int) $lineNum,
+                    'Quantity' => $openQty,
+                ];
+
+                if ($hubCode !== '') {
+                    $deliveryLine['WarehouseCode'] = $this->ensureWarehouseExists($hubCode, ((int) $lineNum) + 1);
+                }
+
+                $lines[] = $deliveryLine;
             }
-
-            $openQty = $this->extractOpenOrderLineQuantity($line);
-            if ($openQty <= 0) {
-                continue;
-            }
-
-            $deliveryLine = [
-                'BaseType' => 17,
-                'BaseEntry' => $orderDocEntry,
-                'BaseLine' => (int) $lineNum,
-                'Quantity' => $openQty,
-            ];
-
-            if ($hubCode !== '') {
-                $deliveryLine['WarehouseCode'] = $this->ensureWarehouseExists($hubCode, ((int) $lineNum) + 1);
-            }
-
-            $lines[] = $deliveryLine;
         }
 
         if ($lines === []) {
@@ -350,6 +354,161 @@ trait HandlesSapPurchaseAndProducts
         $payload['ignored'] = false;
 
         return $payload;
+    }
+
+    private function buildDeliveryLinesFromRequestedItems(array $salesDoc, array $orderItems, int $orderDocEntry, string $hubCode): array
+    {
+        $requestedByItem = $this->extractRequestedDeliveryQuantities($orderItems);
+        if ($requestedByItem === []) {
+            return [];
+        }
+
+        $salesLinesByItem = [];
+        foreach ((array) ($salesDoc['DocumentLines'] ?? []) as $line) {
+            $lineNum = $line['LineNum'] ?? null;
+            $itemCode = trim((string) ($line['ItemCode'] ?? ''));
+            if (!is_numeric($lineNum) || $itemCode === '') {
+                continue;
+            }
+
+            $openQty = $this->extractOpenOrderLineQuantity($line);
+            if ($openQty <= 0) {
+                continue;
+            }
+
+            $salesLinesByItem[$itemCode][] = [
+                'line_num' => (int) $lineNum,
+                'open_qty' => $openQty,
+            ];
+        }
+
+        $deliveryLines = [];
+        foreach ($requestedByItem as $itemCode => $requestedQty) {
+            if ($requestedQty <= 0 || !isset($salesLinesByItem[$itemCode])) {
+                continue;
+            }
+
+            $remaining = $requestedQty;
+            foreach ($salesLinesByItem[$itemCode] as &$salesLine) {
+                if ($remaining <= 0) {
+                    break;
+                }
+
+                $lineOpenQty = (float) ($salesLine['open_qty'] ?? 0);
+                if ($lineOpenQty <= 0) {
+                    continue;
+                }
+
+                $allocQty = min($remaining, $lineOpenQty);
+                if ($allocQty <= 0) {
+                    continue;
+                }
+
+                $deliveryLine = [
+                    'BaseType' => 17,
+                    'BaseEntry' => $orderDocEntry,
+                    'BaseLine' => (int) $salesLine['line_num'],
+                    'Quantity' => $allocQty,
+                ];
+
+                if ($hubCode !== '') {
+                    $deliveryLine['WarehouseCode'] = $this->ensureWarehouseExists($hubCode, ((int) $salesLine['line_num']) + 1);
+                }
+
+                $deliveryLines[] = $deliveryLine;
+                $salesLine['open_qty'] = max(0.0, $lineOpenQty - $allocQty);
+                $remaining -= $allocQty;
+            }
+            unset($salesLine);
+        }
+
+        return $deliveryLines;
+    }
+
+    /**
+     * @param array<int,array<string,mixed>> $orderItems
+     * @return array<string,float>
+     */
+    private function extractRequestedDeliveryQuantities(array $orderItems): array
+    {
+        $quantities = [];
+
+        foreach ($orderItems as $item) {
+            $itemCode = $this->extractOrderWebhookItemCode((array) $item);
+            if ($itemCode === '') {
+                continue;
+            }
+
+            $qty = $this->extractRequestedDeliveryQuantity((array) $item);
+            if ($qty <= 0) {
+                continue;
+            }
+
+            if (!isset($quantities[$itemCode])) {
+                $quantities[$itemCode] = 0.0;
+            }
+
+            $quantities[$itemCode] += $qty;
+        }
+
+        return $quantities;
+    }
+
+    private function extractOrderWebhookItemCode(array $item): string
+    {
+        $candidates = [
+            data_get($item, 'sku_code'),
+            data_get($item, 'seller_sku_code'),
+            data_get($item, 'sku.seller_sku_code'),
+            data_get($item, 'seller_sku.seller_sku_code'),
+            data_get($item, 'seller_sku_id'),
+        ];
+
+        foreach ($candidates as $value) {
+            if (is_string($value) && trim($value) !== '') {
+                return trim($value);
+            }
+            if (is_numeric($value)) {
+                return (string) $value;
+            }
+        }
+
+        return '';
+    }
+
+    private function extractRequestedDeliveryQuantity(array $item): float
+    {
+        $explicitShipmentFields = [
+            'delivered_quantity',
+            'shipped_quantity',
+            'shipment_quantity',
+            'fulfilled_quantity',
+            'packed_quantity',
+            'picked_quantity',
+        ];
+
+        $hasExplicitShipmentField = false;
+        foreach ($explicitShipmentFields as $field) {
+            $value = data_get($item, $field);
+            if ($value !== null) {
+                $hasExplicitShipmentField = true;
+            }
+
+            if (is_numeric($value) && (float) $value > 0) {
+                return (float) $value;
+            }
+        }
+
+        if ($hasExplicitShipmentField) {
+            return 0.0;
+        }
+
+        $fallbackQty = data_get($item, 'quantity');
+        if (is_numeric($fallbackQty) && (float) $fallbackQty > 0) {
+            return (float) $fallbackQty;
+        }
+
+        return 0.0;
     }
 
     public function createCogsJournalEntryForDelivery(array $data): array

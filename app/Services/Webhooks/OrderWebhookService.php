@@ -336,6 +336,7 @@ class OrderWebhookService
             'order_doc_entry' => $invoiceDocEntry,
             'hub_code' => data_get($data, 'hub_code'),
             'external_id' => (string) ($order->external_id ?? ''),
+            'order_items' => (array) data_get($data, 'order_items', []),
         ]);
 
         if (($result['ignored'] ?? false) === true) {

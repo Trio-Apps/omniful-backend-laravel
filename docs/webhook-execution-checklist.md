@@ -50,6 +50,7 @@ Current coverage:
 - Prepaid creation flow creates A/R Reserve Invoice.
 - Incoming Payment can be created from the same webhook.
 - Delivery can be created from the same webhook.
+- Delivery now supports line-driven quantity allocation when the webhook carries shipped / delivered / packed / picked quantities.
 - COGS journal can be created after delivery.
 - Canceled order can create a Credit Note.
 - Cancel COGS reversal can be created after the cancel credit note.
@@ -68,8 +69,8 @@ Still needed:
 - Confirm whether your tenant needs partial cancel logic on the order webhook.
 
 Real remaining implementation gap:
-- Delivery currently creates all open quantity from the SAP base order.
-- If your tenant ships partial quantities, this is the main remaining code gap on `Order`.
+- No major structural gap is left on `Order` unless your tenant uses a custom field shape outside the documented/default quantity fields.
+- The remaining work is mainly live payload confirmation.
 
 Payloads needed now:
 - `Order shipped`
