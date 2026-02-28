@@ -12,7 +12,7 @@ use Filament\Widgets\Widget;
 
 class SapCatalogQuickLinks extends Widget
 {
-    protected static string $view = 'filament.widgets.sap-catalog-quick-links';
+    protected string $view = 'filament.widgets.sap-catalog-quick-links';
 
     protected int | string | array $columnSpan = 'full';
 
