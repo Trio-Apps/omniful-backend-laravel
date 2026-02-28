@@ -24,7 +24,7 @@ class SapBranchesCatalog extends Page implements HasTable
 
     protected static string | \UnitEnum | null $navigationGroup = 'SAP Catalog';
 
-    protected static ?int $navigationSort = 18;
+    protected static ?int $navigationSort = 20;
 
     protected string $view = 'filament.pages.sap-catalog-table';
 

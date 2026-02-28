@@ -11,6 +11,7 @@ use Filament\Pages\Page;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
+use Filament\Tables\Filters\SelectFilter;
 use Illuminate\Database\Eloquent\Builder;
 
 class SapInventoryCatalog extends Page implements HasTable
@@ -24,7 +25,7 @@ class SapInventoryCatalog extends Page implements HasTable
 
     protected static string | \UnitEnum | null $navigationGroup = 'SAP Catalog';
 
-    protected static ?int $navigationSort = 40;
+    protected static ?int $navigationSort = 50;
 
     protected string $view = 'filament.pages.sap-catalog-table';
 
@@ -58,6 +59,26 @@ class SapInventoryCatalog extends Page implements HasTable
     protected function getTableActions(): array
     {
         return $this->getCatalogTableActions();
+    }
+
+    protected function getTableFilters(): array
+    {
+        return [
+            SelectFilter::make('document_type')
+                ->label('Document Type')
+                ->options([
+                    'inventory_transfer_request' => 'Transfer Request',
+                    'inventory_counting' => 'Inventory Counting',
+                    'inventory_posting' => 'Inventory Posting',
+                    'production_order' => 'Production Order',
+                ]),
+            SelectFilter::make('status')
+                ->label('Status')
+                ->options([
+                    'synced' => 'Synced',
+                    'failed' => 'Failed',
+                ]),
+        ];
     }
 
     protected function getHeaderActions(): array

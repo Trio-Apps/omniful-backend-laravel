@@ -3,7 +3,7 @@
 namespace App\Filament\Pages;
 
 use App\Filament\Pages\Concerns\InteractsWithSapCatalogPage;
-use App\Models\SapProfitCenter;
+use App\Models\SapPaymentTerm;
 use App\Services\MasterData\SapFinanceMasterDataSyncService;
 use App\Services\SapServiceLayerClient;
 use Filament\Actions\Action;
@@ -13,37 +13,32 @@ use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Illuminate\Database\Eloquent\Builder;
 
-class SapProfitCentersCatalog extends Page implements HasTable
+class SapPaymentTermsCatalog extends Page implements HasTable
 {
     use InteractsWithSapCatalogPage;
     use InteractsWithTable;
 
-    protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-presentation-chart-line';
+    protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-calendar-days';
 
-    protected static ?string $navigationLabel = 'SAP Profit Centers';
+    protected static ?string $navigationLabel = 'SAP Payment Terms';
 
     protected static string | \UnitEnum | null $navigationGroup = 'SAP Catalog';
 
-    protected static ?int $navigationSort = 19;
+    protected static ?int $navigationSort = 18;
 
     protected string $view = 'filament.pages.sap-catalog-table';
 
     protected function getTableQuery(): Builder
     {
-        return SapProfitCenter::query()->orderBy('dimension')->orderBy('code');
+        return SapPaymentTerm::query()->orderBy('code');
     }
 
     protected function getTableColumns(): array
     {
         return [
             TextColumn::make('code')->label('Code')->searchable(),
-            TextColumn::make('name')->label('Name')->searchable(),
-            TextColumn::make('dimension')->label('Dimension'),
-            TextColumn::make('is_active')
-                ->label('Active')
-                ->badge()
-                ->formatStateUsing(fn ($state) => $state ? 'Yes' : 'No')
-                ->color(fn ($state) => $state ? 'success' : 'gray'),
+            TextColumn::make('name')->label('Name')->searchable()->limit(40),
+            TextColumn::make('additional_days')->label('Additional Days'),
             TextColumn::make('status')
                 ->label('Status')
                 ->badge()
@@ -74,7 +69,7 @@ class SapProfitCentersCatalog extends Page implements HasTable
     public function getStats(): array
     {
         return [
-            ['label' => 'Profit Centers', 'value' => SapProfitCenter::count(), 'hint' => 'Cost accounting dimensions'],
+            ['label' => 'Payment Terms', 'value' => SapPaymentTerm::count(), 'hint' => 'Payment term groups'],
         ];
     }
 

@@ -11,6 +11,7 @@ use Filament\Pages\Page;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
+use Filament\Tables\Filters\SelectFilter;
 use Illuminate\Database\Eloquent\Builder;
 
 class SapBankingCatalog extends Page implements HasTable
@@ -24,7 +25,7 @@ class SapBankingCatalog extends Page implements HasTable
 
     protected static string | \UnitEnum | null $navigationGroup = 'SAP Catalog';
 
-    protected static ?int $navigationSort = 50;
+    protected static ?int $navigationSort = 60;
 
     protected string $view = 'filament.pages.sap-catalog-table';
 
@@ -58,6 +59,24 @@ class SapBankingCatalog extends Page implements HasTable
     protected function getTableActions(): array
     {
         return $this->getCatalogTableActions();
+    }
+
+    protected function getTableFilters(): array
+    {
+        return [
+            SelectFilter::make('document_type')
+                ->label('Document Type')
+                ->options([
+                    'deposit' => 'Deposit',
+                    'check_for_payment' => 'Check For Payment',
+                ]),
+            SelectFilter::make('status')
+                ->label('Status')
+                ->options([
+                    'synced' => 'Synced',
+                    'failed' => 'Failed',
+                ]),
+        ];
     }
 
     protected function getHeaderActions(): array

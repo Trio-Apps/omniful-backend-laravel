@@ -103,6 +103,8 @@ Note:
 - [x] Add `SAP Banking Catalog` Filament page for banking snapshots and sync.
 - [x] Add `SAP Bank Accounts` drill-down page.
 - [x] Add `SAP Currencies` drill-down page.
+- [x] Add `SAP Exchange Rates` drill-down page.
+- [x] Add `SAP Payment Terms` drill-down page.
 - [x] Add `SAP Profit Centers` drill-down page.
 - [x] Add `SAP Branches` drill-down page.
 - [x] Add `SAP Customer Finance` drill-down page.
@@ -110,3 +112,4 @@ Note:
 - [x] Add a shared SAP catalog dashboard view for cards + table rendering.
 - [x] Reorder the sidebar groups to include `SAP Catalog`.
 - [x] Add explicit sort order to older visible `Master Data` and `Monitoring` pages to prevent navigation conflicts.
+- [x] Add table filters to the main SAP catalog document pages.

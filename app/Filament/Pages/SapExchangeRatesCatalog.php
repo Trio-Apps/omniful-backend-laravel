@@ -3,7 +3,7 @@
 namespace App\Filament\Pages;
 
 use App\Filament\Pages\Concerns\InteractsWithSapCatalogPage;
-use App\Models\SapProfitCenter;
+use App\Models\SapExchangeRate;
 use App\Services\MasterData\SapFinanceMasterDataSyncService;
 use App\Services\SapServiceLayerClient;
 use Filament\Actions\Action;
@@ -13,37 +13,35 @@ use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Illuminate\Database\Eloquent\Builder;
 
-class SapProfitCentersCatalog extends Page implements HasTable
+class SapExchangeRatesCatalog extends Page implements HasTable
 {
     use InteractsWithSapCatalogPage;
     use InteractsWithTable;
 
-    protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-presentation-chart-line';
+    protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-arrows-right-left';
 
-    protected static ?string $navigationLabel = 'SAP Profit Centers';
+    protected static ?string $navigationLabel = 'SAP Exchange Rates';
 
     protected static string | \UnitEnum | null $navigationGroup = 'SAP Catalog';
 
-    protected static ?int $navigationSort = 19;
+    protected static ?int $navigationSort = 17;
 
     protected string $view = 'filament.pages.sap-catalog-table';
 
     protected function getTableQuery(): Builder
     {
-        return SapProfitCenter::query()->orderBy('dimension')->orderBy('code');
+        return SapExchangeRate::query()->orderByDesc('rate_date')->orderBy('currency_code');
     }
 
     protected function getTableColumns(): array
     {
         return [
-            TextColumn::make('code')->label('Code')->searchable(),
-            TextColumn::make('name')->label('Name')->searchable(),
-            TextColumn::make('dimension')->label('Dimension'),
-            TextColumn::make('is_active')
-                ->label('Active')
-                ->badge()
-                ->formatStateUsing(fn ($state) => $state ? 'Yes' : 'No')
-                ->color(fn ($state) => $state ? 'success' : 'gray'),
+            TextColumn::make('currency_code')->label('Currency')->searchable(),
+            TextColumn::make('rate_date')->label('Rate Date')->date(),
+            TextColumn::make('rate')
+                ->label('Rate')
+                ->alignEnd()
+                ->formatStateUsing(fn ($state) => $state !== null ? number_format((float) $state, 6) : '-'),
             TextColumn::make('status')
                 ->label('Status')
                 ->badge()
@@ -74,7 +72,7 @@ class SapProfitCentersCatalog extends Page implements HasTable
     public function getStats(): array
     {
         return [
-            ['label' => 'Profit Centers', 'value' => SapProfitCenter::count(), 'hint' => 'Cost accounting dimensions'],
+            ['label' => 'Exchange Rates', 'value' => SapExchangeRate::count(), 'hint' => 'Foreign exchange rate snapshots'],
         ];
     }
 

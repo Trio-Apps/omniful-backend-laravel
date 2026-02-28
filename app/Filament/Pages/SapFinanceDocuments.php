@@ -11,6 +11,7 @@ use Filament\Pages\Page;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
+use Filament\Tables\Filters\SelectFilter;
 use Illuminate\Database\Eloquent\Builder;
 
 class SapFinanceDocuments extends Page implements HasTable
@@ -24,7 +25,7 @@ class SapFinanceDocuments extends Page implements HasTable
 
     protected static string | \UnitEnum | null $navigationGroup = 'SAP Catalog';
 
-    protected static ?int $navigationSort = 20;
+    protected static ?int $navigationSort = 30;
 
     protected string $view = 'filament.pages.sap-catalog-table';
 
@@ -62,6 +63,30 @@ class SapFinanceDocuments extends Page implements HasTable
     protected function getTableActions(): array
     {
         return $this->getCatalogTableActions();
+    }
+
+    protected function getTableFilters(): array
+    {
+        return [
+            SelectFilter::make('document_type')
+                ->label('Document Type')
+                ->options([
+                    'ar_invoice' => 'A/R Invoice',
+                    'ar_credit_note' => 'A/R Credit Note',
+                    'ar_down_payment' => 'A/R Down Payment',
+                    'incoming_payment' => 'Incoming Payment',
+                    'ap_invoice' => 'A/P Invoice',
+                    'ap_credit_note' => 'A/P Credit Note',
+                    'ap_down_payment' => 'A/P Down Payment',
+                    'vendor_payment' => 'Vendor Payment',
+                ]),
+            SelectFilter::make('status')
+                ->label('Status')
+                ->options([
+                    'synced' => 'Synced',
+                    'failed' => 'Failed',
+                ]),
+        ];
     }
 
     protected function getHeaderActions(): array
