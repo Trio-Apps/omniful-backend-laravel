@@ -147,6 +147,54 @@ trait HandlesSapMasterDataFetch
     /**
      * @return array<int,array>
      */
+    public function fetchInventoryTransferRequests(): array
+    {
+        return $this->fetchAllWithFallback([
+            '/InventoryTransferRequests?$select=DocEntry,DocNum,DocDate,FromWarehouse,ToWarehouse&$top=200',
+            '/InventoryTransferRequests?$top=200',
+            '/InventoryTransferRequests',
+        ]);
+    }
+
+    /**
+     * @return array<int,array>
+     */
+    public function fetchInventoryCountings(): array
+    {
+        return $this->fetchAllWithFallback([
+            '/InventoryCountings?$select=DocumentEntry,DocumentNumber,CountDate,Remarks&$top=200',
+            '/InventoryCountings?$top=200',
+            '/InventoryCountings',
+        ]);
+    }
+
+    /**
+     * @return array<int,array>
+     */
+    public function fetchInventoryPostings(): array
+    {
+        return $this->fetchAllWithFallback([
+            '/InventoryPostings?$select=DocumentEntry,DocumentNumber,PostingDate,Remarks&$top=200',
+            '/InventoryPostings?$top=200',
+            '/InventoryPostings',
+        ]);
+    }
+
+    /**
+     * @return array<int,array>
+     */
+    public function fetchProductionOrdersCatalog(): array
+    {
+        return $this->fetchAllWithFallback([
+            '/ProductionOrders?$select=AbsoluteEntry,DocumentNumber,ItemNo,DueDate,ProductionOrderStatus&$top=200',
+            '/ProductionOrders?$top=200',
+            '/ProductionOrders',
+        ]);
+    }
+
+    /**
+     * @return array<int,array>
+     */
     public function fetchArInvoices(): array
     {
         return $this->fetchAllWithFallback([

@@ -65,10 +65,10 @@ Note:
 - [x] InventoryGenEntries - Goods receipt inventory increase is implemented.
 - [x] InventoryGenExits - Goods issue inventory decrease is implemented.
 - [x] InventoryTransfers - Implemented through `StockTransfers`.
-- [ ] InventoryTransferRequests - Basic catalog path configured; no business flow yet.
-- [ ] InventoryCounting - Basic catalog path configured; no business flow yet.
-- [ ] InventoryPosting - Basic catalog path configured; no business flow yet.
-- [ ] ProductionOrders - Basic catalog path configured; no business flow yet.
+- [x] InventoryTransferRequests - Dedicated `InventoryTransferRequests` sync snapshot is implemented.
+- [x] InventoryCounting - Dedicated `InventoryCountings` sync snapshot is implemented.
+- [x] InventoryPosting - Dedicated `InventoryPostings` sync snapshot is implemented.
+- [x] ProductionOrders - Dedicated `ProductionOrders` sync snapshot is implemented.
 
 ## Banking
 
@@ -82,7 +82,7 @@ Note:
 - Finance ready: 15
 - Sales ready: 11
 - Purchasing ready: 7
-- Inventory ready: 8
+- Inventory ready: 12
 - Banking ready: 2
 
 ## Next Recommended Build Order
@@ -90,5 +90,5 @@ Note:
 - [x] Finance master data: ChartOfAccounts, FinancialPeriods, Banks / BankAccounts, PaymentTermsTypes
 - [x] Direct finance docs: PurchaseInvoices, VendorPayments, DownPayments
 - [x] Sales gaps: Quotations, direct Invoices, Returns, ItemGroups
-- [ ] Inventory gaps: InventoryTransferRequests, InventoryCounting, InventoryPosting, ProductionOrders
+- [x] Inventory gaps: InventoryTransferRequests, InventoryCounting, InventoryPosting, ProductionOrders
 - [ ] Banking gaps: Deposits, ChecksforPayment
