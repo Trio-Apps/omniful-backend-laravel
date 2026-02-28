@@ -40,6 +40,74 @@ trait HandlesSapMasterDataFetch
         return $this->fetchAll('/Warehouses?$select=WarehouseCode,WarehouseName,EnableBinLocations');
     }
 
+    /**
+     * @return array<int,array>
+     */
+    public function fetchChartOfAccounts(): array
+    {
+        return $this->fetchAllWithFallback([
+            '/ChartOfAccounts?$select=Code,Name,ActiveAccount,FatherAccountKey,GroupMask&$top=200',
+            '/ChartOfAccounts?$top=200',
+            '/ChartOfAccounts',
+        ]);
+    }
+
+    /**
+     * @return array<int,array>
+     */
+    public function fetchAccountCategories(): array
+    {
+        return $this->normalizeRowsFromRawPayload(
+            $this->fetchRawResource('/AccountCategoryService_GetCategoryList')
+        );
+    }
+
+    /**
+     * @return array<int,array>
+     */
+    public function fetchFinancialPeriods(): array
+    {
+        return $this->normalizeRowsFromRawPayload(
+            $this->fetchRawResource('/CompanyService_GetPeriods')
+        );
+    }
+
+    /**
+     * @return array<int,array>
+     */
+    public function fetchBanks(): array
+    {
+        return $this->fetchAllWithFallback([
+            '/Banks?$select=BankCode,BankName&$top=200',
+            '/Banks?$top=200',
+            '/Banks',
+        ]);
+    }
+
+    /**
+     * @return array<int,array>
+     */
+    public function fetchHouseBankAccounts(): array
+    {
+        return $this->fetchAllWithFallback([
+            '/HouseBankAccounts?$select=BankCode,AccountCode,AccountNo,Branch&$top=200',
+            '/HouseBankAccounts?$top=200',
+            '/HouseBankAccounts',
+        ]);
+    }
+
+    /**
+     * @return array<int,array>
+     */
+    public function fetchPaymentTermsTypes(): array
+    {
+        return $this->fetchAllWithFallback([
+            '/PaymentTermsTypes?$select=GroupNumber,PaymentTermsGroupName,NumberOfAdditionalDays&$top=200',
+            '/PaymentTermsTypes?$top=200',
+            '/PaymentTermsTypes',
+        ]);
+    }
+
     public function isWarehouseIntegrationEnabled(string $warehouseCode): bool
     {
         $udfField = trim((string) config('omniful.integration_control.warehouse_udf_field', ''));
@@ -286,6 +354,33 @@ trait HandlesSapMasterDataFetch
         }
 
         return [];
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     * @return array<int,array>
+     */
+    private function normalizeRowsFromRawPayload(array $payload): array
+    {
+        if (isset($payload['value']) && is_array($payload['value'])) {
+            return array_values(array_filter($payload['value'], fn ($row) => is_array($row)));
+        }
+
+        foreach ($payload as $value) {
+            if (is_array($value) && array_is_list($value)) {
+                return array_values(array_filter($value, fn ($row) => is_array($row)));
+            }
+        }
+
+        if ($payload === []) {
+            return [];
+        }
+
+        if (array_is_list($payload)) {
+            return array_values(array_filter($payload, fn ($row) => is_array($row)));
+        }
+
+        return [$payload];
     }
 
     /**

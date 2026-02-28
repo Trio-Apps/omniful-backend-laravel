@@ -12,9 +12,9 @@ Note:
 ## Finance
 
 - [x] JournalEntries - Manual journal creation exists for card fees, COGS, and return COGS reversal.
-- [ ] ChartOfAccounts - Basic catalog path configured; no dedicated validated flow yet.
-- [ ] AccountCategories - Basic catalog path configured; needs SAP validation.
-- [ ] FinancialPeriods - Basic catalog path configured; needs SAP validation.
+- [x] ChartOfAccounts - Dedicated sync method, model, and table are implemented.
+- [x] AccountCategories - Dedicated sync method, model, and table are implemented.
+- [x] FinancialPeriods - Dedicated sync method, model, and table are implemented.
 - [ ] AR / Customer finance - Covered indirectly through order/customer flows, not as a dedicated finance module.
 - [ ] Invoices - AR reserve invoice is created through `/Orders` with `ReserveInvoice`, not as a dedicated `/Invoices` business flow.
 - [x] CreditNotes - AR credit memo creation is implemented.
@@ -24,9 +24,9 @@ Note:
 - [ ] PurchaseCreditNotes - Basic catalog path configured; no dedicated flow yet.
 - [ ] PurchaseDownPayments - Basic catalog path configured; no dedicated flow yet.
 - [ ] VendorPayments - Basic catalog path configured; no dedicated flow yet.
-- [ ] Banks / BankAccounts - Basic catalog paths configured; no dedicated validated flow yet.
+- [x] Banks / BankAccounts - Dedicated sync methods, models, and tables are implemented.
 - [ ] Currencies / ExchangeRates - Currency validation exists; full dedicated sync/use is not complete.
-- [ ] PaymentTermsTypes - Basic catalog path configured; no dedicated flow yet.
+- [x] PaymentTermsTypes - Dedicated sync method, model, and table are implemented.
 - [ ] ProfitCenters - No dedicated `ProfitCenters` integration yet.
 - [x] DistributionRules - Cost center sync reads distribution rules.
 - [ ] Branches - Basic catalog path configured; no dedicated flow yet.
@@ -79,7 +79,7 @@ Note:
 
 ## Current Ready Count
 
-- Finance ready: 4
+- Finance ready: 9
 - Sales ready: 7
 - Purchasing ready: 3
 - Inventory ready: 7
@@ -87,7 +87,7 @@ Note:
 
 ## Next Recommended Build Order
 
-- [ ] Finance master data: ChartOfAccounts, FinancialPeriods, Banks / BankAccounts, PaymentTermsTypes
+- [x] Finance master data: ChartOfAccounts, FinancialPeriods, Banks / BankAccounts, PaymentTermsTypes
 - [ ] Direct finance docs: PurchaseInvoices, VendorPayments, DownPayments
 - [ ] Sales gaps: Quotations, direct Invoices, Returns, ItemGroups
 - [ ] Inventory gaps: InventoryTransferRequests, InventoryCounting, InventoryPosting, ProductionOrders
