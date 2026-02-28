@@ -98,6 +98,10 @@ class WebhookRetryService
     public function retryProductEvent(OmnifulProductEvent $event): array
     {
         if (app(IntegrationDirectionService::class)->isSapToOmniful('items')) {
+            $event->sap_status = 'ignored';
+            $event->sap_error = 'Ignored: items sync direction is SAP -> Omniful';
+            $event->save();
+
             return ['ok' => false, 'message' => 'Items direction is SAP -> Omniful'];
         }
 
@@ -138,6 +142,10 @@ class WebhookRetryService
     public function retryInventoryEvent(OmnifulInventoryEvent $event): array
     {
         if (app(IntegrationDirectionService::class)->isSapToOmniful('inventory')) {
+            $event->sap_status = 'ignored';
+            $event->sap_error = 'Ignored: inventory sync direction is SAP -> Omniful';
+            $event->save();
+
             return ['ok' => false, 'message' => 'Inventory direction is SAP -> Omniful'];
         }
 
@@ -164,6 +172,14 @@ class WebhookRetryService
      */
     public function retryInwardingEvent(OmnifulInwardingEvent $event): array
     {
+        if (app(IntegrationDirectionService::class)->isSapToOmniful('inventory')) {
+            $event->sap_status = 'ignored';
+            $event->sap_error = 'Ignored: inventory sync direction is SAP -> Omniful';
+            $event->save();
+
+            return ['ok' => false, 'message' => 'Inventory direction is SAP -> Omniful'];
+        }
+
         try {
             $event->sap_error = null;
             $event->save();

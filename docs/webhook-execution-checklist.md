@@ -23,6 +23,7 @@ Sources:
 Operational meaning for this project:
 - Transactional SAP actions should be webhook-driven first.
 - GET APIs are for lookup, sync, validation, or fallback, not the primary source of truth for live document creation.
+- The shared `inventory` sync direction now gates `Inventory`, `Stock Transfer Request`, and `Inwarding` webhook pushes into SAP.
 
 ## Active Webhooks In This Project
 
@@ -39,7 +40,7 @@ Operational meaning for this project:
 ## Current Priority
 
 1. Lock down live payload field names for active webhook flows.
-2. Close any partial-quantity behavior gaps on `Order`.
+2. Confirm real tenant status names for the active lifecycle webhooks.
 3. Reduce broad fallbacks only after real tenant payloads confirm the exact fields.
 
 ## By Webhook
@@ -135,6 +136,7 @@ Current coverage:
 - `manual_edit + hub_inventory` -> Goods Receipt / Goods Issue via SAP delta check
 - `dispose + inventory_adjustment` -> Goods Issue
 - counting-related routes -> Inventory Counting
+- The webhook is ignored safely when `inventory` direction is set to `SAP -> Omniful`.
 
 Already aligned to official docs:
 - The official documented `dispose + inventory_adjustment` path is now mapped.
@@ -167,6 +169,7 @@ Current coverage:
   - `status=accepted`
   - `order_items[].approved_quantity`
 - Prevents duplicate SAP stock transfers for the same stock-transfer request when later lifecycle events arrive.
+- The webhook is ignored safely when `inventory` direction is set to `SAP -> Omniful`.
 
 Already aligned to official docs:
 - Supports nested warehouse fields like:
@@ -215,6 +218,7 @@ Current coverage:
 - `grn.qc.event` with `entity_type=po` creates SAP GRPO.
 - Inwarding rows now track SAP status, DocEntry, DocNum, and error.
 - Retry from monitoring is supported.
+- The webhook is ignored safely when `inventory` direction is set to `SAP -> Omniful`.
 
 Already aligned to official docs:
 - Uses documented `grn_details.skus[]`
@@ -237,10 +241,7 @@ If we focus only on connected webhooks and practical next work, the remaining wo
 1. Payload confirmation
 - The biggest remaining task is collecting real tenant payloads and tightening field mapping.
 
-2. Partial-quantity handling on Order
-- This is the only likely remaining functional upgrade if your tenant ships or cancels partially.
-
-3. Tenant-specific status locking
+2. Tenant-specific status locking
 - Mainly for `Order`, `Return Order`, and `Purchase Order`.
 
 This means the current state is:
@@ -262,6 +263,6 @@ Collect these first, in this exact order:
 
 Once these are available, the next coding pass should be:
 
-1. Confirm whether `Order` needs partial delivery.
-2. Remove unnecessary order-status fallbacks.
-3. Tighten quantity-field selection for `Inventory`, `Return Order`, and `Inwarding`.
+1. Remove unnecessary order-status fallbacks.
+2. Tighten quantity-field selection for `Inventory`, `Return Order`, and `Inwarding`.
+3. Lock tenant-specific lifecycle statuses for `Purchase Order` and `Stock Transfer Request`.

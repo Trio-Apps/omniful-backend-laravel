@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Webhooks;
 
 use App\Models\OmnifulInwardingEvent;
+use App\Services\IntegrationDirectionService;
 use App\Services\Webhooks\InwardingWebhookService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -23,6 +24,14 @@ class OmnifulInwardingWebhookController extends OmnifulWebhookBase
 
         if ($isDuplicate && $event->sap_status !== null && $event->sap_status !== 'failed') {
             return response()->json(['status' => 'ok', 'id' => $event->id, 'duplicate' => true]);
+        }
+
+        if (app(IntegrationDirectionService::class)->isSapToOmniful('inventory')) {
+            $event->sap_status = 'ignored';
+            $event->sap_error = 'Ignored: inventory sync direction is SAP -> Omniful';
+            $event->save();
+
+            return response()->json(['status' => 'ok', 'id' => $event->id, 'ignored' => true]);
         }
 
         try {

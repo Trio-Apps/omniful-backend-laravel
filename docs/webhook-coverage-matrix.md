@@ -1,6 +1,6 @@
 # Omniful Webhook Coverage Matrix
 
-Updated: 2026-02-28
+Updated: 2026-03-01
 
 This file maps the actual Omniful webhook topics configured in this project to the SAP capabilities they drive.
 
@@ -98,6 +98,7 @@ Important result:
 | `inventory.update.event` + `manual_edit` + `hub_inventory` | Goods Receipt / Goods Issue | BRS + Maaz | Delta is computed against SAP on-hand |
 | `inventory.update.event` + `dispose` + `inventory_adjustment` | Goods Issue | BRS + Maaz | This now matches the official Omniful webhook sample |
 | `cycle_count`, `inventory_counting`, `counting` actions/entities | Inventory Counting | BRS + Maaz | New transactional SAP counting flow |
+| Any of the above while `inventory` direction is `SAP -> Omniful` | Ignore webhook safely | Operational | Keeps webhook ACK behavior correct without pushing into SAP |
 
 ### Stock Transfer Request
 
@@ -105,6 +106,7 @@ Important result:
 | --- | --- | --- | --- |
 | Transfer request payload with source/destination + items | Stock Transfer | BRS + Maaz | Supports the official nested `source_hub.code`, `destination_hub.code`, `sto_request_id`, and `order_items[].approved_quantity` payload shape |
 | Same payload with in-transit flags/config | Two-step in-transit stock transfer | BRS | Uses transit warehouse logic |
+| Same payload while `inventory` direction is `SAP -> Omniful` | Ignore webhook safely | Operational | Shares the inventory-domain sync-direction gate |
 
 ### Product
 
@@ -118,6 +120,7 @@ Important result:
 | Omniful Signals | SAP Outcomes | Scope Coverage | Notes |
 | --- | --- | --- | --- |
 | `grn.qc.event` + `entity_type=po` | GRPO | BRS + Maaz | Uses documented `grn_details.skus` and destination hub to create SAP GRPO |
+| Same payload while `inventory` direction is `SAP -> Omniful` | Ignore webhook safely | Operational | Shares the inventory-domain sync-direction gate |
 
 ## Snapshot / Manual Sync Driven Coverage
 
