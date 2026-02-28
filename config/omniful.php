@@ -94,6 +94,7 @@ return [
             'strict' => true,
             'invoice_event_contains' => ['create', 'new'],
             'invoice_statuses' => ['created', 'new', 'pending', 'confirmed'],
+            'initial_statuses' => ['created', 'new', 'pending', 'confirmed', 'on_hold'],
             'delivery_event_contains' => ['ship', 'deliver'],
             'delivery_statuses' => ['shipped', 'delivered', 'completed'],
             'prepaid_indicators' => ['prepaid', 'online', 'card', 'credit_card', 'paid'],

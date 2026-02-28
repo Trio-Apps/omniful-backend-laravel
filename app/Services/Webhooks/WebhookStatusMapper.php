@@ -204,7 +204,12 @@ class WebhookStatusMapper
 
     private function isOrderInitialStatus(string $status): bool
     {
-        return in_array($status, ['new', 'created', 'pending', 'confirmed'], true);
+        $initialStatuses = array_map(
+            [$this, 'normalize'],
+            (array) config('omniful.status_mapping.order.initial_statuses', ['new', 'created', 'pending', 'confirmed', 'on_hold'])
+        );
+
+        return in_array($status, $initialStatuses, true);
     }
 
     /**
