@@ -241,10 +241,12 @@ class StockTransferWebhookService
     private function extractStockTransferRequestId(array $data, array $payload): ?string
     {
         $candidates = [
+            data_get($data, 'sto_id'),
             data_get($data, 'sto_request_id'),
             data_get($data, 'status_reference_id'),
             data_get($data, 'display_id'),
             data_get($data, 'id'),
+            data_get($payload, 'sto_id'),
             data_get($payload, 'sto_request_id'),
             data_get($payload, 'display_id'),
             data_get($payload, 'id'),

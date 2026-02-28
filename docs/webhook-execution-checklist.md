@@ -26,6 +26,7 @@ Operational meaning for this project:
 - The shared `inventory` sync direction now gates `Inventory`, `Stock Transfer Request`, and `Inwarding` webhook pushes into SAP.
 - Invalid or rejected webhook requests are now acknowledged with `HTTP 200` and marked as ignored at the controller layer, instead of returning `400/401`.
 - Webhook auth lookup now accepts Omniful sample header names such as `webhook-secret-key` and `secret-key`, in addition to the configured header names.
+- If the body omits `event_name`, the shared webhook entry path now falls back to the documented `webhook-event` header before routing or persistence.
 
 ## Active Webhooks In This Project
 
@@ -151,6 +152,7 @@ Current coverage:
 - `receiving + purchase_order` -> GRPO
 - `manual_edit + hub_inventory` -> Goods Receipt / Goods Issue via SAP delta check
 - `dispose + inventory_adjustment` -> Goods Issue
+- `conversion + inventory_adjustment` -> Goods Receipt / Goods Issue via the same adjustment path
 - counting-related routes -> Inventory Counting
 - The webhook is ignored safely when `inventory` direction is set to `SAP -> Omniful`.
 - The documented Omniful shape with `data` as a direct line array is now supported.
@@ -158,6 +160,7 @@ Current coverage:
 
 Already aligned to official docs:
 - The official documented `dispose + inventory_adjustment` path is now mapped.
+- The official documented `conversion + inventory_adjustment` path is now also mapped.
 
 Still needed:
 - Lock the exact quantity field names used in the real tenant.
@@ -183,6 +186,7 @@ Current coverage:
 - Creates normal Stock Transfer.
 - Creates two-step in-transit Stock Transfer when enabled.
 - Accepts the official docs shape:
+  - `sto_id`
   - `sto_request_id`
   - `status=accepted`
   - `order_items[].approved_quantity`
@@ -213,6 +217,8 @@ Priority:
 Current coverage:
 - Standard product webhook syncs SAP items.
 - Bundle / BOM / kit webhook syncs bundle structures.
+- The documented SKU webhook `data` array is now processed row-by-row instead of only syncing the first element.
+- Product retry now uses the same row-by-row batch handling as the live webhook path.
 
 Still needed:
 - Confirm the exact bundle discriminator fields used by your tenant.

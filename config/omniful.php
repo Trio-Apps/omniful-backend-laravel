@@ -83,6 +83,7 @@ return [
             'routes' => [
                 'inventory.update.event|receiving|purchase_order' => 'grpo',
                 'inventory.update.event|dispose|inventory_adjustment' => 'manual_inventory_adjustment',
+                'inventory.update.event|conversion|inventory_adjustment' => 'manual_inventory_adjustment',
                 'inventory.update.event|manual_edit|hub_inventory' => 'manual_inventory_adjustment',
                 'inventory.update.event|cycle_count|hub_inventory' => 'inventory_counting',
                 'inventory.update.event|inventory_counting|hub_inventory' => 'inventory_counting',

@@ -49,6 +49,8 @@ abstract class OmnifulWebhookBase
             return ['response' => $this->acknowledgeIgnored('Invalid JSON payload')];
         }
 
+        $payload = $this->normalizeIncomingPayload($request, $payload);
+
         $payloadHash = hash('sha256', $raw);
         $existing = $eventModel::where('payload_hash', $payloadHash)->first();
         if ($existing) {
@@ -159,6 +161,27 @@ abstract class OmnifulWebhookBase
             'ignored' => true,
             'message' => $message,
         ]);
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     * @return array<string,mixed>
+     */
+    protected function normalizeIncomingPayload(Request $request, array $payload): array
+    {
+        $eventName = trim((string) Arr::get($payload, 'event_name', ''));
+        if ($eventName !== '') {
+            return $payload;
+        }
+
+        $headerEvent = trim((string) $this->getHeaderValue($request, ['webhook-event']));
+        if ($headerEvent === '') {
+            return $payload;
+        }
+
+        $payload['event_name'] = $headerEvent;
+
+        return $payload;
     }
 
     /**
