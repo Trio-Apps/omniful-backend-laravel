@@ -7,6 +7,7 @@ use App\Services\Webhooks\WebhookRetryService;
 use Filament\Actions\Action;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
+use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
@@ -48,6 +49,10 @@ class OmnifulProductEvents extends Page implements HasTable
             TextColumn::make('event_name')
                 ->label('Event')
                 ->getStateUsing(fn ($record) => data_get($record->payload, 'event_name'))
+                ->toggleable(),
+            IconColumn::make('signature_valid')
+                ->label('Signature')
+                ->boolean()
                 ->toggleable(),
             TextColumn::make('name')
                 ->label('Name')

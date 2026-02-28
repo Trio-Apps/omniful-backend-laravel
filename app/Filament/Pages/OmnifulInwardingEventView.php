@@ -18,6 +18,8 @@ class OmnifulInwardingEventView extends Page
 
     public array $data = [];
 
+    public array $grnItems = [];
+
     public string $payloadJson = '';
 
     public function mount(int|string|null $record = null): void
@@ -36,6 +38,7 @@ class OmnifulInwardingEventView extends Page
         $this->event = $model->payload ?? [];
         $rawData = data_get($model->payload, 'data', []);
         $this->data = is_array($rawData) ? $rawData : [];
+        $this->grnItems = data_get($this->data, 'grn_details.skus', []);
         $this->payloadJson = json_encode($model->payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) ?: '';
     }
 

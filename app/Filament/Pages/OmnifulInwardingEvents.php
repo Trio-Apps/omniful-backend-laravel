@@ -35,9 +35,17 @@ class OmnifulInwardingEvents extends Page implements HasTable
     protected function getTableColumns(): array
     {
         return [
+            TextColumn::make('event_name')
+                ->label('Event')
+                ->getStateUsing(fn ($record) => data_get($record->payload, 'event_name'))
+                ->toggleable(),
             TextColumn::make('external_id')
                 ->label('Reference ID')
                 ->searchable(),
+            TextColumn::make('entity_type')
+                ->label('Entity')
+                ->getStateUsing(fn ($record) => data_get($record->payload, 'data.entity_type'))
+                ->toggleable(),
             IconColumn::make('signature_valid')
                 ->label('Signature')
                 ->boolean()

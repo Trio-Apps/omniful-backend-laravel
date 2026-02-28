@@ -38,6 +38,10 @@
                     <div class="po-value">{{ $record->sap_item_code ?? '-' }}</div>
                 </div>
                 <div class="po-card">
+                    <div class="po-label">Signature</div>
+                    <div class="po-value">{{ $record->signature_valid ? 'Valid' : 'Invalid / Missing' }}</div>
+                </div>
+                <div class="po-card">
                     <div class="po-label">SKU</div>
                     <div class="po-value">{{ data_get($data, 'seller_sku_code', data_get($data, 'sku_code', '-')) }}</div>
                 </div>
@@ -68,6 +72,10 @@
                 <div class="po-card">
                     <div class="po-label">Received</div>
                     <div class="po-value">{{ $record->received_at?->format('Y-m-d H:i:s') ?? '-' }}</div>
+                </div>
+                <div class="po-card">
+                    <div class="po-label">Payload Rows</div>
+                    <div class="po-value">{{ count($rows) }}</div>
                 </div>
             </div>
         </x-filament::section>
@@ -132,5 +140,26 @@
                 <div class="po-json">{{ $record->sap_error }}</div>
             </x-filament::section>
         @endif
+
+        @if (count($rows) > 1)
+            <x-filament::section>
+                <x-slot name="heading">Payload Rows</x-slot>
+                <div class="po-grid po-grid-3 po-section-pad">
+                    @foreach ($rows as $row)
+                        <div class="po-card">
+                            <div class="po-label">SKU</div>
+                            <div class="po-value">{{ data_get($row, 'seller_sku_code', data_get($row, 'sku_code', '-')) }}</div>
+                            <div class="po-label" style="margin-top: 10px;">Name</div>
+                            <div class="po-value">{{ data_get($row, 'name', data_get($row, 'product.name', '-')) }}</div>
+                        </div>
+                    @endforeach
+                </div>
+            </x-filament::section>
+        @endif
+
+        <x-filament::section>
+            <x-slot name="heading">Payload</x-slot>
+            <div class="po-json">{{ $payloadJson }}</div>
+        </x-filament::section>
     </div>
 </x-filament::page>

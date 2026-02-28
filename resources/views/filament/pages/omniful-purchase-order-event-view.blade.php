@@ -21,6 +21,7 @@
         .po-table-wrap { overflow-x: auto; border: 1px solid #e5e7eb; border-radius: 10px; background: #ffffff; }
         .po-section-pad { padding: 24px 16px; margin-top: 6px; margin-bottom: 6px; }
         .po-section-gap { margin-bottom: 22px; }
+        .po-json { white-space: pre-wrap; font-size: 12px; background: #0f172a; color: #e2e8f0; border-radius: 10px; padding: 16px; overflow-x: auto; }
     </style>
 
     <div class="space-y-6">
@@ -38,6 +39,10 @@
                 <div class="po-card">
                     <div class="po-label">Status</div>
                     <div class="po-value">{{ data_get($data, 'status', '-') }}</div>
+                </div>
+                <div class="po-card">
+                    <div class="po-label">Signature</div>
+                    <div class="po-value">{{ $record->signature_valid ? 'Valid' : 'Invalid / Missing' }}</div>
                 </div>
                 <div class="po-card">
                     <div class="po-label">Hub Code</div>
@@ -60,8 +65,16 @@
                     <div class="po-value">{{ $record->sap_doc_num ?? '-' }}</div>
                 </div>
                 <div class="po-card">
+                    <div class="po-label">SAP DocEntry</div>
+                    <div class="po-value">{{ $record->sap_doc_entry ?? '-' }}</div>
+                </div>
+                <div class="po-card">
                     <div class="po-label">SAP Error</div>
                     <div class="po-value po-break">{{ $record->sap_error ?? '-' }}</div>
+                </div>
+                <div class="po-card">
+                    <div class="po-label">External ID</div>
+                    <div class="po-value">{{ $record->external_id ?? '-' }}</div>
                 </div>
             </div>
         </x-filament::section>
@@ -175,6 +188,11 @@
                     </tbody>
                 </table>
             </div>
+        </x-filament::section>
+
+        <x-filament::section class="po-section-gap">
+            <x-slot name="heading">Payload</x-slot>
+            <div class="po-json">{{ $payloadJson }}</div>
         </x-filament::section>
     </div>
 </x-filament::page>

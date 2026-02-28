@@ -39,6 +39,10 @@ class OmnifulInventoryEvents extends Page implements HasTable
                 ->label('Event')
                 ->getStateUsing(fn ($record) => data_get($record->payload, 'event_name'))
                 ->toggleable(),
+            TextColumn::make('external_id')
+                ->label('Reference')
+                ->searchable()
+                ->toggleable(),
             TextColumn::make('action')
                 ->label('Action')
                 ->badge()
@@ -71,6 +75,9 @@ class OmnifulInventoryEvents extends Page implements HasTable
                 ->toggleable(),
             TextColumn::make('sap_doc_num')
                 ->label('SAP DocNum')
+                ->toggleable(),
+            TextColumn::make('sap_doc_entry')
+                ->label('SAP DocEntry')
                 ->toggleable(),
             TextColumn::make('received_at')
                 ->label('Received')

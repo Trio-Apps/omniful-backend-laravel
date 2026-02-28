@@ -22,6 +22,7 @@
         .ro-table-wrap { overflow-x: auto; border: 1px solid #e5e7eb; border-radius: 10px; background: #ffffff; }
         .ro-section-pad { padding: 24px 16px; margin-top: 6px; margin-bottom: 6px; }
         .ro-section-gap { margin-bottom: 22px; }
+        .ro-json { white-space: pre-wrap; font-size: 12px; background: #0f172a; color: #e2e8f0; border-radius: 10px; padding: 16px; overflow-x: auto; }
     </style>
 
     <div class="space-y-6">
@@ -87,6 +88,14 @@
                 <div class="ro-card">
                     <div class="ro-label">SAP Error</div>
                     <div class="ro-value ro-break">{{ $record->sap_error ?? '-' }}</div>
+                </div>
+                <div class="ro-card">
+                    <div class="ro-label">COGS Reversal</div>
+                    <div class="ro-value">{{ $record->sap_cogs_reversal_journal_num ?? ($record->sap_cogs_reversal_status ?? '-') }}</div>
+                </div>
+                <div class="ro-card">
+                    <div class="ro-label">COGS Reversal Error</div>
+                    <div class="ro-value ro-break">{{ $record->sap_cogs_reversal_error ?? '-' }}</div>
                 </div>
             </div>
         </x-filament::section>
@@ -270,6 +279,11 @@
                     </tbody>
                 </table>
             </div>
+        </x-filament::section>
+
+        <x-filament::section class="ro-section-gap">
+            <x-slot name="heading">Payload</x-slot>
+            <div class="ro-json">{{ $payloadJson }}</div>
         </x-filament::section>
     </div>
 </x-filament::page>

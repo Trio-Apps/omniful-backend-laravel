@@ -20,6 +20,7 @@
         .po-table-wrap { overflow-x: auto; border: 1px solid #e5e7eb; border-radius: 10px; background: #ffffff; }
         .po-section-pad { padding: 24px 16px; margin-top: 6px; margin-bottom: 6px; }
         .po-section-gap { margin-bottom: 22px; }
+        .po-json { white-space: pre-wrap; font-size: 12px; background: #0f172a; color: #e2e8f0; border-radius: 10px; padding: 16px; overflow-x: auto; }
     </style>
 
     <div class="space-y-6">
@@ -48,7 +49,7 @@
                 </div>
                 <div class="po-card">
                     <div class="po-label">Payment</div>
-                    <div class="po-value">{{ data_get($data, 'payment_method', '-') }}</div>
+                    <div class="po-value">{{ data_get($data, 'payment_method', data_get($data, 'invoice.payment_mode', '-')) }}</div>
                 </div>
                 <div class="po-card">
                     <div class="po-label">Total</div>
@@ -57,6 +58,22 @@
                 <div class="po-card">
                     <div class="po-label">Order Created</div>
                     <div class="po-value">{{ data_get($data, 'order_created_at', '-') }}</div>
+                </div>
+                <div class="po-card">
+                    <div class="po-label">Signature</div>
+                    <div class="po-value">{{ $record->signature_valid ? 'Valid' : 'Invalid / Missing' }}</div>
+                </div>
+                <div class="po-card">
+                    <div class="po-label">SAP Status</div>
+                    <div class="po-value">{{ $order?->sap_status ?: '-' }}</div>
+                </div>
+                <div class="po-card">
+                    <div class="po-label">SAP Order</div>
+                    <div class="po-value">{{ $order?->sap_doc_num ?: '-' }}</div>
+                </div>
+                <div class="po-card">
+                    <div class="po-label">Credit Note</div>
+                    <div class="po-value">{{ $order?->sap_credit_note_doc_num ?: ($order?->sap_credit_note_status ?: '-') }}</div>
                 </div>
             </div>
         </x-filament::section>
@@ -189,5 +206,50 @@
                 </table>
             </div>
         </x-filament::section>
+
+        <div class="po-grid po-grid-2">
+            <x-filament::section class="po-section-gap">
+                <x-slot name="heading">Tracked SAP</x-slot>
+                <div class="po-grid po-grid-2 po-section-pad">
+                    <div class="po-kv">
+                        <div class="po-label">Order Error</div>
+                        <div class="po-value po-break">{{ $order?->sap_error ?: '-' }}</div>
+                    </div>
+                    <div class="po-kv">
+                        <div class="po-label">Payment Status</div>
+                        <div class="po-value">{{ $order?->sap_payment_status ?: '-' }}</div>
+                    </div>
+                    <div class="po-kv">
+                        <div class="po-label">Payment DocNum</div>
+                        <div class="po-value">{{ $order?->sap_payment_doc_num ?: '-' }}</div>
+                    </div>
+                    <div class="po-kv">
+                        <div class="po-label">Card Fee JE</div>
+                        <div class="po-value">{{ $order?->sap_card_fee_journal_num ?: ($order?->sap_card_fee_status ?: '-') }}</div>
+                    </div>
+                    <div class="po-kv">
+                        <div class="po-label">COGS JE</div>
+                        <div class="po-value">{{ $order?->sap_cogs_journal_num ?: ($order?->sap_cogs_status ?: '-') }}</div>
+                    </div>
+                    <div class="po-kv">
+                        <div class="po-label">Cancel COGS</div>
+                        <div class="po-value">{{ $order?->sap_cancel_cogs_journal_num ?: ($order?->sap_cancel_cogs_status ?: '-') }}</div>
+                    </div>
+                    <div class="po-kv">
+                        <div class="po-label">Latest Event At</div>
+                        <div class="po-value">{{ $order?->last_event_at?->format('Y-m-d H:i:s') ?: '-' }}</div>
+                    </div>
+                    <div class="po-kv">
+                        <div class="po-label">Latest Stored Status</div>
+                        <div class="po-value">{{ $order?->omniful_status ?: '-' }}</div>
+                    </div>
+                </div>
+            </x-filament::section>
+
+            <x-filament::section class="po-section-gap">
+                <x-slot name="heading">Payload</x-slot>
+                <div class="po-json">{{ $payloadJson }}</div>
+            </x-filament::section>
+        </div>
     </div>
 </x-filament::page>

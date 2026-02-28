@@ -9,6 +9,7 @@ use App\Services\Webhooks\WebhookRetryService;
 use Filament\Actions\Action;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
+use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
@@ -28,6 +29,9 @@ class OmnifulOrderEvents extends Page implements HasTable
 
     protected string $view = 'filament.pages.omniful-order-events';
 
+    /** @var array<string, OmnifulOrder|null> */
+    protected array $orderCache = [];
+
     protected function getTableQuery(): Builder
     {
         return OmnifulOrderEvent::query()->orderByDesc('received_at');
@@ -45,6 +49,10 @@ class OmnifulOrderEvents extends Page implements HasTable
             TextColumn::make('event_name')
                 ->label('Event')
                 ->getStateUsing(fn ($record) => data_get($record->payload, 'event_name'))
+                ->toggleable(),
+            IconColumn::make('signature_valid')
+                ->label('Signature')
+                ->boolean()
                 ->toggleable(),
             TextColumn::make('status')
                 ->label('Status')
@@ -74,9 +82,27 @@ class OmnifulOrderEvents extends Page implements HasTable
             TextColumn::make('sap_status')
                 ->label('SAP')
                 ->badge()
-                ->getStateUsing(function ($record) {
-                    $order = OmnifulOrder::where('external_id', $record->external_id)->first();
-                    return $order?->sap_status ?: '-';
+                ->getStateUsing(fn ($record) => $this->resolveOrder($record)?->sap_status ?: '-')
+                ->color(fn ($state) => match ($state) {
+                    'created', 'updated', 'logged', 'created_mixed' => 'success',
+                    'failed' => 'danger',
+                    'ignored', 'blocked', 'pending', 'retrying' => 'warning',
+                    default => 'gray',
+                })
+                ->toggleable(),
+            TextColumn::make('sap_doc_num')
+                ->label('SAP Order')
+                ->getStateUsing(fn ($record) => $this->resolveOrder($record)?->sap_doc_num ?: '-')
+                ->toggleable(),
+            TextColumn::make('sap_credit_note_status')
+                ->label('Credit Note')
+                ->badge()
+                ->getStateUsing(fn ($record) => $this->resolveOrder($record)?->sap_credit_note_status ?: '-')
+                ->color(fn ($state) => match ($state) {
+                    'created', 'updated', 'logged' => 'success',
+                    'failed' => 'danger',
+                    'ignored', 'blocked', 'pending', 'retrying' => 'warning',
+                    default => 'gray',
                 })
                 ->toggleable(),
         ];
@@ -105,19 +131,27 @@ class OmnifulOrderEvents extends Page implements HasTable
                 ->label('SAP Error')
                 ->icon('heroicon-o-exclamation-triangle')
                 ->color('danger')
-                ->visible(function ($record) {
-                    $order = OmnifulOrder::where('external_id', $record->external_id)->first();
-                    return (bool) $order?->sap_error;
-                })
+                ->visible(fn ($record) => (bool) $this->resolveOrder($record)?->sap_error)
                 ->modalHeading('SAP Error')
                 ->modalSubmitAction(false)
                 ->modalCancelActionLabel('Close')
-                ->modalContent(function ($record) {
-                    $order = OmnifulOrder::where('external_id', $record->external_id)->first();
-                    return view('filament.pages.sap-sync-error', [
-                        'error' => $order?->sap_error,
-                    ]);
-                }),
+                ->modalContent(fn ($record) => view('filament.pages.sap-sync-error', [
+                    'error' => $this->resolveOrder($record)?->sap_error,
+                ])),
         ];
+    }
+
+    protected function resolveOrder(object $record): ?OmnifulOrder
+    {
+        $externalId = (string) ($record->external_id ?? '');
+        if ($externalId === '') {
+            return null;
+        }
+
+        if (! array_key_exists($externalId, $this->orderCache)) {
+            $this->orderCache[$externalId] = OmnifulOrder::where('external_id', $externalId)->first();
+        }
+
+        return $this->orderCache[$externalId];
     }
 }

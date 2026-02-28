@@ -201,5 +201,51 @@
                 </table>
             </div>
         </x-filament::section>
+
+        <x-filament::section class="po-section-gap">
+            <x-slot name="heading">SAP Tracking</x-slot>
+            <div class="po-grid po-grid-3 po-section-pad">
+                <div class="po-card">
+                    <div class="po-label">Payment</div>
+                    <div class="po-value">{{ $record->sap_payment_doc_num ?: ($record->sap_payment_status ?: '-') }}</div>
+                </div>
+                <div class="po-card">
+                    <div class="po-label">Delivery</div>
+                    <div class="po-value">{{ $record->sap_delivery_doc_num ?: ($record->sap_delivery_status ?: '-') }}</div>
+                </div>
+                <div class="po-card">
+                    <div class="po-label">Card Fee JE</div>
+                    <div class="po-value">{{ $record->sap_card_fee_journal_num ?: ($record->sap_card_fee_status ?: '-') }}</div>
+                </div>
+                <div class="po-card">
+                    <div class="po-label">COGS JE</div>
+                    <div class="po-value">{{ $record->sap_cogs_journal_num ?: ($record->sap_cogs_status ?: '-') }}</div>
+                </div>
+                <div class="po-card">
+                    <div class="po-label">Credit Note</div>
+                    <div class="po-value">{{ $record->sap_credit_note_doc_num ?: ($record->sap_credit_note_status ?: '-') }}</div>
+                </div>
+                <div class="po-card">
+                    <div class="po-label">Cancel COGS JE</div>
+                    <div class="po-value">{{ $record->sap_cancel_cogs_journal_num ?: ($record->sap_cancel_cogs_status ?: '-') }}</div>
+                </div>
+                <div class="po-card">
+                    <div class="po-label">Payment Error</div>
+                    <div class="po-value po-break">{{ $record->sap_payment_error ?: '-' }}</div>
+                </div>
+                <div class="po-card">
+                    <div class="po-label">Delivery Error</div>
+                    <div class="po-value po-break">{{ $record->sap_delivery_error ?: '-' }}</div>
+                </div>
+                <div class="po-card">
+                    <div class="po-label">Card Fee Error</div>
+                    <div class="po-value po-break">{{ $record->sap_card_fee_error ?: '-' }}</div>
+                </div>
+                <div class="po-card">
+                    <div class="po-label">COGS Error</div>
+                    <div class="po-value po-break">{{ $record->sap_cogs_error ?: '-' }}</div>
+                </div>
+            </div>
+        </x-filament::section>
     </div>
 </x-filament::page>

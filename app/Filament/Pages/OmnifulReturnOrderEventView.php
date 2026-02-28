@@ -20,6 +20,8 @@ class OmnifulReturnOrderEventView extends Page
 
     public array $items = [];
 
+    public string $payloadJson = '';
+
     public function mount(int|string|null $record = null): void
     {
         $recordId = $record ?? request()->query('record');
@@ -35,7 +37,8 @@ class OmnifulReturnOrderEventView extends Page
         $this->record = $model;
         $this->event = $model->payload ?? [];
         $this->data = data_get($model->payload, 'data', []);
-        $this->items = data_get($this->data, 'order_items', []);
+        $this->items = data_get($this->data, 'return_items', data_get($this->data, 'order_items', []));
+        $this->payloadJson = json_encode($model->payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) ?: '';
     }
 
     public function getTitle(): string

@@ -2,6 +2,7 @@
 
 namespace App\Filament\Pages;
 
+use App\Models\OmnifulOrder;
 use App\Models\OmnifulOrderEvent;
 use Filament\Pages\Page;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -20,6 +21,10 @@ class OmnifulOrderEventView extends Page
 
     public array $items = [];
 
+    public ?OmnifulOrder $order = null;
+
+    public string $payloadJson = '';
+
     public function mount(int|string|null $record = null): void
     {
         $recordId = $record ?? request()->query('record');
@@ -36,6 +41,10 @@ class OmnifulOrderEventView extends Page
         $this->event = $model->payload ?? [];
         $this->data = data_get($model->payload, 'data', []);
         $this->items = data_get($this->data, 'order_items', []);
+        $this->order = $model->external_id
+            ? OmnifulOrder::where('external_id', (string) $model->external_id)->first()
+            : null;
+        $this->payloadJson = json_encode($model->payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) ?: '';
     }
 
     public function getTitle(): string

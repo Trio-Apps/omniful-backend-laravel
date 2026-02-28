@@ -18,6 +18,8 @@ class OmnifulProductEventView extends Page
 
     public array $data = [];
 
+    public array $rows = [];
+
     public string $payloadJson = '';
 
     public function mount(int|string|null $record = null): void
@@ -35,7 +37,10 @@ class OmnifulProductEventView extends Page
         $this->record = $model;
         $this->event = $model->payload ?? [];
         $rawData = data_get($model->payload, 'data', []);
-        $this->data = is_array($rawData) ? ($rawData[0] ?? []) : $rawData;
+        $this->rows = is_array($rawData)
+            ? (array_is_list($rawData) ? $rawData : [$rawData])
+            : [];
+        $this->data = $this->rows[0] ?? [];
         $this->payloadJson = json_encode($model->payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) ?: '';
     }
 
