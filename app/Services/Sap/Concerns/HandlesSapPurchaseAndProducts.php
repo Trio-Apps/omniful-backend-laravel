@@ -2186,6 +2186,16 @@ trait HandlesSapPurchaseAndProducts
         }
 
         if (!$response->successful()) {
+            if ($this->isInvalidSapPropertyError((string) $response->body(), $udfField)) {
+                Log::warning('SAP item integration UDF field not found; bypassing item UDF control', [
+                    'item_code' => $itemCode,
+                    'udf_field' => $udfField,
+                    'status' => $response->status(),
+                ]);
+
+                return true;
+            }
+
             throw new \RuntimeException('SAP item integration-udf lookup failed: ' . $response->status() . ' ' . $response->body());
         }
 
