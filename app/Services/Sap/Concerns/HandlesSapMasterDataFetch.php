@@ -108,6 +108,102 @@ trait HandlesSapMasterDataFetch
         ]);
     }
 
+    /**
+     * @return array<int,array>
+     */
+    public function fetchArInvoices(): array
+    {
+        return $this->fetchAllWithFallback([
+            '/Invoices?$select=DocEntry,DocNum,CardCode,DocDate,DocTotal,DocStatus&$top=200',
+            '/Invoices?$top=200',
+            '/Invoices',
+        ]);
+    }
+
+    /**
+     * @return array<int,array>
+     */
+    public function fetchArCreditNotes(): array
+    {
+        return $this->fetchAllWithFallback([
+            '/CreditNotes?$select=DocEntry,DocNum,CardCode,DocDate,DocTotal,DocStatus&$top=200',
+            '/CreditNotes?$top=200',
+            '/CreditNotes',
+        ]);
+    }
+
+    /**
+     * @return array<int,array>
+     */
+    public function fetchArDownPayments(): array
+    {
+        return $this->fetchAllWithFallback([
+            '/DownPayments?$select=DocEntry,DocNum,CardCode,DocDate,DocTotal,DocStatus&$top=200',
+            '/DownPayments?$top=200',
+            '/DownPayments',
+        ]);
+    }
+
+    /**
+     * @return array<int,array>
+     */
+    public function fetchIncomingPaymentsDocuments(): array
+    {
+        return $this->fetchAllWithFallback([
+            '/IncomingPayments?$select=DocEntry,DocNum,CardCode,DocDate,TransferSum&$top=200',
+            '/IncomingPayments?$top=200',
+            '/IncomingPayments',
+        ]);
+    }
+
+    /**
+     * @return array<int,array>
+     */
+    public function fetchApInvoices(): array
+    {
+        return $this->fetchAllWithFallback([
+            '/PurchaseInvoices?$select=DocEntry,DocNum,CardCode,DocDate,DocTotal,DocStatus&$top=200',
+            '/PurchaseInvoices?$top=200',
+            '/PurchaseInvoices',
+        ]);
+    }
+
+    /**
+     * @return array<int,array>
+     */
+    public function fetchApCreditNotes(): array
+    {
+        return $this->fetchAllWithFallback([
+            '/PurchaseCreditNotes?$select=DocEntry,DocNum,CardCode,DocDate,DocTotal,DocStatus&$top=200',
+            '/PurchaseCreditNotes?$top=200',
+            '/PurchaseCreditNotes',
+        ]);
+    }
+
+    /**
+     * @return array<int,array>
+     */
+    public function fetchApDownPayments(): array
+    {
+        return $this->fetchAllWithFallback([
+            '/PurchaseDownPayments?$select=DocEntry,DocNum,CardCode,DocDate,DocTotal,DocStatus&$top=200',
+            '/PurchaseDownPayments?$top=200',
+            '/PurchaseDownPayments',
+        ]);
+    }
+
+    /**
+     * @return array<int,array>
+     */
+    public function fetchVendorPaymentsDocuments(): array
+    {
+        return $this->fetchAllWithFallback([
+            '/VendorPayments?$select=DocEntry,DocNum,CardCode,DocDate,TransferSum&$top=200',
+            '/VendorPayments?$top=200',
+            '/VendorPayments',
+        ]);
+    }
+
     public function isWarehouseIntegrationEnabled(string $warehouseCode): bool
     {
         $udfField = trim((string) config('omniful.integration_control.warehouse_udf_field', ''));

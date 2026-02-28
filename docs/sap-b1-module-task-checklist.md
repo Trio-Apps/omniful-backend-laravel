@@ -16,14 +16,14 @@ Note:
 - [x] AccountCategories - Dedicated sync method, model, and table are implemented.
 - [x] FinancialPeriods - Dedicated sync method, model, and table are implemented.
 - [ ] AR / Customer finance - Covered indirectly through order/customer flows, not as a dedicated finance module.
-- [ ] Invoices - AR reserve invoice is created through `/Orders` with `ReserveInvoice`, not as a dedicated `/Invoices` business flow.
+- [x] Invoices - Dedicated `/Invoices` sync snapshot is implemented, and AR reserve invoice flow already exists.
 - [x] CreditNotes - AR credit memo creation is implemented.
-- [ ] DownPayments - Basic catalog path configured; no dedicated flow yet.
-- [x] IncomingPayments - Customer receipt creation is implemented.
-- [ ] PurchaseInvoices - Basic catalog path configured; no dedicated flow yet.
-- [ ] PurchaseCreditNotes - Basic catalog path configured; no dedicated flow yet.
-- [ ] PurchaseDownPayments - Basic catalog path configured; no dedicated flow yet.
-- [ ] VendorPayments - Basic catalog path configured; no dedicated flow yet.
+- [x] DownPayments - Dedicated `/DownPayments` sync snapshot is implemented.
+- [x] IncomingPayments - Customer receipt creation exists and dedicated snapshot sync is implemented.
+- [x] PurchaseInvoices - Dedicated `/PurchaseInvoices` sync snapshot is implemented.
+- [x] PurchaseCreditNotes - Dedicated `/PurchaseCreditNotes` sync snapshot is implemented.
+- [x] PurchaseDownPayments - Dedicated `/PurchaseDownPayments` sync snapshot is implemented.
+- [x] VendorPayments - Dedicated `/VendorPayments` sync snapshot is implemented.
 - [x] Banks / BankAccounts - Dedicated sync methods, models, and tables are implemented.
 - [ ] Currencies / ExchangeRates - Currency validation exists; full dedicated sync/use is not complete.
 - [x] PaymentTermsTypes - Dedicated sync method, model, and table are implemented.
@@ -36,7 +36,7 @@ Note:
 - [ ] Quotations - Basic catalog path configured; no dedicated business flow yet.
 - [x] SalesOrders - Sales order / AR reserve order flow is implemented.
 - [x] DeliveryNotes - Delivery creation is implemented.
-- [ ] Invoices - No dedicated `/Invoices` create/update flow is implemented yet.
+- [x] Invoices - Dedicated `/Invoices` sync snapshot is implemented.
 - [x] CreditNotes - AR credit memo flow is implemented.
 - [ ] Returns - Return processing currently maps to AR credit memo, not a dedicated `/Returns` document flow.
 - [x] IncomingPayments - Customer collection flow is implemented.
@@ -50,10 +50,10 @@ Note:
 - [x] PurchaseOrders - Purchase order creation/update flow is implemented.
 - [x] GRPO / PurchaseDeliveryNotes - Goods receipt PO flow is implemented.
 - [x] Suppliers - Supplier create/update sync is implemented.
-- [ ] PurchaseInvoices - Basic catalog path configured; no dedicated business flow yet.
-- [ ] PurchaseCreditNotes - Basic catalog path configured; no dedicated business flow yet.
-- [ ] PurchaseDownPayments - Basic catalog path configured; no dedicated business flow yet.
-- [ ] VendorPayments - Basic catalog path configured; no dedicated business flow yet.
+- [x] PurchaseInvoices - Dedicated `/PurchaseInvoices` sync snapshot is implemented.
+- [x] PurchaseCreditNotes - Dedicated `/PurchaseCreditNotes` sync snapshot is implemented.
+- [x] PurchaseDownPayments - Dedicated `/PurchaseDownPayments` sync snapshot is implemented.
+- [x] VendorPayments - Dedicated `/VendorPayments` sync snapshot is implemented.
 
 ## Inventory
 
@@ -73,22 +73,22 @@ Note:
 ## Banking
 
 - [x] IncomingPayments - Customer receipt creation is implemented.
-- [ ] VendorPayments - Basic catalog path configured; no dedicated business flow yet.
+- [x] VendorPayments - Dedicated `/VendorPayments` sync snapshot is implemented.
 - [ ] DepositsService / Deposits - Basic catalog path configured; no dedicated business flow yet.
 - [ ] ChecksforPayment - Basic catalog path configured; no dedicated business flow yet.
 
 ## Current Ready Count
 
-- Finance ready: 9
-- Sales ready: 7
-- Purchasing ready: 3
+- Finance ready: 15
+- Sales ready: 8
+- Purchasing ready: 7
 - Inventory ready: 7
-- Banking ready: 1
+- Banking ready: 2
 
 ## Next Recommended Build Order
 
 - [x] Finance master data: ChartOfAccounts, FinancialPeriods, Banks / BankAccounts, PaymentTermsTypes
-- [ ] Direct finance docs: PurchaseInvoices, VendorPayments, DownPayments
+- [x] Direct finance docs: PurchaseInvoices, VendorPayments, DownPayments
 - [ ] Sales gaps: Quotations, direct Invoices, Returns, ItemGroups
 - [ ] Inventory gaps: InventoryTransferRequests, InventoryCounting, InventoryPosting, ProductionOrders
 - [ ] Banking gaps: Deposits, ChecksforPayment
