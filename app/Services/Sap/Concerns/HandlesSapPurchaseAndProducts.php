@@ -744,12 +744,8 @@ trait HandlesSapPurchaseAndProducts
         $series = $seriesInfo['series'];
         $seriesIndicator = $seriesInfo['indicator'];
 
-        $supplierCode = data_get($data, 'supplier.code');
-        if (!$supplierCode) {
-            throw new \RuntimeException('Missing supplier code for SAP PO (supplier.code)');
-        }
-
-        $supplierCode = $this->ensureSupplierExists((string) $supplierCode, $data);
+        $supplierCode = $this->resolvePurchaseOrderSupplierCode($data);
+        $supplierCode = $this->ensureSupplierExists($supplierCode, $data);
 
         $lines = [];
         $lineIndex = 0;
@@ -767,8 +763,8 @@ trait HandlesSapPurchaseAndProducts
 
             $line = [
                 'ItemCode' => $itemCode,
-                'Quantity' => (float) (data_get($item, 'quantity') ?? 0),
-                'UnitPrice' => (float) (data_get($item, 'unit_price') ?? 0),
+                'Quantity' => $this->resolvePurchaseOrderLineQuantity((array) $item),
+                'UnitPrice' => $this->resolvePurchaseOrderLineUnitPrice((array) $item),
             ];
 
             if ($hubCode) {
@@ -829,6 +825,84 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return $response->json() ?? [];
+    }
+
+    private function resolvePurchaseOrderSupplierCode(array $data): string
+    {
+        $candidates = [
+            data_get($data, 'supplier.code'),
+            data_get($data, 'supplier.supplier_code'),
+            data_get($data, 'supplier.vendor_code'),
+            data_get($data, 'supplier.card_code'),
+        ];
+
+        foreach ($candidates as $candidate) {
+            $value = trim((string) $candidate);
+            if ($value !== '') {
+                return $value;
+            }
+        }
+
+        $seed = (string) (
+            data_get($data, 'supplier.id')
+            ?? data_get($data, 'supplier.email')
+            ?? $this->extractSupplierPhone($data)
+            ?? data_get($data, 'supplier.name')
+            ?? data_get($data, 'display_id')
+            ?? data_get($data, 'id')
+            ?? ''
+        );
+
+        if ($seed === '') {
+            throw new \RuntimeException('Missing supplier identifier for SAP PO (supplier.code / supplier.id)');
+        }
+
+        return 'OMNS' . strtoupper(substr(sha1($seed), 0, 10));
+    }
+
+    private function resolvePurchaseOrderLineQuantity(array $item): float
+    {
+        $candidates = [
+            data_get($item, 'quantity'),
+            data_get($item, 'ordered_quantity'),
+            data_get($item, 'requested_quantity'),
+            data_get($item, 'approved_quantity'),
+            data_get($item, 'received_quantity'),
+        ];
+
+        foreach ($candidates as $candidate) {
+            if (is_numeric($candidate) && (float) $candidate > 0) {
+                return (float) $candidate;
+            }
+        }
+
+        return 0.0;
+    }
+
+    private function resolvePurchaseOrderLineUnitPrice(array $item): float
+    {
+        $candidates = [
+            data_get($item, 'unit_price'),
+            data_get($item, 'buying_price'),
+            data_get($item, 'purchase_price'),
+            data_get($item, 'cost'),
+            data_get($item, 'price'),
+            data_get($item, 'sku.cost'),
+        ];
+
+        foreach ($candidates as $candidate) {
+            if (is_numeric($candidate) && (float) $candidate >= 0) {
+                return (float) $candidate;
+            }
+        }
+
+        $total = data_get($item, 'total');
+        $quantity = $this->resolvePurchaseOrderLineQuantity($item);
+        if (is_numeric($total) && (float) $total > 0 && $quantity > 0) {
+            return round((float) $total / $quantity, 4);
+        }
+
+        return 0.0;
     }
 
 

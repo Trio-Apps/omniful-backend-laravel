@@ -118,6 +118,8 @@ Current coverage:
 - Status mapping supports create, update, receive, and cancel variants.
 - Status extraction now checks `status`, `status_code`, `purchase_order_status`, and `po_status`.
 - Rule matching now requires all defined rule conditions instead of broad `event OR status` matching.
+- SAP PO creation now accepts documented supplier identifiers beyond `supplier.code`, including `supplier.id`, and derives a deterministic vendor code when needed.
+- PO line mapping now supports quantity/price fallbacks such as `ordered_quantity`, `approved_quantity`, `buying_price`, and `cost`.
 
 Still needed:
 - Validate exact tenant status names for non-create events.
