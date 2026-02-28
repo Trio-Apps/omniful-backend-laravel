@@ -25,6 +25,14 @@ Important distinction:
 | BRS | Close the signed business requirements for Dkhoon | Core workflow coverage is now in place, with operational/config validation still remaining |
 | Maaz | Build broad SAP B1 basic module connection on a high level | Broadly covered at connection/snapshot level, but many items are not full transactional workflows |
 
+## Execution Model
+
+- Webhook-driven coverage should be tracked by topic, not by raw SAP API list.
+- One Omniful webhook topic can drive multiple SAP outcomes depending on `event_name`, `status`, `action`, and `entity`.
+- The detailed topic-to-capability mapping now lives in:
+  `docs/webhook-coverage-matrix.md`
+- Any item not covered by an active webhook topic should be treated as `snapshot/manual sync driven` unless a dedicated transactional trigger is added.
+
 ## BRS Scope
 
 ### In Scope and Ready (Business Flow)
@@ -257,6 +265,7 @@ Important distinction:
 
 - [x] Implement transactional `Inventory Counting` flow (`Omniful -> SAP`) instead of snapshot-only coverage.
 - [x] Add direct `order canceled -> Credit Note` mapping on the `order` webhook path in addition to the existing `return-order` flow.
+- [ ] Collect real tenant payloads for each active webhook topic so the field mapping can be narrowed to the exact live schema.
 - [ ] Validate and enable accounting automations in production config:
   `Card Fees JE`, `COGS JE`, and `COGS Cancellation / Reversal JE`.
 - [ ] Run full tenant validation against the live SAP Service Layer to confirm all endpoint names and payload assumptions used by the new snapshot connectors.
