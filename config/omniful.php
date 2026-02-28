@@ -83,6 +83,11 @@ return [
             'routes' => [
                 'inventory.update.event|receiving|purchase_order' => 'grpo',
                 'inventory.update.event|manual_edit|hub_inventory' => 'manual_inventory_adjustment',
+                'inventory.update.event|cycle_count|hub_inventory' => 'inventory_counting',
+                'inventory.update.event|inventory_counting|hub_inventory' => 'inventory_counting',
+                'inventory.update.event|counting|hub_inventory' => 'inventory_counting',
+                'inventory.update.event|cycle_count|inventory' => 'inventory_counting',
+                'inventory.update.event|inventory_counting|inventory' => 'inventory_counting',
             ],
         ],
         'return_order' => [
@@ -97,6 +102,8 @@ return [
             'initial_statuses' => ['created', 'new', 'pending', 'confirmed', 'on_hold'],
             'delivery_event_contains' => ['ship', 'deliver'],
             'delivery_statuses' => ['shipped', 'delivered', 'completed'],
+            'credit_note_event_contains' => ['cancel'],
+            'credit_note_statuses' => ['cancelled', 'canceled', 'returned'],
             'prepaid_indicators' => ['prepaid', 'online', 'card', 'credit_card', 'paid'],
             'cod_indicators' => ['cod', 'cash_on_delivery', 'cash on delivery'],
         ],

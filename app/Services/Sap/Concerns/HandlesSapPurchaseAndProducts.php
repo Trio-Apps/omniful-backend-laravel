@@ -2306,7 +2306,19 @@ trait HandlesSapPurchaseAndProducts
                 $qty = data_get($item, 'returned_quantity');
             }
             if ($qty === null) {
+                $qty = data_get($item, 'cancel_quantity');
+            }
+            if ($qty === null) {
+                $qty = data_get($item, 'cancelled_quantity');
+            }
+            if ($qty === null) {
+                $qty = data_get($item, 'canceled_quantity');
+            }
+            if ($qty === null) {
                 $qty = data_get($item, 'delivered_quantity');
+            }
+            if ($qty === null) {
+                $qty = data_get($item, 'quantity');
             }
 
             $qty = (float) ($qty ?? 0);
@@ -2317,6 +2329,12 @@ trait HandlesSapPurchaseAndProducts
             $unitPrice = data_get($item, 'unit_price');
             if ($unitPrice === null) {
                 $unitPrice = data_get($item, 'price');
+            }
+            if ($unitPrice === null) {
+                $unitPrice = data_get($item, 'selling_price');
+            }
+            if ($unitPrice === null) {
+                $unitPrice = data_get($item, 'display_price');
             }
 
             $lines[] = [

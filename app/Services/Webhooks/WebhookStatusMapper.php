@@ -67,6 +67,15 @@ class WebhookStatusMapper
             ];
         }
 
+        if ($this->isInventoryCountingRoute($eventName, $action, $entity)) {
+            return [
+                'mapped' => true,
+                'sap_action' => 'inventory_counting',
+                'key' => $key,
+                'reason' => null,
+            ];
+        }
+
         return [
             'mapped' => !$strict ? true : false,
             'sap_action' => null,
@@ -160,6 +169,32 @@ class WebhookStatusMapper
         return ['eligible' => $eventOk || $statusOk, 'reason' => null];
     }
 
+    /**
+     * @return array{eligible:bool,reason:?string}
+     */
+    public function resolveOrderCreditEligibility(string $eventName, string $status): array
+    {
+        $eventName = $this->normalize($eventName);
+        $status = $this->normalizeOrderStatus($status);
+        $strict = (bool) config('omniful.status_mapping.order.strict', false);
+
+        $eventRules = array_map([$this, 'normalize'], (array) config('omniful.status_mapping.order.credit_note_event_contains', []));
+        $statusRules = array_map([$this, 'normalize'], (array) config('omniful.status_mapping.order.credit_note_statuses', []));
+
+        $eventSignal = $eventRules !== [] && $this->containsAny($eventName, $eventRules);
+        $statusOk = $statusRules !== [] && in_array($status, $statusRules, true);
+
+        if ($statusOk || $eventSignal) {
+            return ['eligible' => true, 'reason' => null];
+        }
+
+        if ($strict) {
+            return ['eligible' => false, 'reason' => 'Unmapped order event/status for credit note creation'];
+        }
+
+        return ['eligible' => false, 'reason' => null];
+    }
+
     private function defaultPurchaseOrderStatus(?string $fallback): string
     {
         if ($fallback && $fallback !== '') {
@@ -186,6 +221,34 @@ class WebhookStatusMapper
     private function normalize(string $value): string
     {
         return strtolower(trim($value));
+    }
+
+    private function isInventoryCountingRoute(string $eventName, string $action, string $entity): bool
+    {
+        $supportedEntities = ['hub_inventory', 'inventory', 'cycle_count', 'inventory_counting'];
+        $entityMatches = $entity === ''
+            || in_array($entity, $supportedEntities, true)
+            || str_contains($entity, 'inventory');
+
+        if (!$entityMatches) {
+            return false;
+        }
+
+        $signals = [$action, $eventName];
+        foreach ($signals as $signal) {
+            if (
+                str_contains($signal, 'cycle_count')
+                || str_contains($signal, 'inventory_count')
+                || str_contains($signal, 'stock_take')
+                || str_contains($signal, 'stocktake')
+                || str_contains($signal, 'counting')
+                || str_contains($signal, 'count')
+            ) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function normalizeOrderStatus(string $value): string

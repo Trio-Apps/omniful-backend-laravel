@@ -56,8 +56,20 @@
                     <div class="po-value">{{ $record->sap_doc_num ?: '-' }}</div>
                 </div>
                 <div class="po-card">
+                    <div class="po-label">SAP Credit Note</div>
+                    <div class="po-value">{{ $record->sap_credit_note_doc_num ?: ($record->sap_credit_note_status ?: '-') }}</div>
+                </div>
+                <div class="po-card">
                     <div class="po-label">SAP Error</div>
                     <div class="po-value po-break">{{ $record->sap_error ?: '-' }}</div>
+                </div>
+                <div class="po-card">
+                    <div class="po-label">Cancel COGS</div>
+                    <div class="po-value">{{ $record->sap_cancel_cogs_journal_num ?: ($record->sap_cancel_cogs_status ?: '-') }}</div>
+                </div>
+                <div class="po-card">
+                    <div class="po-label">Credit Note Error</div>
+                    <div class="po-value po-break">{{ $record->sap_credit_note_error ?: ($record->sap_cancel_cogs_error ?: '-') }}</div>
                 </div>
             </div>
         </x-filament::section>

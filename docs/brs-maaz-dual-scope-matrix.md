@@ -22,7 +22,7 @@ Important distinction:
 
 | Scope | Intent | Current Position |
 | --- | --- | --- |
-| BRS | Close the signed business requirements for Dkhoon | Mostly covered, with a small number of real workflow gaps remaining |
+| BRS | Close the signed business requirements for Dkhoon | Core workflow coverage is now in place, with operational/config validation still remaining |
 | Maaz | Build broad SAP B1 basic module connection on a high level | Broadly covered at connection/snapshot level, but many items are not full transactional workflows |
 
 ## BRS Scope
@@ -36,6 +36,7 @@ Important distinction:
 | New prepaid order -> AR Reserve Invoice | READY (Business Flow) | Implemented through SAP `/Orders` with `ReserveInvoice=tYES` and fallback handling |
 | New prepaid order -> Incoming Payment | READY (Business Flow) | Incoming payment creation is implemented |
 | Shipped order -> Delivery | READY (Business Flow) | Delivery is created from the reserve order |
+| Canceled / Canceled after Delivery -> Credit Note | READY (Business Flow) | `order` webhook can now create a direct SAP credit memo when the order status is canceled/cancelled |
 | Items sync (SAP -> Omniful) | READY (Business Flow) | Create and update flows exist |
 | Bundles sync (SAP -> Omniful) | READY (Business Flow) | Bundle handling is implemented |
 | Item integration control via UDF | READY (Business Flow) | UDF-based inclusion logic exists |
@@ -58,13 +59,12 @@ Important distinction:
 | Card Fees automatic JE | CONDITIONAL | Implemented, but depends on feature flag and account configuration |
 | COGS automatic JE | CONDITIONAL | Implemented, but depends on feature flag and account configuration |
 | Credit Note with automatic COGS cancellation JE | CONDITIONAL | Return COGS reversal logic exists, but depends on feature flag and account configuration |
-| Canceled / Canceled after Delivery -> Credit Note | CONDITIONAL | Credit memo flow exists through `return-order` processing; if the real tenant sends cancel as `order` status instead of `return-order`, extra mapping is still needed |
 
-### In Scope and Missing
+### In Scope Code Gaps That Are Now Closed
 
 | Requirement | Status | Notes |
 | --- | --- | --- |
-| Inventory Counting (transactional workflow) | MISSING | Only snapshot/basic connection exists; no dedicated transactional handler is implemented yet |
+| Inventory Counting (transactional workflow) | READY (Business Flow) | `inventory` webhook can now create transactional SAP inventory-counting documents |
 
 ### Out of Scope in the BRS (Even if Built Later)
 
@@ -191,7 +191,7 @@ Important distinction:
 | --- | --- | --- |
 | ItemGroups | READY (Basic Connection) | Snapshot sync exists |
 | InventoryTransferRequests | READY (Basic Connection) | Snapshot sync exists |
-| InventoryCounting | READY (Basic Connection) | Snapshot sync exists only |
+| InventoryCounting | READY (Business Flow + Basic Connection) | Snapshot sync exists, and the webhook flow can now create SAP inventory-counting documents |
 | InventoryPosting | READY (Basic Connection) | Snapshot sync exists only |
 | ProductionOrders | READY (Basic Connection) | Snapshot sync exists only |
 
@@ -199,7 +199,7 @@ Important distinction:
 
 | Gap | Status | Notes |
 | --- | --- | --- |
-| InventoryCounting transactional flow | MISSING | Real gap for both BRS and Maaz operational coverage |
+| InventoryCounting transactional flow | READY (Business Flow) | Webhook-driven SAP inventory-counting creation is now implemented |
 | InventoryPosting transactional flow | MISSING | Snapshot only at the moment |
 | ProductionOrders transactional flow | MISSING | Snapshot only at the moment |
 
@@ -229,20 +229,20 @@ Important distinction:
 
 ### Already Safe to Present as Covered
 
-- BRS core transactional flows, except the specifically listed gaps and conditional items
+- BRS core transactional flows, with only configuration-dependent JE validation still needing deployment confirmation
 - Maaz basic module connection for broad SAP module visibility, sync, local storage, and dashboard control
 - Centralized SAP dashboard pages, background sync queue, and connection-level sync trigger
 
 ### Should Be Presented Carefully
 
 - Anything marked `READY (Basic Connection)` should be described as `connected / synced / visible`, not as a full transactional automation
-- Credit Note coverage for the BRS should be described as `implemented through return-order flow`, pending confirmation that tenant cancel events use that path
+- Credit Note coverage for the BRS can now be described as `implemented through return-order and canceled-order webhook flows`
 - Journal Entry automation should be described as `implemented but configuration-dependent`
 
 ### Real Next Priority if We Want to Satisfy Both Sides Cleanly
 
-1. Implement transactional `Inventory Counting`
-2. Confirm tenant cancel-event shape and, if needed, map `order canceled` directly to credit memo flow
+1. Validate and enable accounting automations in production config
+2. Confirm live tenant payload variants against the real SAP endpoints after deployment
 3. Decide which Maaz items must remain snapshot-only and which need full posting workflows
 
 ## Practical Conclusion
@@ -255,9 +255,8 @@ Important distinction:
 
 ### Priority 1: Shared Gaps (Affect BRS + Maaz)
 
-- [ ] Implement transactional `Inventory Counting` flow (`Omniful -> SAP`) instead of snapshot-only coverage.
-- [ ] Confirm the real tenant cancel-event shape from Omniful:
-  if cancel comes as `order` status and not `return-order`, add direct `order canceled -> Credit Note` mapping.
+- [x] Implement transactional `Inventory Counting` flow (`Omniful -> SAP`) instead of snapshot-only coverage.
+- [x] Add direct `order canceled -> Credit Note` mapping on the `order` webhook path in addition to the existing `return-order` flow.
 - [ ] Validate and enable accounting automations in production config:
   `Card Fees JE`, `COGS JE`, and `COGS Cancellation / Reversal JE`.
 - [ ] Run full tenant validation against the live SAP Service Layer to confirm all endpoint names and payload assumptions used by the new snapshot connectors.
@@ -289,8 +288,7 @@ Important distinction:
 
 ### Suggested Execution Order
 
-1. Close `Inventory Counting` transactional flow.
-2. Confirm the real Omniful cancel-event path and close `canceled -> Credit Note` if needed.
-3. Validate accounting configuration and enable JE automations.
-4. Decide which Maaz items remain snapshot-only versus full workflows.
-5. Build only the transactional upgrades that are explicitly required after that decision.
+1. Validate accounting configuration and enable JE automations.
+2. Run live tenant validation for the new webhook-driven inventory counting and canceled-order credit note paths.
+3. Decide which Maaz items remain snapshot-only versus full workflows.
+4. Build only the transactional upgrades that are explicitly required after that decision.

@@ -85,11 +85,7 @@ class ValidateAcceptanceCriteria extends Command
             $this->criterion('Stock Transfer: Main → Branch', fn () => $this->methodCheck(\App\Services\Sap\Concerns\HandlesSapInventoryDocs::class, 'createStockTransfer', 'app/Services/Sap/Concerns/HandlesSapInventoryDocs.php')),
             $this->criterion('Stock Transfer: Branch → Branch', fn () => $this->methodCheck(\App\Services\Sap\Concerns\HandlesSapInventoryDocs::class, 'createStockTransfer', 'app/Services/Sap/Concerns/HandlesSapInventoryDocs.php')),
             $this->criterion('In-Transit Warehouse Handling', fn () => $this->methodCheck(\App\Services\Sap\Concerns\HandlesSapInventoryDocs::class, 'createStockTransferViaTransit', 'app/Services/Sap/Concerns/HandlesSapInventoryDocs.php')),
-            $this->criterion('Inventory Counting Sync', fn () => [
-                'status' => 'pending',
-                'evidence' => 'n/a',
-                'note' => 'No dedicated inventory-counting handler found',
-            ]),
+            $this->criterion('Inventory Counting Sync', fn () => $this->methodCheck(\App\Services\Sap\Concerns\HandlesSapInventoryDocs::class, 'createInventoryCounting', 'app/Services/Sap/Concerns/HandlesSapInventoryDocs.php')),
             $this->criterion('AR Reserve Invoice Accounting Entries', fn () => [
                 'status' => 'sap_auto',
                 'evidence' => 'SAP automatic posting',

@@ -23,6 +23,47 @@ trait HandlesSapInventoryDocs
         }
     }
 
+    public function createInventoryCounting(array $items, ?string $hubCode, string $remarks, ?string $countDate = null): array
+    {
+        $lines = $this->buildInventoryCountingLines($items, $hubCode);
+        if ($lines === []) {
+            return [
+                'ignored' => true,
+                'reason' => 'No inventory counting lines found',
+            ];
+        }
+
+        $body = [
+            'CountDate' => $this->formatDate($countDate),
+            'Remarks' => $remarks,
+            'InventoryCountingLines' => $lines,
+        ];
+
+        $attempts = [
+            ['/InventoryCountings', $body],
+            ['/InventoryCountingsService_Add', ['InventoryCounting' => $body]],
+            ['/InventoryCountingsService_Add', $body],
+        ];
+
+        $errors = [];
+        foreach ($attempts as [$path, $payload]) {
+            $response = $this->post($path, $payload);
+            if ($response->successful()) {
+                $result = $response->json() ?? [];
+                $result['ignored'] = false;
+
+                return $result;
+            }
+
+            $errors[] = $path . ': ' . $response->status() . ' ' . $response->body();
+        }
+
+        throw new \RuntimeException(
+            'SAP inventory counting create failed: ' . implode(' | ', $errors)
+            . ' | Payload: ' . json_encode($body, JSON_UNESCAPED_UNICODE)
+        );
+    }
+
 
     public function createInventoryGoodsReceipt(array $items, ?string $hubCode, string $remarks): array
     {
@@ -239,6 +280,85 @@ trait HandlesSapInventoryDocs
         ];
     }
 
+    private function buildInventoryCountingLines(array $items, ?string $hubCode): array
+    {
+        $lines = [];
+        $warehouseCode = null;
+        $binAbsEntry = null;
+        $binManaged = false;
+        if ($hubCode) {
+            $warehouseCode = $this->ensureWarehouseExists($hubCode, 1);
+            $binManaged = $this->isWarehouseBinManaged($warehouseCode);
+            if ($binManaged) {
+                $binAbsEntry = $this->getFirstBinAbsEntry($warehouseCode);
+                if ($binAbsEntry === null) {
+                    throw new \RuntimeException('SAP bin-managed warehouse has no bins (Warehouse=' . $warehouseCode . ')');
+                }
+            }
+        }
+
+        foreach ($items as $item) {
+            $itemCode = data_get($item, 'seller_sku_code')
+                ?? data_get($item, 'sku_code')
+                ?? data_get($item, 'seller_sku_id');
+            $lineWarehouseCode = $warehouseCode;
+            $lineBinManaged = $binManaged;
+            $lineBinAbsEntry = $binAbsEntry;
+            if (!$lineWarehouseCode) {
+                $candidateWarehouse = trim((string) (
+                    data_get($item, 'warehouse_code')
+                    ?? data_get($item, 'warehouse')
+                    ?? data_get($item, 'hub_code')
+                    ?? ''
+                ));
+                if ($candidateWarehouse !== '') {
+                    $lineWarehouseCode = $this->ensureWarehouseExists($candidateWarehouse, 1);
+                    $lineBinManaged = $this->isWarehouseBinManaged($lineWarehouseCode);
+                    if ($lineBinManaged) {
+                        $lineBinAbsEntry = $this->getFirstBinAbsEntry($lineWarehouseCode);
+                        if ($lineBinAbsEntry === null) {
+                            throw new \RuntimeException('SAP bin-managed warehouse has no bins (Warehouse=' . $lineWarehouseCode . ')');
+                        }
+                    } else {
+                        $lineBinAbsEntry = null;
+                    }
+                }
+            }
+
+            [$hasCount, $countedQty] = $this->extractInventoryCountedQuantity((array) $item);
+            if (!$itemCode || !$hasCount || $countedQty < 0) {
+                continue;
+            }
+
+            $this->syncProductFromOmniful([
+                'seller_sku_code' => $itemCode,
+                'name' => (string) (data_get($item, 'name') ?? $itemCode),
+            ], 'inventory_counting');
+
+            if ($lineWarehouseCode) {
+                $this->ensureItemWarehouseExists($itemCode, $lineWarehouseCode);
+            }
+
+            $line = [
+                'ItemCode' => $itemCode,
+                'Counted' => 'tYES',
+                'CountedQuantity' => $countedQty,
+            ];
+
+            if ($lineWarehouseCode) {
+                $line['WarehouseCode'] = $lineWarehouseCode;
+            }
+
+            if ($lineBinManaged && $lineBinAbsEntry !== null) {
+                $line['BinEntry'] = $lineBinAbsEntry;
+            }
+
+            $lines[] = $line;
+        }
+
+        return $lines;
+    }
+
 
     private function buildInventoryLinesForInventoryDoc(array $items, ?string $hubCode, bool $isIssue): array
     {
@@ -318,6 +438,28 @@ trait HandlesSapInventoryDocs
         }
 
         return $lines;
+    }
+
+    /**
+     * @return array{0:bool,1:float}
+     */
+    private function extractInventoryCountedQuantity(array $item): array
+    {
+        $candidates = [
+            data_get($item, 'counted_quantity'),
+            data_get($item, 'count_quantity'),
+            data_get($item, 'quantity_location_pass_inventory_sum'),
+            data_get($item, 'quantity_on_hand'),
+            data_get($item, 'quantity'),
+        ];
+
+        foreach ($candidates as $candidate) {
+            if (is_numeric($candidate) && (float) $candidate >= 0) {
+                return [true, (float) $candidate];
+            }
+        }
+
+        return [false, 0.0];
     }
 
 
@@ -646,4 +788,3 @@ trait HandlesSapInventoryDocs
     }
 
 }
-

@@ -89,6 +89,62 @@ class InventoryWebhookService
                     }
                     $sync->save();
                 }
+            } elseif (($route['sap_action'] ?? null) === 'inventory_counting') {
+                $items = is_array($items) ? $items : [];
+                $eventKey = $this->buildInventoryEventKey($payload, $items, null, 'inventory_counting');
+
+                $sync = $this->firstOrCreateSyncEvent(
+                    $eventKey,
+                    [
+                        'source_type' => 'omniful_inventory_event',
+                        'source_id' => $event->id,
+                        'sap_action' => 'inventory_counting',
+                        'sap_status' => 'pending',
+                        'payload' => $payload,
+                    ]
+                );
+
+                if ($sync->wasRecentlyCreated || $sync->sap_status === 'pending') {
+                    $client = app(SapServiceLayerClient::class);
+                    $result = $client->createInventoryCounting(
+                        $items,
+                        $hubCode,
+                        $this->buildInventoryCountingRemarks($payload),
+                        (string) (
+                            data_get($data, 'counted_at')
+                            ?? data_get($data, 'updated_at')
+                            ?? data_get($data, 'created_at')
+                            ?? ''
+                        )
+                    );
+
+                    if (($result['ignored'] ?? false) === true) {
+                        $event->sap_status = 'ignored';
+                        $event->sap_error = (string) ($result['reason'] ?? 'Ignored: no inventory counting lines found');
+
+                        $sync->sap_status = 'ignored';
+                        $sync->sap_error = $event->sap_error;
+                    } else {
+                        $event->sap_status = 'created';
+                        $event->sap_doc_entry = $result['DocEntry'] ?? $result['DocumentEntry'] ?? null;
+                        $event->sap_doc_num = $result['DocNum'] ?? $result['DocumentNumber'] ?? null;
+                        $event->sap_error = null;
+
+                        $sync->sap_status = 'created';
+                        $sync->sap_doc_entry = $event->sap_doc_entry;
+                        $sync->sap_doc_num = $event->sap_doc_num;
+                        $sync->sap_error = null;
+                    }
+
+                    $event->save();
+                    $sync->save();
+                } else {
+                    $event->sap_status = (string) ($sync->sap_status === 'failed' ? 'failed' : 'ignored');
+                    $event->sap_doc_entry = $sync->sap_doc_entry;
+                    $event->sap_doc_num = $sync->sap_doc_num;
+                    $event->sap_error = (string) ($sync->sap_error ?: 'Ignored: duplicate inventory counting event already synced');
+                    $event->save();
+                }
             } elseif (($route['sap_action'] ?? null) === 'manual_inventory_adjustment') {
                 $items = is_array($items) ? $items : [];
                 $client = app(SapServiceLayerClient::class);
@@ -243,7 +299,13 @@ class InventoryWebhookService
             $itemCode = data_get($item, 'seller_sku_code')
                 ?? data_get($item, 'sku_code')
                 ?? data_get($item, 'seller_sku_id');
-            $qty = data_get($item, 'quantity_location_pass_inventory_sum');
+            $qty = data_get($item, 'counted_quantity');
+            if ($qty === null) {
+                $qty = data_get($item, 'count_quantity');
+            }
+            if ($qty === null) {
+                $qty = data_get($item, 'quantity_location_pass_inventory_sum');
+            }
             if ($qty === null) {
                 $qty = data_get($item, 'quantity_on_hand');
             }
@@ -332,6 +394,36 @@ class InventoryWebhookService
         }
 
         return $qty;
+    }
+
+    private function buildInventoryCountingRemarks(array $payload): string
+    {
+        $parts = ['Omniful Inventory Counting'];
+
+        $reference = data_get($payload, 'data.inventory_count_id')
+            ?? data_get($payload, 'data.count_id')
+            ?? data_get($payload, 'data.id')
+            ?? data_get($payload, 'id');
+        if ($reference) {
+            $parts[] = (string) $reference;
+        }
+
+        $action = (string) data_get($payload, 'action', '');
+        if ($action !== '') {
+            $parts[] = $action;
+        }
+
+        $entity = (string) data_get($payload, 'entity', '');
+        if ($entity !== '') {
+            $parts[] = $entity;
+        }
+
+        $hubCode = (string) data_get($payload, 'data.hub_code', '');
+        if ($hubCode !== '') {
+            $parts[] = 'Hub ' . $hubCode;
+        }
+
+        return implode(' | ', $parts);
     }
 
     /**

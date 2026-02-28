@@ -30,8 +30,13 @@ class OrderWebhookService
         $mapper = app(WebhookStatusMapper::class);
         $invoiceEligibility = $mapper->resolveOrderInvoiceEligibility($eventName, $status, $paymentSignals);
         $deliveryEligibility = $mapper->resolveOrderDeliveryEligibility($eventName, $status);
+        $creditEligibility = $mapper->resolveOrderCreditEligibility($eventName, $status);
 
-        if (!($invoiceEligibility['eligible'] ?? false) && !($deliveryEligibility['eligible'] ?? false)) {
+        if (
+            !($invoiceEligibility['eligible'] ?? false)
+            && !($deliveryEligibility['eligible'] ?? false)
+            && !($creditEligibility['eligible'] ?? false)
+        ) {
             if (!empty($order->sap_doc_entry)) {
                 $this->syncSalesOrderMetadata($order, $eventName, $status);
                 return;
@@ -75,6 +80,9 @@ class OrderWebhookService
         }
 
         $this->createCogsJournalIfEligible($order);
+        if (($creditEligibility['eligible'] ?? false)) {
+            $this->createCreditNoteIfEligible($order, $data);
+        }
         $this->syncSalesOrderMetadata($order, $eventName, $status);
     }
 
@@ -262,6 +270,51 @@ class OrderWebhookService
         $order->save();
     }
 
+    private function createCreditNoteIfEligible(OmnifulOrder $order, array $data): void
+    {
+        if (!empty($order->sap_credit_note_doc_entry)) {
+            if ((string) $order->sap_credit_note_status === '') {
+                $order->sap_credit_note_status = 'created';
+                $order->save();
+            }
+
+            $this->createCancelCogsReversalIfEligible($order);
+            return;
+        }
+
+        if (empty($order->sap_doc_entry) && empty($order->sap_delivery_doc_entry)) {
+            $order->sap_credit_note_status = 'blocked';
+            $order->sap_credit_note_error = 'Credit note blocked: source order is missing in SAP';
+            $order->save();
+            return;
+        }
+
+        $externalId = trim((string) ($order->external_id ?? ''));
+        $creditReference = $externalId !== '' ? ($externalId . '-cancel') : 'order-cancel';
+
+        $client = app(SapServiceLayerClient::class);
+        $result = $client->createArCreditMemoFromReturnOrder($data, [
+            'external_id' => $creditReference,
+            'base_delivery_doc_entry' => (int) ($order->sap_delivery_doc_entry ?? 0),
+            'base_order_doc_entry' => (int) ($order->sap_doc_entry ?? 0),
+        ]);
+
+        if (($result['ignored'] ?? false) === true) {
+            $order->sap_credit_note_status = 'ignored';
+            $order->sap_credit_note_error = (string) ($result['reason'] ?? 'Credit note ignored');
+            $order->save();
+            return;
+        }
+
+        $order->sap_credit_note_status = 'created';
+        $order->sap_credit_note_doc_entry = (string) ($result['DocEntry'] ?? '');
+        $order->sap_credit_note_doc_num = (string) ($result['DocNum'] ?? '');
+        $order->sap_credit_note_error = null;
+        $order->save();
+
+        $this->createCancelCogsReversalIfEligible($order);
+    }
+
     private function createCogsJournalIfEligible(OmnifulOrder $order): void
     {
         if (!(bool) config('omniful.order_accounting.cogs_journal_enabled', false)) {
@@ -301,6 +354,48 @@ class OrderWebhookService
         $order->sap_cogs_journal_entry = (string) ($result['TransId'] ?? '');
         $order->sap_cogs_journal_num = (string) ($result['Number'] ?? $result['JdtNum'] ?? '');
         $order->sap_cogs_error = null;
+        $order->save();
+    }
+
+    private function createCancelCogsReversalIfEligible(OmnifulOrder $order): void
+    {
+        if (!(bool) config('omniful.order_accounting.return_cogs_reversal_enabled', false)) {
+            return;
+        }
+
+        if (!empty($order->sap_cancel_cogs_journal_entry)) {
+            if ((string) $order->sap_cancel_cogs_status === '') {
+                $order->sap_cancel_cogs_status = 'created';
+                $order->save();
+            }
+            return;
+        }
+
+        $creditMemoDocEntry = (int) ($order->sap_credit_note_doc_entry ?? 0);
+        if ($creditMemoDocEntry <= 0) {
+            return;
+        }
+
+        $client = app(SapServiceLayerClient::class);
+        $result = $client->createCogsReversalJournalForCreditMemo([
+            'credit_memo_doc_entry' => $creditMemoDocEntry,
+            'reference' => (string) ($order->external_id ?? ''),
+            'memo' => 'COGS reversal from canceled Omniful order ' . (string) ($order->external_id ?? ''),
+            'expense_account' => config('omniful.order_accounting.cogs_expense_account'),
+            'offset_account' => config('omniful.order_accounting.inventory_offset_account'),
+        ]);
+
+        if (($result['ignored'] ?? false) === true) {
+            $order->sap_cancel_cogs_status = 'ignored';
+            $order->sap_cancel_cogs_error = (string) ($result['reason'] ?? 'Cancel COGS reversal ignored');
+            $order->save();
+            return;
+        }
+
+        $order->sap_cancel_cogs_status = 'created';
+        $order->sap_cancel_cogs_journal_entry = (string) ($result['TransId'] ?? '');
+        $order->sap_cancel_cogs_journal_num = (string) ($result['Number'] ?? $result['JdtNum'] ?? '');
+        $order->sap_cancel_cogs_error = null;
         $order->save();
     }
 

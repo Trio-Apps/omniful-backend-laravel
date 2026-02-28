@@ -56,6 +56,16 @@ class OmnifulOrderMonitor extends Page implements HasTable
             TextColumn::make('sap_doc_num')
                 ->label('SAP Order')
                 ->toggleable(),
+            TextColumn::make('sap_credit_note_status')
+                ->label('Credit Note')
+                ->badge()
+                ->color(fn ($state) => match ($state) {
+                    'created', 'updated', 'logged' => 'success',
+                    'failed' => 'danger',
+                    'ignored', 'blocked', 'pending', 'retrying' => 'warning',
+                    default => 'gray',
+                })
+                ->toggleable(),
             TextColumn::make('last_event_type')
                 ->label('Last Event')
                 ->toggleable(),
