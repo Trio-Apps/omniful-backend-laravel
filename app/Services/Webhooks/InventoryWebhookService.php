@@ -267,12 +267,15 @@ class InventoryWebhookService
     private function extractPurchaseOrderDisplayId(array $payload): ?string
     {
         $candidates = [
+            data_get($payload, 'display_id'),
             data_get($payload, 'entity_identifier'),
             data_get($payload, 'entity_id'),
+            data_get($payload, 'status_reference_id'),
             data_get($payload, 'data.display_id'),
             data_get($payload, 'data.purchase_order_display_id'),
             data_get($payload, 'data.purchase_order_id'),
             data_get($payload, 'data.po_id'),
+            data_get($payload, 'data.status_reference_id'),
             data_get($payload, 'data.entity_identifier'),
             data_get($payload, 'data.entity_id'),
             data_get($payload, 'data.reference_id'),
@@ -443,6 +446,7 @@ class InventoryWebhookService
         foreach ($items as $item) {
             $candidates[] = data_get($item, 'hub_code');
             $candidates[] = data_get($item, 'warehouse_code');
+            $candidates[] = data_get($item, 'destination_hub_code');
         }
 
         foreach ($candidates as $candidate) {
@@ -637,6 +641,7 @@ class InventoryWebhookService
 
         $reference = data_get($payload, 'data.inventory_count_id')
             ?? data_get($payload, 'data.count_id')
+            ?? data_get($payload, 'entity_identifier')
             ?? data_get($payload, 'data.id')
             ?? data_get($payload, 'id');
         if ($reference) {

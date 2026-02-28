@@ -151,6 +151,7 @@ Current coverage:
 - counting-related routes -> Inventory Counting
 - The webhook is ignored safely when `inventory` direction is set to `SAP -> Omniful`.
 - The documented Omniful shape with `data` as a direct line array is now supported.
+- Inventory reference/hub extraction now also checks fields like `display_id`, `status_reference_id`, and item-level `destination_hub_code`.
 
 Already aligned to official docs:
 - The official documented `dispose + inventory_adjustment` path is now mapped.
