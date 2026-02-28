@@ -95,7 +95,7 @@ class ReturnOrderWebhookService
 
     private function buildReturnOrderItems(array $data): array
     {
-        $items = data_get($data, 'order_items', []);
+        $items = data_get($data, 'order_items', data_get($data, 'return_items', []));
         $lines = [];
         $totals = [];
 
@@ -103,7 +103,8 @@ class ReturnOrderWebhookService
             $itemCode = data_get($item, 'seller_sku.seller_sku_code')
                 ?? data_get($item, 'seller_sku.seller_sku_id')
                 ?? data_get($item, 'seller_sku_code')
-                ?? data_get($item, 'sku_code');
+                ?? data_get($item, 'sku_code')
+                ?? data_get($item, 'code');
 
             if (!$itemCode) {
                 continue;
@@ -112,6 +113,9 @@ class ReturnOrderWebhookService
             $qty = data_get($item, 'return_quantity');
             if ($qty === null) {
                 $qty = data_get($item, 'returned_quantity');
+            }
+            if ($qty === null) {
+                $qty = data_get($item, 'refunded_quantity');
             }
             if ($qty === null) {
                 $qty = data_get($item, 'delivered_quantity');

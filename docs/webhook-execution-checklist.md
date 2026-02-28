@@ -92,6 +92,7 @@ Current coverage:
 - The explicit return lifecycle table from the official docs is now included in strict status mapping.
 - Aggregates duplicate SKU lines before sending quantities into SAP.
 - Credit memo line building now also aggregates duplicate return SKUs inside the SAP client path, so the webhook and posting layers stay consistent.
+- Return-line extraction now supports both `order_items` and documented `return_items`, plus `refunded_quantity`.
 
 Still needed:
 - One real return-order payload from your tenant.

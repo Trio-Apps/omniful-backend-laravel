@@ -2557,7 +2557,7 @@ trait HandlesSapPurchaseAndProducts
      */
     private function buildReturnCreditLinesFromPayload(array $data): array
     {
-        $items = data_get($data, 'order_items', []);
+        $items = data_get($data, 'order_items', data_get($data, 'return_items', []));
         $lines = [];
         $grouped = [];
 
@@ -2574,6 +2574,9 @@ trait HandlesSapPurchaseAndProducts
             $qty = data_get($item, 'return_quantity');
             if ($qty === null) {
                 $qty = data_get($item, 'returned_quantity');
+            }
+            if ($qty === null) {
+                $qty = data_get($item, 'refunded_quantity');
             }
             if ($qty === null) {
                 $qty = data_get($item, 'cancel_quantity');
