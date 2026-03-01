@@ -1483,6 +1483,14 @@ trait HandlesSapPurchaseAndProducts
             if ($existingCode !== null) {
                 return $existingCode;
             }
+
+            throw new \RuntimeException(
+                'SAP vendor create blocked by duplicate mobile; could not auto-resolve existing BP'
+                . ' (supplier_code=' . $cardCode
+                . ', phone=' . ($phone !== '' ? $phone : '-')
+                . ', email=' . (trim((string) ($email ?? '')) !== '' ? (string) $email : '-')
+                . '). Original error: ' . $response->status() . ' ' . $response->body()
+            );
         }
 
         throw new \RuntimeException('SAP vendor create failed: ' . $response->status() . ' ' . $response->body());
@@ -2453,6 +2461,12 @@ trait HandlesSapPurchaseAndProducts
             $candidates[] = '0' . ltrim($last9, '0');
         }
 
+        if (strlen($target) >= 10) {
+            $last10 = substr($target, -10);
+            $candidates[] = $last10;
+            $candidates[] = '0' . ltrim($last10, '0');
+        }
+
         $candidates = array_values(array_unique(array_filter($candidates, fn ($v) => is_string($v) && trim($v) !== '')));
 
         foreach ($candidates as $candidate) {
@@ -2693,9 +2707,15 @@ trait HandlesSapPurchaseAndProducts
                             return $row;
                         }
 
-                        // Relaxed KSA/local matching by last 9 digits.
+                        // Relaxed local matching by trailing digits.
                         if (strlen($p) >= 9 && strlen($targetPhone) >= 9) {
                             if (substr($p, -9) === substr($targetPhone, -9)) {
+                                return $row;
+                            }
+                        }
+
+                        if (strlen($p) >= 10 && strlen($targetPhone) >= 10) {
+                            if (substr($p, -10) === substr($targetPhone, -10)) {
                                 return $row;
                             }
                         }
