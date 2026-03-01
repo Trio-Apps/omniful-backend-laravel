@@ -1458,21 +1458,9 @@ trait HandlesSapPurchaseAndProducts
         $phone = $this->extractSupplierPhone($data);
         $email = data_get($supplier, 'email');
 
-        if ($phone !== '') {
-            $existingByPhone = $this->findBusinessPartnerByPhone($phone, null);
-            if ($existingByPhone) {
-                $existingCode = (string) ($existingByPhone['CardCode'] ?? '');
-                $existingType = $this->normalizeSapCardType((string) ($existingByPhone['CardType'] ?? ''));
-                if ($existingCode !== '') {
-                    if ($existingType === 'S') {
-                        return $existingCode;
-                    }
-
-                    if ($this->ensureBusinessPartnerIsSupplier($existingCode, $cardName, $email)) {
-                        return $existingCode;
-                    }
-                }
-            }
+        $resolvedByIdentity = $this->resolveExistingSupplierCodeForDuplication($phone, (string) $cardName, $email);
+        if ($resolvedByIdentity !== null) {
+            return $resolvedByIdentity;
         }
 
         $body = [
@@ -2516,6 +2504,23 @@ trait HandlesSapPurchaseAndProducts
 
     private function resolveExistingSupplierCodeForDuplication(string $phone, string $cardName, mixed $email): ?string
     {
+        $emailValue = trim((string) ($email ?? ''));
+        if ($emailValue !== '') {
+            $existingByEmail = $this->findBusinessPartnerByEmail($emailValue, null);
+            if ($existingByEmail) {
+                $existingCode = (string) ($existingByEmail['CardCode'] ?? '');
+                $existingType = $this->normalizeSapCardType((string) ($existingByEmail['CardType'] ?? ''));
+                if ($existingCode !== '') {
+                    if ($existingType === 'S') {
+                        return $existingCode;
+                    }
+                    if ($this->ensureBusinessPartnerIsSupplier($existingCode, $cardName, $email)) {
+                        return $existingCode;
+                    }
+                }
+            }
+        }
+
         if ($phone !== '') {
             $existingByPhone = $this->findBusinessPartnerByPhone($phone, null);
             if ($existingByPhone) {
@@ -2544,6 +2549,20 @@ trait HandlesSapPurchaseAndProducts
                     if ($this->ensureBusinessPartnerIsSupplier($existingCode, $cardName, $email)) {
                         return $existingCode;
                     }
+                }
+            }
+        }
+
+        $existingByLooseScan = $this->findBusinessPartnerByLooseScan($phone, (string) ($email ?? ''), $cardName);
+        if ($existingByLooseScan) {
+            $existingCode = (string) ($existingByLooseScan['CardCode'] ?? '');
+            $existingType = $this->normalizeSapCardType((string) ($existingByLooseScan['CardType'] ?? ''));
+            if ($existingCode !== '') {
+                if ($existingType === 'S') {
+                    return $existingCode;
+                }
+                if ($this->ensureBusinessPartnerIsSupplier($existingCode, $cardName, $email)) {
+                    return $existingCode;
                 }
             }
         }
@@ -2602,7 +2621,7 @@ trait HandlesSapPurchaseAndProducts
             }
         }
 
-        $existingByLooseScan = $this->findCustomerByLooseScan($phone, (string) ($email ?? ''), $cardName);
+        $existingByLooseScan = $this->findBusinessPartnerByLooseScan($phone, (string) ($email ?? ''), $cardName);
         if ($existingByLooseScan) {
             $existingCode = (string) ($existingByLooseScan['CardCode'] ?? '');
             $existingType = $this->normalizeSapCardType((string) ($existingByLooseScan['CardType'] ?? ''));
@@ -2623,7 +2642,7 @@ trait HandlesSapPurchaseAndProducts
      * Best-effort scan when exact OData eq filters miss due formatting/case differences.
      * @return array<string,mixed>|null
      */
-    private function findCustomerByLooseScan(string $phone, string $email, string $cardName): ?array
+    private function findBusinessPartnerByLooseScan(string $phone, string $email, string $cardName): ?array
     {
         $targetPhone = $this->normalizePhone($phone);
         $targetEmail = strtolower(trim($email));
