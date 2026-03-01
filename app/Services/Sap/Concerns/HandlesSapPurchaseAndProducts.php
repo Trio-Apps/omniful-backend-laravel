@@ -1457,6 +1457,7 @@ trait HandlesSapPurchaseAndProducts
         $cardName = data_get($supplier, 'name') ?: $cardCode;
         $phone = $this->extractSupplierPhone($data);
         $email = data_get($supplier, 'email');
+        $phoneValue = $this->normalizePhoneForSap($phone);
 
         $resolvedByIdentity = $this->resolveExistingSupplierCodeForDuplication($phone, (string) $cardName, $email);
         if ($resolvedByIdentity !== null) {
@@ -1471,6 +1472,10 @@ trait HandlesSapPurchaseAndProducts
 
         if ($email) {
             $body['EmailAddress'] = $email;
+        }
+        if ($phoneValue !== '') {
+            $body['Phone1'] = $phoneValue;
+            $body['Cellular'] = $phoneValue;
         }
 
         $response = $this->post('/BusinessPartners', $body);
@@ -1630,6 +1635,7 @@ trait HandlesSapPurchaseAndProducts
         $cardName = (string) (data_get($data, 'name') ?? $cardCode);
         $email = data_get($data, 'email');
         $phone = data_get($data, 'phone') ?? data_get($data, 'phone_number');
+        $phoneValue = $this->normalizePhoneForSap((string) ($phone ?? ''));
         $existing = $this->getBusinessPartner($cardCode);
 
         $payload = array_filter([
@@ -1637,6 +1643,8 @@ trait HandlesSapPurchaseAndProducts
             'CardName' => $cardName,
             'CardType' => 'S',
             'EmailAddress' => $email ?: null,
+            'Phone1' => $phoneValue !== '' ? $phoneValue : null,
+            'Cellular' => $phoneValue !== '' ? $phoneValue : null,
         ], fn ($value) => $value !== null && $value !== '');
 
         if ($existing) {
@@ -2528,7 +2536,7 @@ trait HandlesSapPurchaseAndProducts
                     if ($existingType === 'S') {
                         return $existingCode;
                     }
-                    if ($this->ensureBusinessPartnerIsSupplier($existingCode, $cardName, $email)) {
+                    if ($this->ensureBusinessPartnerIsSupplier($existingCode, $cardName, $email, $phone)) {
                         return $existingCode;
                     }
                 }
@@ -2544,7 +2552,7 @@ trait HandlesSapPurchaseAndProducts
                     if ($existingType === 'S') {
                         return $existingCode;
                     }
-                    if ($this->ensureBusinessPartnerIsSupplier($existingCode, $cardName, $email)) {
+                    if ($this->ensureBusinessPartnerIsSupplier($existingCode, $cardName, $email, $phone)) {
                         return $existingCode;
                     }
                 }
@@ -2575,7 +2583,7 @@ trait HandlesSapPurchaseAndProducts
                 if ($existingType === 'S') {
                     return $existingCode;
                 }
-                if ($this->ensureBusinessPartnerIsSupplier($existingCode, $cardName, $email)) {
+                if ($this->ensureBusinessPartnerIsSupplier($existingCode, $cardName, $email, $phone)) {
                     return $existingCode;
                 }
             }
@@ -2783,7 +2791,7 @@ trait HandlesSapPurchaseAndProducts
         return '';
     }
 
-    private function ensureBusinessPartnerIsSupplier(string $cardCode, string $cardName, mixed $email): bool
+    private function ensureBusinessPartnerIsSupplier(string $cardCode, string $cardName, mixed $email, mixed $phone = null): bool
     {
         $bp = $this->getBusinessPartner($cardCode);
         if (!$bp) {
@@ -2802,6 +2810,11 @@ trait HandlesSapPurchaseAndProducts
 
         if ($email) {
             $patch['EmailAddress'] = (string) $email;
+        }
+        $phoneValue = $this->normalizePhoneForSap(trim((string) ($phone ?? '')));
+        if ($phoneValue !== '') {
+            $patch['Phone1'] = $phoneValue;
+            $patch['Cellular'] = $phoneValue;
         }
 
         $encoded = str_replace("'", "''", $cardCode);
