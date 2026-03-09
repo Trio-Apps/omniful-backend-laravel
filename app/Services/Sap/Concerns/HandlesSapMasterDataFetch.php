@@ -444,6 +444,16 @@ trait HandlesSapMasterDataFetch
         }
 
         if (!$response->successful()) {
+            if ($this->isInvalidSapPropertyError($response->body(), $udfField)) {
+                Log::warning('SAP warehouse integration UDF field not found; bypassing warehouse UDF control', [
+                    'warehouse_code' => $warehouseCode,
+                    'udf_field' => $udfField,
+                    'status' => $response->status(),
+                ]);
+
+                return true;
+            }
+
             throw new \RuntimeException('SAP warehouse integration-udf lookup failed: ' . $response->status() . ' ' . $response->body());
         }
 

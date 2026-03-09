@@ -8,9 +8,13 @@ use App\Services\SapServiceLayerClient;
 
 class SapSupplierSyncService
 {
-    public function syncFromSap(SapServiceLayerClient $client): void
+    public function syncFromSap(SapServiceLayerClient $client): array
     {
         $rows = $client->fetchSuppliers();
+        $synced = 0;
+        $pending = 0;
+        $skipped = 0;
+
         foreach ($rows as $row) {
             $code = $row['CardCode'] ?? null;
             if (!$code) {
@@ -29,6 +33,7 @@ class SapSupplierSyncService
                     'error' => null,
                 ]
             );
+            $synced++;
             $record = SapSupplier::where('code', $code)->first();
             if ($record) {
                 if ($enabled) {
@@ -36,14 +41,23 @@ class SapSupplierSyncService
                         $record->omniful_status = 'pending';
                         $record->omniful_error = null;
                         $record->save();
+                        $pending++;
                     }
                 } else {
                     $record->omniful_status = 'skipped';
                     $record->omniful_error = 'Skipped by supplier integration UDF control';
                     $record->save();
+                    $skipped++;
                 }
             }
         }
+
+        return [
+            'total' => count($rows),
+            'synced' => $synced,
+            'pending' => $pending,
+            'skipped' => $skipped,
+        ];
     }
 
     public function pushToOmniful(OmnifulApiClient $client, ?int $limit = null): array

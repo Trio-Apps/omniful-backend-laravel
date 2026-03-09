@@ -3,10 +3,12 @@
 namespace App\Filament\Pages;
 
 use App\Models\SapItem;
+use App\Models\SapSyncEvent;
 use App\Services\IntegrationDirectionService;
 use App\Services\MasterData\SapItemSyncService;
 use App\Services\OmnifulApiClient;
 use App\Services\SapServiceLayerClient;
+use App\Services\SapItemBackgroundSyncService;
 use Filament\Actions\Action;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
@@ -107,7 +109,7 @@ class SapItems extends Page implements HasTable
                     'wire:loading.attr' => 'disabled',
                     'wire:loading.class' => 'opacity-70',
                 ])
-                ->action('syncItems'),
+                ->action('queueItemSync'),
             Action::make('pushItems')
                 ->label('Push to Omniful')
                 ->icon('heroicon-o-cloud-arrow-up')
@@ -121,29 +123,26 @@ class SapItems extends Page implements HasTable
         ];
     }
 
-    public function syncItems(SapServiceLayerClient $client): void
+    public function queueItemSync(SapItemBackgroundSyncService $dispatcher): void
     {
-        @ini_set('max_execution_time', '0');
-        @set_time_limit(0);
-        try {
-            $direction = app(IntegrationDirectionService::class);
-            if ($direction->isSapToOmniful('items')) {
-                app(SapItemSyncService::class)->syncFromSap($client);
-            } else {
-                app(SapItemSyncService::class)->syncFromOmniful(app(OmnifulApiClient::class), $client);
-            }
+        $result = $dispatcher->dispatch('sap_items_page');
+        $event = $result['event'];
 
+        if ((bool) $result['already_running']) {
             Notification::make()
-                ->title('Items synced')
-                ->success()
+                ->title('Item sync already queued')
+                ->body('Current event: ' . $event->event_key)
+                ->warning()
                 ->send();
-        } catch (\Throwable $e) {
-            Notification::make()
-                ->title('SAP sync failed')
-                ->body($e->getMessage())
-                ->danger()
-                ->send();
+
+            return;
         }
+
+        Notification::make()
+            ->title('Item sync queued')
+            ->body('Background job queued: ' . $event->event_key)
+            ->success()
+            ->send();
     }
 
     public function pushItems(OmnifulApiClient $client): void
@@ -174,5 +173,59 @@ class SapItems extends Page implements HasTable
             ->body($body)
             ->{$failed > 0 ? 'warning' : 'success'}()
             ->send();
+    }
+
+    public function getItemSyncPanel(): array
+    {
+        $event = SapSyncEvent::query()
+            ->where('source_type', 'sap_items')
+            ->latest('id')
+            ->first();
+
+        if ($event === null) {
+            return [
+                'has_event' => false,
+                'status' => 'idle',
+                'status_label' => 'Idle',
+                'tone' => 'gray',
+                'event_key' => null,
+                'requested_at' => null,
+                'updated_at' => null,
+                'summary_lines' => [],
+                'error' => null,
+            ];
+        }
+
+        $payload = (array) ($event->payload ?? []);
+        $summary = (array) ($payload['summary'] ?? []);
+        $summaryLines = [];
+
+        foreach ($summary as $key => $value) {
+            $summaryLines[] = ucwords(str_replace('_', ' ', (string) $key)) . ': ' . $value;
+        }
+
+        $status = (string) ($event->sap_status ?? 'unknown');
+
+        return [
+            'has_event' => true,
+            'status' => $status,
+            'status_label' => ucwords(str_replace('_', ' ', $status)),
+            'tone' => $this->statusTone($status),
+            'event_key' => $event->event_key,
+            'requested_at' => $event->created_at?->toDateTimeString(),
+            'updated_at' => $event->updated_at?->toDateTimeString(),
+            'summary_lines' => $summaryLines,
+            'error' => $event->sap_error,
+        ];
+    }
+
+    private function statusTone(string $status): string
+    {
+        return match ($status) {
+            'completed' => 'success',
+            'queued', 'running' => 'warning',
+            'failed' => 'danger',
+            default => 'gray',
+        };
     }
 }

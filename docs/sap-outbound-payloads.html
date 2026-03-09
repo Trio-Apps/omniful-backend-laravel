@@ -1,0 +1,997 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="utf-8" />
+  <title>SAP Outbound Requests and Payloads</title>
+  <style>
+    :root {
+      --bg: #f5f1e8;
+      --paper: #fffdf8;
+      --ink: #1f2937;
+      --muted: #6b7280;
+      --line: #d6d3d1;
+      --accent: #9a3412;
+      --accent-soft: #fff0e6;
+      --code: #1e293b;
+      --code-bg: #f8fafc;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+      background: linear-gradient(180deg, #efe8da 0%, var(--bg) 100%);
+      color: var(--ink);
+      line-height: 1.65;
+    }
+    .page {
+      max-width: 1200px;
+      margin: 32px auto;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      box-shadow: 0 18px 50px rgba(15, 23, 42, 0.08);
+      padding: 32px;
+    }
+    h1, h2, h3 { margin-top: 0; color: #111827; }
+    h1 { font-size: 30px; margin-bottom: 12px; }
+    h2 { margin-top: 32px; padding-bottom: 8px; border-bottom: 2px solid var(--line); font-size: 22px; }
+    h3 { font-size: 18px; margin-bottom: 8px; }
+    p, li { font-size: 15px; }
+    .meta { color: var(--muted); margin-bottom: 18px; }
+    .note {
+      background: var(--accent-soft);
+      border-left: 4px solid var(--accent);
+      padding: 14px 16px;
+      margin: 18px 0 28px;
+    }
+    .card {
+      border: 1px solid var(--line);
+      padding: 18px;
+      background: #fff;
+      margin-bottom: 18px;
+    }
+    .chip {
+      display: inline-block;
+      padding: 2px 8px;
+      font-size: 12px;
+      border-radius: 999px;
+      background: #ede9fe;
+      color: #4c1d95;
+      margin-right: 6px;
+      margin-bottom: 8px;
+    }
+    code, pre {
+      font-family: Consolas, "Courier New", monospace;
+      color: var(--code);
+    }
+    pre {
+      background: var(--code-bg);
+      border: 1px solid #e2e8f0;
+      padding: 14px;
+      overflow-x: auto;
+      font-size: 13px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0 20px;
+      font-size: 14px;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 10px;
+      vertical-align: top;
+    }
+    th { background: #f5f5f4; text-align: left; }
+    ul { margin-top: 8px; margin-bottom: 8px; }
+    .small { color: var(--muted); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>SAP Outbound Requests and Payloads</h1>
+    <div class="meta">
+      Project: <code>omniful-backend-laravel</code><br />
+      Updated: <code>2026-03-08</code><br />
+      Scope: outbound requests from Laravel to SAP Service Layer
+    </div>
+
+    <div class="note">
+      This file documents outbound SAP requests that send a request body or payload.
+      Read-only <code>GET</code> calls are not listed in detail unless they directly support a write flow.
+    </div>
+
+    <h2>Quick Summary</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Category</th>
+          <th>SAP Request</th>
+          <th>Purpose</th>
+          <th>Triggered From</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Session / Internal</td>
+          <td><code>POST /Login</code>, <code>POST /Logout</code>, <code>POST /SeriesService_*</code>, <code>POST /SBOBobService_GetCurrencyRate</code></td>
+          <td>Session management, series resolution, support currency-rate fallback</td>
+          <td><code>HandlesSapHttp</code>, <code>HandlesSapSeries</code>, <code>HandlesSapMasterDataFetch</code></td>
+        </tr>
+        <tr>
+          <td>Sales</td>
+          <td><code>/Orders</code>, <code>/IncomingPayments</code>, <code>/DeliveryNotes</code>, <code>/CreditNotes</code>, <code>/JournalEntries</code>, <code>PATCH /Orders</code></td>
+          <td>Order posting, payment posting, delivery, return credit memo, accounting journals, order sync</td>
+          <td><code>OrderWebhookService</code>, <code>ReturnOrderWebhookService</code></td>
+        </tr>
+        <tr>
+          <td>Purchasing</td>
+          <td><code>/PurchaseOrders</code>, <code>PATCH /PurchaseOrders</code>, <code>/PurchaseDeliveryNotes</code></td>
+          <td>PO creation, PO comments, GRPO creation</td>
+          <td><code>PurchaseOrderWebhookService</code>, <code>InventoryWebhookService</code>, <code>InwardingWebhookService</code></td>
+        </tr>
+        <tr>
+          <td>Manual Finance</td>
+          <td><code>/PurchaseInvoices</code>, <code>/PurchaseCreditNotes</code>, <code>/PurchaseDownPayments</code>, <code>/Invoices</code>, <code>/Returns</code>, <code>/VendorPayments</code>, <code>/Deposits</code>, <code>/ChecksforPayment</code></td>
+          <td>Manual AP, AR, banking, and payment documents</td>
+          <td>Artisan commands</td>
+        </tr>
+        <tr>
+          <td>Inventory</td>
+          <td><code>/InventoryCountings</code>, <code>/InventoryCountingsService_Add</code>, <code>/InventoryPostings</code>, <code>/InventoryPostingsService_Add</code>, <code>/InventoryGenEntries</code>, <code>/InventoryGenExits</code>, <code>/StockTransfers</code>, <code>/ProductionOrders</code></td>
+          <td>Counting, posting, goods receipt, goods issue, stock transfer, production order</td>
+          <td><code>InventoryWebhookService</code>, <code>StockTransferWebhookService</code>, manual commands</td>
+        </tr>
+        <tr>
+          <td>Master Data</td>
+          <td><code>/BusinessPartners</code>, <code>/Items</code>, <code>/Warehouses</code>, <code>/ProductTrees</code>, related <code>PATCH</code> calls</td>
+          <td>Customers, suppliers, items, warehouses, bundles, and helper updates</td>
+          <td>Webhook flows and master-data sync services</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>General Payload Rules</h2>
+    <ul>
+      <li>Document lines and journal lines may be enriched with default cost center fields such as <code>CostingCode</code>, <code>CostingCode2</code>, <code>CostingCode3</code>, <code>CostingCode4</code>, <code>CostingCode5</code>, and <code>ProjectCode</code>.</li>
+      <li>Item creation payloads may include default UDF fields such as <code>U_ItemType</code>, <code>U_ProductType</code>, and an optional configured <code>U_*</code> field.</li>
+      <li>Several flows retry with fallback payloads, mainly around <code>ReserveInvoice</code>, <code>Series</code>, and <code>UoMEntry/UoMCode</code>.</li>
+      <li>Some document flows auto-create or update supporting master data first: customer, supplier, item, warehouse, or item-warehouse assignment.</li>
+    </ul>
+
+    <h2>1) Session and Internal Requests</h2>
+
+    <div class="card">
+      <span class="chip">Internal</span>
+      <h3><code>POST /Login</code></h3>
+      <pre>{
+  "CompanyDB": "{{sap_company_db}}",
+  "UserName": "{{sap_username}}",
+  "Password": "{{sap_password}}"
+}</pre>
+    </div>
+
+    <div class="card">
+      <span class="chip">Internal</span>
+      <h3><code>POST /Logout</code></h3>
+      <pre>(no body)</pre>
+    </div>
+
+    <div class="card">
+      <span class="chip">Internal</span>
+      <h3><code>POST /SeriesService_GetDefaultSeries</code></h3>
+      <pre>{
+  "DocumentTypeParams": {
+    "Document": "{{documentCode}}"
+  }
+}</pre>
+    </div>
+
+    <div class="card">
+      <span class="chip">Internal</span>
+      <h3><code>POST /SeriesService_GetDocumentSeries</code></h3>
+      <pre>{
+  "DocumentTypeParams": {
+    "Document": "{{documentCode}}"
+  }
+}</pre>
+    </div>
+
+    <div class="card">
+      <span class="chip">Support</span>
+      <h3><code>POST /SBOBobService_GetCurrencyRate</code></h3>
+      <pre>{
+  "Currency": "{{currencyCode}}",
+  "Date": "{{yyyymmdd}}"
+}</pre>
+      <p class="small">Fallback request used only when <code>/CurrencyRates</code> is not available in the tenant.</p>
+    </div>
+
+    <h2>2) Sales, Orders, Returns, and Customers</h2>
+
+    <div class="card">
+      <span class="chip">Customer Master Data</span>
+      <h3><code>POST /BusinessPartners</code> to create a customer</h3>
+      <pre>{
+  "CardCode": "{{customerCode}}",
+  "CardName": "{{firstName lastName or fallback}}",
+  "CardType": "C",
+  "EmailAddress": "{{optionalCustomerEmail}}",
+  "Phone1": "{{customerPhoneOrGeneratedFallback}}",
+  "Cellular": "{{customerPhoneOrGeneratedFallback}}"
+}</pre>
+      <p class="small">If SAP rejects the mobile number due to duplication and the source payload had no phone, the flow retries with generated fallback phone values.</p>
+    </div>
+
+    <div class="card">
+      <span class="chip">Business Partner Conversion</span>
+      <h3><code>PATCH /BusinessPartners('{{cardCode}}')</code> to convert an existing BP to customer or supplier</h3>
+      <pre>{
+  "CardType": "{{C or S}}",
+  "CardName": "{{cardName}}",
+  "EmailAddress": "{{optionalEmail}}",
+  "Phone1": "{{optionalPhoneWhenConvertingToSupplier}}",
+  "Cellular": "{{optionalPhoneWhenConvertingToSupplier}}"
+}</pre>
+      <p class="small">Used only as a fallback when an existing BP is found with the wrong SAP card type.</p>
+    </div>
+
+    <div class="card">
+      <span class="chip">Sales</span>
+      <h3><code>POST /Orders</code> for AR Reserve Invoice</h3>
+      <pre>{
+  "CardCode": "{{customerCode}}",
+  "DocDate": "{{docDate}}",
+  "DocDueDate": "{{docDate}}",
+  "DocumentLines": [
+    {
+      "ItemCode": "{{sku}}",
+      "Quantity": 1,
+      "UnitPrice": 10.5,
+      "WarehouseCode": "{{optionalHubWarehouse}}",
+      "CostingCode": "{{optional}}",
+      "CostingCode2": "{{optional}}",
+      "CostingCode3": "{{optional}}",
+      "CostingCode4": "{{optional}}",
+      "CostingCode5": "{{optional}}",
+      "ProjectCode": "{{optional}}",
+      "UoMEntry": "{{optionalRetryOnly}}",
+      "UoMCode": "{{optionalRetryOnly}}"
+    }
+  ],
+  "NumAtCard": "{{externalId}}",
+  "Comments": "AR Reserve Invoice from Omniful order {{externalId}}",
+  "ReserveInvoice": "tYES",
+  "Series": "{{optionalSeries}}",
+  "DocCurrency": "{{optionalCurrency}}"
+}</pre>
+      <ul>
+        <li>May retry without <code>ReserveInvoice</code> if the tenant rejects that field.</li>
+        <li>May retry with alternative <code>Series</code> and <code>DocDate</code> values on period mismatch.</li>
+        <li>May retry with <code>UoMEntry</code> and <code>UoMCode</code> on UoM validation errors.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="chip">Sales</span>
+      <h3><code>POST /IncomingPayments</code></h3>
+      <pre>{
+  "CardCode": "{{customerCode}}",
+  "DocType": "rCustomer",
+  "TransferAccount": "{{transferAccount}}",
+  "TransferDate": "{{transferDate}}",
+  "TransferSum": 150.75,
+  "PaymentInvoices": [
+    {
+      "DocEntry": 123,
+      "InvoiceType": 17,
+      "SumApplied": 150.75
+    }
+  ],
+  "Remarks": "Incoming payment from Omniful prepaid order"
+}</pre>
+      <p class="small">The code loops through invoice type candidates until one succeeds.</p>
+    </div>
+
+    <div class="card">
+      <span class="chip">Accounting</span>
+      <h3><code>POST /JournalEntries</code> for card fee journal</h3>
+      <pre>{
+  "ReferenceDate": "{{postingDate}}",
+  "DueDate": "{{postingDate}}",
+  "TaxDate": "{{postingDate}}",
+  "Memo": "{{memo}}",
+  "Reference": "{{optionalReference}}",
+  "Reference2": "{{optionalReference}}",
+  "Reference3": "{{optionalReference}}",
+  "JournalEntryLines": [
+    {
+      "AccountCode": "{{expenseAccount}}",
+      "Debit": 12.5,
+      "CostingCode": "{{optional}}",
+      "CostingCode2": "{{optional}}",
+      "CostingCode3": "{{optional}}",
+      "CostingCode4": "{{optional}}",
+      "CostingCode5": "{{optional}}",
+      "ProjectCode": "{{optional}}"
+    },
+    {
+      "AccountCode": "{{offsetAccount}}",
+      "Credit": 12.5,
+      "CostingCode": "{{optional}}",
+      "CostingCode2": "{{optional}}",
+      "CostingCode3": "{{optional}}",
+      "CostingCode4": "{{optional}}",
+      "CostingCode5": "{{optional}}",
+      "ProjectCode": "{{optional}}"
+    }
+  ]
+}</pre>
+    </div>
+
+    <div class="card">
+      <span class="chip">Sales</span>
+      <h3><code>POST /DeliveryNotes</code></h3>
+      <pre>{
+  "CardCode": "{{cardCodeFromSalesOrder}}",
+  "DocDate": "{{docDate}}",
+  "DocDueDate": "{{docDate}}",
+  "Comments": "Delivery from Omniful order {{externalId}}",
+  "Series": "{{optionalSeries}}",
+  "DocumentLines": [
+    {
+      "BaseType": 17,
+      "BaseEntry": 123,
+      "BaseLine": 0,
+      "Quantity": 2,
+      "WarehouseCode": "{{optionalHubWarehouse}}",
+      "CostingCode": "{{optional}}",
+      "CostingCode2": "{{optional}}",
+      "CostingCode3": "{{optional}}",
+      "CostingCode4": "{{optional}}",
+      "CostingCode5": "{{optional}}",
+      "ProjectCode": "{{optional}}"
+    }
+  ]
+}</pre>
+      <p class="small">Lines may come from webhook quantities or from open quantities on the SAP sales order.</p>
+    </div>
+
+    <div class="card">
+      <span class="chip">Accounting</span>
+      <h3><code>POST /JournalEntries</code> for COGS journal</h3>
+      <pre>{
+  "ReferenceDate": "{{deliveryDocDate}}",
+  "DueDate": "{{deliveryDocDate}}",
+  "TaxDate": "{{deliveryDocDate}}",
+  "Memo": "{{memo}}",
+  "Reference": "{{optionalReference}}",
+  "Reference2": "{{deliveryDocNumOrReference}}",
+  "Reference3": "{{optionalReference}}",
+  "JournalEntryLines": [
+    {
+      "AccountCode": "{{cogsExpenseAccount}}",
+      "Debit": 88.0,
+      "CostingCode": "{{optional}}",
+      "CostingCode2": "{{optional}}",
+      "CostingCode3": "{{optional}}",
+      "CostingCode4": "{{optional}}",
+      "CostingCode5": "{{optional}}",
+      "ProjectCode": "{{optional}}"
+    },
+    {
+      "AccountCode": "{{inventoryOffsetAccount}}",
+      "Credit": 88.0,
+      "CostingCode": "{{optional}}",
+      "CostingCode2": "{{optional}}",
+      "CostingCode3": "{{optional}}",
+      "CostingCode4": "{{optional}}",
+      "CostingCode5": "{{optional}}",
+      "ProjectCode": "{{optional}}"
+    }
+  ]
+}</pre>
+    </div>
+
+    <div class="card">
+      <span class="chip">Returns</span>
+      <h3><code>POST /CreditNotes</code> for AR credit memo</h3>
+      <pre>{
+  "CardCode": "{{customerCode}}",
+  "DocDate": "{{docDate}}",
+  "DocDueDate": "{{docDate}}",
+  "DocumentLines": [
+    {
+      "BaseType": 15,
+      "BaseEntry": 456,
+      "BaseLine": 0,
+      "Quantity": 1,
+      "WarehouseCode": "{{optionalHubWarehouse}}",
+      "CostingCode": "{{optional}}",
+      "CostingCode2": "{{optional}}",
+      "CostingCode3": "{{optional}}",
+      "CostingCode4": "{{optional}}",
+      "CostingCode5": "{{optional}}",
+      "ProjectCode": "{{optional}}"
+    }
+  ],
+  "Comments": "AR Credit Memo from Omniful return {{externalIdOrEvent}}",
+  "Series": "{{optionalSeries}}",
+  "NumAtCard": "{{optionalExternalId}}"
+}</pre>
+      <p>If no delivery-based mapping is available, the code may send direct item lines instead:</p>
+      <pre>{
+  "ItemCode": "{{sku}}",
+  "Quantity": 1,
+  "UnitPrice": 10.5,
+  "WarehouseCode": "{{optionalHubWarehouse}}"
+}</pre>
+    </div>
+
+    <div class="card">
+      <span class="chip">Accounting</span>
+      <h3><code>POST /JournalEntries</code> for COGS reversal</h3>
+      <pre>{
+  "ReferenceDate": "{{creditMemoDocDate}}",
+  "DueDate": "{{creditMemoDocDate}}",
+  "TaxDate": "{{creditMemoDocDate}}",
+  "Memo": "{{memo}}",
+  "Reference": "{{optionalReference}}",
+  "Reference2": "{{creditMemoDocNumOrReference}}",
+  "Reference3": "{{optionalReference}}",
+  "JournalEntryLines": [
+    {
+      "AccountCode": "{{inventoryOffsetAccount}}",
+      "Debit": 88.0,
+      "CostingCode": "{{optional}}",
+      "CostingCode2": "{{optional}}",
+      "CostingCode3": "{{optional}}",
+      "CostingCode4": "{{optional}}",
+      "CostingCode5": "{{optional}}",
+      "ProjectCode": "{{optional}}"
+    },
+    {
+      "AccountCode": "{{cogsExpenseAccount}}",
+      "Credit": 88.0,
+      "CostingCode": "{{optional}}",
+      "CostingCode2": "{{optional}}",
+      "CostingCode3": "{{optional}}",
+      "CostingCode4": "{{optional}}",
+      "CostingCode5": "{{optional}}",
+      "ProjectCode": "{{optional}}"
+    }
+  ]
+}</pre>
+    </div>
+
+    <div class="card">
+      <span class="chip">Sales Update</span>
+      <h3><code>PATCH /Orders({DocEntry})</code> to sync order metadata</h3>
+      <pre>{
+  "Comments": "{{existingComments}}\n[{{timestamp}}] {{eventName}} {{status}}",
+  "{{status_udf_field}}": "{{status}}",
+  "{{event_udf_field}}": "{{eventName}}",
+  "{{updated_at_udf_field}}": "{{timestamp}}"
+}</pre>
+      <p class="small">If SAP rejects one of the UDFs as an invalid property, the code drops that field and retries with a reduced payload.</p>
+    </div>
+
+    <div class="card">
+      <span class="chip">Manual AR</span>
+      <h3><code>POST /Invoices</code> or <code>POST /Returns</code></h3>
+      <pre>{
+  "CardCode": "{{customerCode}}",
+  "DocDate": "{{docDate}}",
+  "DocDueDate": "{{docDate}}",
+  "Comments": "{{remarks}}",
+  "DocCurrency": "{{optionalCurrency}}",
+  "DocumentLines": [
+    {
+      "ItemCode": "{{sku}}",
+      "Quantity": 1,
+      "UnitPrice": 10.5,
+      "WarehouseCode": "{{optionalWarehouse}}",
+      "CostingCode": "{{optional}}",
+      "CostingCode2": "{{optional}}",
+      "CostingCode3": "{{optional}}",
+      "CostingCode4": "{{optional}}",
+      "CostingCode5": "{{optional}}",
+      "ProjectCode": "{{optional}}"
+    }
+  ]
+}</pre>
+    </div>
+
+    <h2>3) Purchasing, Banking, and GRPO</h2>
+
+    <div class="card">
+      <span class="chip">Supplier Master Data</span>
+      <h3><code>POST /BusinessPartners</code> to create a supplier</h3>
+      <pre>{
+  "CardCode": "{{supplierCode}}",
+  "CardName": "{{supplierName}}",
+  "CardType": "S",
+  "EmailAddress": "{{optionalEmail}}",
+  "Phone1": "{{optionalPhone}}",
+  "Cellular": "{{optionalPhone}}"
+}</pre>
+    </div>
+
+    <div class="card">
+      <span class="chip">Supplier Master Data</span>
+      <h3><code>PATCH /BusinessPartners('{{cardCode}}')</code> to update a supplier</h3>
+      <pre>{
+  "CardName": "{{supplierName}}",
+  "EmailAddress": "{{optionalEmail}}",
+  "Phone1": "{{optionalPhone}}",
+  "Cellular": "{{optionalPhone}}"
+}</pre>
+    </div>
+
+    <div class="card">
+      <span class="chip">Purchasing</span>
+      <h3><code>POST /PurchaseOrders</code></h3>
+      <pre>{
+  "CardCode": "{{supplierCode}}",
+  "DocDate": "{{docDate}}",
+  "DocDueDate": "{{docDate}}",
+  "DocumentLines": [
+    {
+      "ItemCode": "{{sku}}",
+      "Quantity": 1,
+      "UnitPrice": 10.5,
+      "WarehouseCode": "{{optionalHubWarehouse}}",
+      "CostingCode": "{{optional}}",
+      "CostingCode2": "{{optional}}",
+      "CostingCode3": "{{optional}}",
+      "CostingCode4": "{{optional}}",
+      "CostingCode5": "{{optional}}",
+      "ProjectCode": "{{optional}}",
+      "UoMEntry": "{{optionalRetryOnly}}",
+      "UoMCode": "{{optionalRetryOnly}}"
+    }
+  ],
+  "Comments": "Omniful PO {{displayIdOrFallback}}",
+  "Series": "{{optionalSeries}}",
+  "DocCurrency": "{{optionalCurrency}}",
+  "NumAtCard": "{{optionalDisplayId}}"
+}</pre>
+    </div>
+
+    <div class="card">
+      <span class="chip">Purchasing</span>
+      <h3><code>PATCH /PurchaseOrders({DocEntry})</code> to append a comment</h3>
+      <pre>{
+  "Comments": "{{existingComments}}\n[{{timestamp}}] {{eventName}} {{status}}"
+}</pre>
+    </div>
+
+    <div class="card">
+      <span class="chip">Manual AP</span>
+      <h3><code>POST /PurchaseInvoices</code>, <code>/PurchaseCreditNotes</code>, or <code>/PurchaseDownPayments</code></h3>
+      <pre>{
+  "CardCode": "{{supplierCode}}",
+  "DocDate": "{{docDate}}",
+  "DocDueDate": "{{docDate}}",
+  "Comments": "{{remarks}}",
+  "DocCurrency": "{{optionalCurrency}}",
+  "DocumentLines": [
+    {
+      "ItemCode": "{{sku}}",
+      "Quantity": 1,
+      "UnitPrice": 10.5,
+      "WarehouseCode": "{{optionalWarehouse}}",
+      "CostingCode": "{{optional}}",
+      "CostingCode2": "{{optional}}",
+      "CostingCode3": "{{optional}}",
+      "CostingCode4": "{{optional}}",
+      "CostingCode5": "{{optional}}",
+      "ProjectCode": "{{optional}}"
+    }
+  ]
+}</pre>
+    </div>
+
+    <div class="card">
+      <span class="chip">Banking</span>
+      <h3><code>POST /VendorPayments</code></h3>
+      <pre>{
+  "CardCode": "{{supplierCode}}",
+  "DocType": "rSupplier",
+  "TransferAccount": "{{transferAccount}}",
+  "TransferDate": "{{transferDate}}",
+  "TransferSum": 250.0,
+  "PaymentInvoices": [
+    {
+      "DocEntry": 123,
+      "InvoiceType": 18,
+      "SumApplied": 250.0
+    }
+  ],
+  "Remarks": "{{remarks}}"
+}</pre>
+    </div>
+
+    <div class="card">
+      <span class="chip">Banking</span>
+      <h3><code>POST /Deposits</code></h3>
+      <pre>{
+  "CreditLines": [
+    {
+      "AbsId": 123
+    }
+  ],
+  "DepositAccount": "{{depositAccount}}",
+  "DepositType": "{{depositType}}",
+  "VoucherAccount": "{{voucherAccount}}"
+}</pre>
+    </div>
+
+    <div class="card">
+      <span class="chip">Banking</span>
+      <h3><code>POST /ChecksforPayment</code></h3>
+      <pre>{
+  "BankCode": "{{bankCode}}",
+  "CustomerAccountCode": "{{customerAccountCode}}",
+  "CountryCode": "{{countryCode}}",
+  "CardOrAccount": "{{cfp_AccountOrConfigured}}",
+  "ChecksforPaymentLines": [
+    {
+      "RowTotal": 99.5
+    }
+  ],
+  "AccountNumber": "{{optional}}",
+  "Branch": "{{optional}}",
+  "Details": "{{optional}}",
+  "VendorCode": "{{optional}}"
+}</pre>
+    </div>
+
+    <div class="card">
+      <span class="chip">GRPO</span>
+      <h3><code>POST /PurchaseDeliveryNotes</code></h3>
+      <pre>{
+  "CardCode": "{{supplierCardCodeFromPO}}",
+  "DocDate": "{{today}}",
+  "Comments": "GRPO from Omniful inventory | PO {{optionalDisplayId}}",
+  "DocumentLines": [
+    {
+      "BaseType": 22,
+      "BaseEntry": 123,
+      "BaseLine": 0,
+      "Quantity": 2,
+      "WarehouseCode": "{{optionalHubWarehouse}}",
+      "CostingCode": "{{optional}}",
+      "CostingCode2": "{{optional}}",
+      "CostingCode3": "{{optional}}",
+      "CostingCode4": "{{optional}}",
+      "CostingCode5": "{{optional}}",
+      "ProjectCode": "{{optional}}"
+    }
+  ]
+}</pre>
+    </div>
+
+    <h2>4) Inventory, Warehouses, Production, and Item/Bundle Master Data</h2>
+
+    <div class="card">
+      <span class="chip">Inventory</span>
+      <h3><code>POST /InventoryCountings</code> or <code>POST /InventoryCountingsService_Add</code></h3>
+      <pre>{
+  "CountDate": "{{countDate}}",
+  "Remarks": "{{remarks}}",
+  "InventoryCountingLines": [
+    {
+      "ItemCode": "{{sku}}",
+      "Counted": "tYES",
+      "CountedQuantity": 10,
+      "WarehouseCode": "{{optionalWarehouse}}",
+      "BinEntry": "{{optionalBinAbsEntry}}"
+    }
+  ]
+}</pre>
+      <pre>{
+  "InventoryCounting": {
+    "CountDate": "{{countDate}}",
+    "Remarks": "{{remarks}}",
+    "InventoryCountingLines": [
+      {
+        "ItemCode": "{{sku}}",
+        "Counted": "tYES",
+        "CountedQuantity": 10,
+        "WarehouseCode": "{{optionalWarehouse}}",
+        "BinEntry": "{{optionalBinAbsEntry}}"
+      }
+    ]
+  }
+}</pre>
+    </div>
+
+    <div class="card">
+      <span class="chip">Inventory</span>
+      <h3><code>POST /InventoryPostings</code> or <code>POST /InventoryPostingsService_Add</code></h3>
+      <pre>{
+  "CountDate": "{{postingDate}}",
+  "PostingDate": "{{postingDate}}",
+  "Remarks": "{{remarks}}",
+  "InventoryPostingLines": [
+    {
+      "ItemCode": "{{sku}}",
+      "CountedQuantity": 10,
+      "WarehouseCode": "{{optionalWarehouse}}",
+      "BinEntry": "{{optionalBinAbsEntry}}"
+    }
+  ]
+}</pre>
+      <pre>{
+  "InventoryPosting": {
+    "CountDate": "{{postingDate}}",
+    "PostingDate": "{{postingDate}}",
+    "Remarks": "{{remarks}}",
+    "InventoryPostingLines": [
+      {
+        "ItemCode": "{{sku}}",
+        "CountedQuantity": 10,
+        "WarehouseCode": "{{optionalWarehouse}}",
+        "BinEntry": "{{optionalBinAbsEntry}}"
+      }
+    ]
+  }
+}</pre>
+    </div>
+
+    <div class="card">
+      <span class="chip">Production</span>
+      <h3><code>POST /ProductionOrders</code></h3>
+      <pre>{
+  "ItemNo": "{{itemCode}}",
+  "PlannedQuantity": 5,
+  "PostingDate": "{{docDate}}",
+  "DueDate": "{{docDate}}",
+  "ProductionOrderType": "bopotStandard",
+  "Warehouse": "{{optionalWarehouse}}",
+  "Remarks": "{{optionalRemarks}}"
+}</pre>
+    </div>
+
+    <div class="card">
+      <span class="chip">Inventory</span>
+      <h3><code>POST /InventoryGenEntries</code> for Goods Receipt</h3>
+      <pre>{
+  "DocDate": "{{docDate}}",
+  "TaxDate": "{{docDate}}",
+  "Comments": "{{remarks}}",
+  "Series": "{{optionalSeries}}",
+  "DocumentLines": [
+    {
+      "ItemCode": "{{sku}}",
+      "Quantity": 2,
+      "WarehouseCode": "{{optionalWarehouse}}",
+      "BatchNumbers": [{"BatchNumber": "{{optionalGeneratedBatch}}", "Quantity": 2}],
+      "SerialNumbers": [{"SerialNumber": "{{optionalGeneratedSerial}}"}],
+      "BinAllocations": [{"BinAbsEntry": 123, "Quantity": 2}],
+      "CostingCode": "{{optional}}",
+      "CostingCode2": "{{optional}}",
+      "CostingCode3": "{{optional}}",
+      "CostingCode4": "{{optional}}",
+      "CostingCode5": "{{optional}}",
+      "ProjectCode": "{{optional}}"
+    }
+  ]
+}</pre>
+    </div>
+
+    <div class="card">
+      <span class="chip">Inventory</span>
+      <h3><code>POST /InventoryGenExits</code> for Goods Issue</h3>
+      <pre>{
+  "DocDate": "{{docDate}}",
+  "TaxDate": "{{docDate}}",
+  "Comments": "{{remarks}}",
+  "Series": "{{optionalSeries}}",
+  "DocumentLines": [
+    {
+      "ItemCode": "{{sku}}",
+      "Quantity": 2,
+      "WarehouseCode": "{{optionalWarehouse}}",
+      "BatchNumbers": [{"BatchNumber": "{{optionalExistingBatch}}", "Quantity": 2}],
+      "SerialNumbers": [{"SerialNumber": "{{optionalExistingSerial}}"}],
+      "BinAllocations": [{"BinAbsEntry": 123, "Quantity": 2}],
+      "CostingCode": "{{optional}}",
+      "CostingCode2": "{{optional}}",
+      "CostingCode3": "{{optional}}",
+      "CostingCode4": "{{optional}}",
+      "CostingCode5": "{{optional}}",
+      "ProjectCode": "{{optional}}"
+    }
+  ]
+}</pre>
+    </div>
+
+    <div class="card">
+      <span class="chip">Stock Transfer</span>
+      <h3><code>POST /StockTransfers</code></h3>
+      <pre>{
+  "DocDate": "{{docDate}}",
+  "FromWarehouse": "{{fromWarehouse}}",
+  "ToWarehouse": "{{toWarehouse}}",
+  "Comments": "{{remarks}}",
+  "Series": "{{optionalSeries}}",
+  "StockTransferLines": [
+    {
+      "ItemCode": "{{sku}}",
+      "Quantity": 3,
+      "FromWarehouseCode": "{{fromWarehouse}}",
+      "WarehouseCode": "{{toWarehouse}}",
+      "CostingCode": "{{optionalWhenEnabled}}",
+      "CostingCode2": "{{optionalWhenEnabled}}",
+      "CostingCode3": "{{optionalWhenEnabled}}",
+      "CostingCode4": "{{optionalWhenEnabled}}",
+      "CostingCode5": "{{optionalWhenEnabled}}",
+      "ProjectCode": "{{optionalWhenEnabled}}"
+    }
+  ]
+}</pre>
+      <p class="small">When in-transit mode is enabled, the same payload shape is sent twice: source -> transit, then transit -> destination.</p>
+    </div>
+
+    <div class="card">
+      <span class="chip">Warehouse Master Data</span>
+      <h3><code>POST /Warehouses</code> to create a warehouse</h3>
+      <pre>{
+  "WarehouseCode": "{{warehouseCode}}",
+  "WarehouseName": "{{warehouseName}}"
+}</pre>
+    </div>
+
+    <div class="card">
+      <span class="chip">Warehouse Master Data</span>
+      <h3><code>PATCH /Warehouses('{{warehouseCode}}')</code> to update warehouse name</h3>
+      <pre>{
+  "WarehouseName": "{{warehouseName}}"
+}</pre>
+    </div>
+
+    <div class="card">
+      <span class="chip">Item Master Data</span>
+      <h3><code>POST /Items</code> to create a stock item</h3>
+      <pre>{
+  "ItemCode": "{{itemCode}}",
+  "ItemName": "{{itemName}}",
+  "ItemType": "itItems",
+  "InventoryItem": "tYES",
+  "PurchaseItem": "tYES",
+  "SalesItem": "tNO",
+  "U_ItemType": "{{defaultItemType}}",
+  "U_ProductType": "{{defaultProductType}}",
+  "U_{{configuredItemTypeField}}": "{{optionalConfiguredValue}}"
+}</pre>
+      <p class="small">If SAP requires a numeric item type, the code retries with the numeric fallback.</p>
+    </div>
+
+    <div class="card">
+      <span class="chip">Bundle Master Data</span>
+      <h3><code>POST /Items</code> to create the bundle parent item</h3>
+      <pre>{
+  "ItemCode": "{{bundleCode}}",
+  "ItemName": "{{bundleName}}",
+  "ItemType": "itItems",
+  "InventoryItem": "tNO",
+  "PurchaseItem": "tNO",
+  "SalesItem": "tYES",
+  "U_ItemType": "{{defaultItemType}}",
+  "U_ProductType": "{{defaultProductType}}",
+  "U_{{configuredItemTypeField}}": "{{optionalConfiguredValue}}"
+}</pre>
+    </div>
+
+    <div class="card">
+      <span class="chip">Item Master Data</span>
+      <h3><code>PATCH /Items('{{itemCode}}')</code> helper payloads</h3>
+      <pre>{
+  "ItemName": "{{newName}}"
+}</pre>
+      <pre>{
+  "SalesItem": "tYES"
+}</pre>
+      <pre>{
+  "ItemWarehouseInfoCollection": [
+    {"WarehouseCode": "{{existingWarehouse1}}"},
+    {"WarehouseCode": "{{existingWarehouse2}}"},
+    {"WarehouseCode": "{{newWarehouseToAppend}}"}
+  ]
+}</pre>
+    </div>
+
+    <div class="card">
+      <span class="chip">Bundle Master Data</span>
+      <h3><code>POST /ProductTrees</code> or <code>PATCH /ProductTrees('{{bundleCode}}')</code></h3>
+      <pre>{
+  "TreeCode": "{{bundleCode}}",
+  "TreeType": "iSalesTree",
+  "ProductTreeLines": [
+    {
+      "ItemCode": "{{componentSku}}",
+      "Quantity": 2,
+      "Warehouse": "{{optionalWarehouse}}"
+    }
+  ]
+}</pre>
+      <pre>DELETE /ProductTrees('{{bundleCode}}') -> no body</pre>
+    </div>
+
+    <h2>5) Source Map</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Application Flow</th>
+          <th>Outbound SAP Requests</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>OrderWebhookService</code></td>
+          <td><code>/Orders</code>, <code>/IncomingPayments</code>, <code>/JournalEntries</code>, <code>/DeliveryNotes</code>, <code>/CreditNotes</code>, <code>PATCH /Orders</code></td>
+        </tr>
+        <tr>
+          <td><code>PurchaseOrderWebhookService</code></td>
+          <td><code>/PurchaseOrders</code>, <code>PATCH /PurchaseOrders</code></td>
+        </tr>
+        <tr>
+          <td><code>ReturnOrderWebhookService</code></td>
+          <td><code>/CreditNotes</code>, <code>/JournalEntries</code></td>
+        </tr>
+        <tr>
+          <td><code>InventoryWebhookService</code></td>
+          <td><code>/PurchaseDeliveryNotes</code>, <code>/InventoryCountings*</code>, <code>/InventoryPostings*</code>, <code>/InventoryGenEntries</code>, <code>/InventoryGenExits</code></td>
+        </tr>
+        <tr>
+          <td><code>InwardingWebhookService</code></td>
+          <td><code>/PurchaseDeliveryNotes</code></td>
+        </tr>
+        <tr>
+          <td><code>StockTransferWebhookService</code></td>
+          <td><code>/StockTransfers</code></td>
+        </tr>
+        <tr>
+          <td><code>OmnifulProductWebhookController</code></td>
+          <td><code>/Items</code>, <code>/ProductTrees</code>, and sometimes <code>/Items</code> for bundle parent creation</td>
+        </tr>
+        <tr>
+          <td><code>SapItemSyncService</code>, <code>SapSupplierSyncService</code>, <code>SapWarehouseSyncService</code></td>
+          <td><code>/Items</code>, <code>/BusinessPartners</code>, <code>/Warehouses</code></td>
+        </tr>
+        <tr>
+          <td>Manual Artisan commands</td>
+          <td><code>/PurchaseInvoices</code>, <code>/PurchaseCreditNotes</code>, <code>/PurchaseDownPayments</code>, <code>/Invoices</code>, <code>/Returns</code>, <code>/VendorPayments</code>, <code>/Deposits</code>, <code>/ChecksforPayment</code>, <code>/ProductionOrders</code></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Code Files Used</h2>
+    <ul>
+      <li><code>app/Services/Sap/Concerns/HandlesSapHttp.php</code></li>
+      <li><code>app/Services/Sap/Concerns/HandlesSapSeries.php</code></li>
+      <li><code>app/Services/Sap/Concerns/HandlesSapInventoryDocs.php</code></li>
+      <li><code>app/Services/Sap/Concerns/HandlesSapPurchaseAndProducts.php</code></li>
+      <li><code>app/Services/Webhooks/OrderWebhookService.php</code></li>
+      <li><code>app/Services/Webhooks/PurchaseOrderWebhookService.php</code></li>
+      <li><code>app/Services/Webhooks/ReturnOrderWebhookService.php</code></li>
+      <li><code>app/Services/Webhooks/InventoryWebhookService.php</code></li>
+      <li><code>app/Services/Webhooks/InwardingWebhookService.php</code></li>
+      <li><code>app/Services/Webhooks/StockTransferWebhookService.php</code></li>
+      <li><code>app/Http/Controllers/Webhooks/OmnifulProductWebhookController.php</code></li>
+      <li><code>app/Services/MasterData/SapItemSyncService.php</code></li>
+      <li><code>app/Services/MasterData/SapSupplierSyncService.php</code></li>
+      <li><code>app/Services/MasterData/SapWarehouseSyncService.php</code></li>
+    </ul>
+
+    <div class="note">
+      This file is now fully in English.
+      If you also want a real <code>.docx</code> file later, that can be generated when a converter such as <code>pandoc</code> or Word automation is available.
+    </div>
+  </div>
+</body>
+</html>

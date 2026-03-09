@@ -8,9 +8,12 @@ use App\Services\SapServiceLayerClient;
 
 class SapItemSyncService
 {
-    public function syncFromSap(SapServiceLayerClient $client): void
+    public function syncFromSap(SapServiceLayerClient $client): array
     {
         $rows = $client->fetchItems();
+        $synced = 0;
+        $pending = 0;
+
         foreach ($rows as $row) {
             $code = $row['ItemCode'] ?? null;
             if (!$code) {
@@ -27,12 +30,21 @@ class SapItemSyncService
                     'error' => null,
                 ]
             );
+            $synced++;
 
             if (!$record->omniful_status) {
                 $record->omniful_status = 'pending';
                 $record->save();
+                $pending++;
             }
         }
+
+        return [
+            'total' => count($rows),
+            'synced' => $synced,
+            'pending' => $pending,
+            'skipped' => 0,
+        ];
     }
 
     public function pushToOmniful(OmnifulApiClient $client): array

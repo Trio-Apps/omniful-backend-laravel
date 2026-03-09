@@ -8,9 +8,13 @@ use App\Services\SapServiceLayerClient;
 
 class SapWarehouseSyncService
 {
-    public function syncFromSap(SapServiceLayerClient $client): void
+    public function syncFromSap(SapServiceLayerClient $client): array
     {
         $rows = $client->fetchWarehouses();
+        $synced = 0;
+        $pending = 0;
+        $skipped = 0;
+
         foreach ($rows as $row) {
             $code = $row['WarehouseCode'] ?? null;
             if (!$code) {
@@ -27,6 +31,7 @@ class SapWarehouseSyncService
                     'error' => null,
                 ]
             );
+            $synced++;
             $record = SapWarehouse::where('code', $code)->first();
             if ($record) {
                 if ($enabled) {
@@ -34,14 +39,23 @@ class SapWarehouseSyncService
                         $record->omniful_status = 'pending';
                         $record->omniful_error = null;
                         $record->save();
+                        $pending++;
                     }
                 } else {
                     $record->omniful_status = 'skipped';
                     $record->omniful_error = 'Skipped by warehouse integration UDF control';
                     $record->save();
+                    $skipped++;
                 }
             }
         }
+
+        return [
+            'total' => count($rows),
+            'synced' => $synced,
+            'pending' => $pending,
+            'skipped' => $skipped,
+        ];
     }
 
     public function pushToOmniful(OmnifulApiClient $client): array
