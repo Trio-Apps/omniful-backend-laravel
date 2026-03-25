@@ -3,6 +3,7 @@
 namespace App\Services\MasterData;
 
 use App\Models\SapWarehouse;
+use App\Services\OmnifulCityStateResolver;
 use App\Services\OmnifulApiClient;
 use App\Services\SapServiceLayerClient;
 
@@ -112,6 +113,11 @@ class SapWarehouseSyncService
                     $currency['symbol'] = (string) $defaults['currency_symbol'];
                 }
 
+                $resolvedLocation = app(OmnifulCityStateResolver::class)->resolve(
+                    (string) ($defaults['city'] ?? 'Riyadh'),
+                    (string) ($defaults['country'] ?? ($defaults['country_code'] ?? 'SA'))
+                );
+
                 $payload = [
                     'code' => $record->code,
                     'name' => $record->name ?: $record->code,
@@ -124,9 +130,11 @@ class SapWarehouseSyncService
                         'address_line1' => (string) ($defaults['address_line1'] ?? 'N/A'),
                         'address_line2' => (string) ($defaults['address_line2'] ?? ''),
                         'building_number' => (string) ($defaults['building_number'] ?? ''),
-                        'city' => (string) ($defaults['city'] ?? 'Riyadh'),
-                        'state' => (string) ($defaults['state'] ?? ''),
-                        'country' => (string) ($defaults['country'] ?? ($defaults['country_code'] ?? 'SA')),
+                        'city' => $resolvedLocation['city_name'],
+                        'city_name' => $resolvedLocation['city_name'],
+                        'state' => (string) ($resolvedLocation['state_name'] ?? ($defaults['state'] ?? '')),
+                        'state_name' => (string) ($resolvedLocation['state_name'] ?? ($defaults['state'] ?? '')),
+                        'country' => (string) ($resolvedLocation['country_name'] ?? ($defaults['country'] ?? ($defaults['country_code'] ?? 'SA'))),
                         'postal_code' => (string) ($defaults['postal_code'] ?? '00000'),
                     ],
                     'currency' => $currency,
