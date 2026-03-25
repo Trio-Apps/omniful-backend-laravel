@@ -10,6 +10,20 @@ use Illuminate\Support\Arr;
 
 class SapWarehouseSyncService
 {
+    private function buildNationalAddressCode(string $code, string $cityName): string
+    {
+        $lettersSource = strtoupper(preg_replace('/[^A-Z]/', '', $cityName));
+        if ($lettersSource === '') {
+            $lettersSource = strtoupper(preg_replace('/[^A-Z]/', '', $code));
+        }
+        $letters = substr(str_pad($lettersSource, 4, 'X'), 0, 4);
+
+        $digitsSource = preg_replace('/\D+/', '', $code);
+        $digits = substr(str_pad($digitsSource, 4, '0', STR_PAD_LEFT), -4);
+
+        return $letters . $digits;
+    }
+
     public function syncFromSap(SapServiceLayerClient $client): array
     {
         $rows = $client->fetchWarehouses();
@@ -130,6 +144,7 @@ class SapWarehouseSyncService
                 $countryName = $sapCountry !== '' ? $sapCountry : (string) ($resolvedLocation['country_name'] ?? $fallbackCountry);
                 $cityName = (string) ($resolvedLocation['city_name'] ?? $fallbackCity);
                 $phoneNumber = preg_replace('/\D+/', '', (string) ($defaults['phone_number'] ?? '555555555')) ?: '555555555';
+                $nationalAddressCode = (string) (Arr::get($defaults, 'address.national_address_code') ?: $this->buildNationalAddressCode((string) $record->code, $cityName));
                 $services = $defaults['services'] ?? ['wms'];
                 if (!is_array($services) || $services === []) {
                     $services = ['wms'];
@@ -183,9 +198,7 @@ class SapWarehouseSyncService
                 if ($longitude = Arr::get($defaults, 'address.longitude')) {
                     $payload['address']['longitude'] = $longitude;
                 }
-                if ($nationalAddressCode = Arr::get($defaults, 'address.national_address_code')) {
-                    $payload['address']['national_address_code'] = $nationalAddressCode;
-                }
+                $payload['address']['national_address_code'] = $nationalAddressCode;
                 if ($additionalNumber = Arr::get($defaults, 'address.additional_number')) {
                     $payload['address']['additional_number'] = $additionalNumber;
                 }
