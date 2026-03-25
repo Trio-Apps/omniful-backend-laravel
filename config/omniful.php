@@ -9,7 +9,7 @@ return [
     'sync_methods' => [
         'warehouses' => env('OMNIFUL_WAREHOUSES_METHOD', 'post'),
         'suppliers' => env('OMNIFUL_SUPPLIERS_METHOD', 'post'),
-        'items' => env('OMNIFUL_ITEMS_METHOD', 'put'),
+        'items' => env('OMNIFUL_ITEMS_METHOD', 'post'),
     ],
     'integration_control' => [
         'item_udf_field' => env('SAP_ITEM_INTEGRATION_UDF_FIELD', 'U_OmnifulSync'),
@@ -31,6 +31,25 @@ return [
     'sync_timeout' => (int) env('OMNIFUL_TIMEOUT', 20),
     'push_batch' => [
         'suppliers' => (int) env('OMNIFUL_PUSH_BATCH_SUPPLIERS', 50),
+    ],
+    'item_push_defaults' => [
+        'handling_type' => env('OMNIFUL_ITEM_HANDLING_TYPE', 'cold'),
+        'type' => env('OMNIFUL_ITEM_TYPE', 'simple'),
+        'status' => env('OMNIFUL_ITEM_STATUS', 'live'),
+        'unit' => env('OMNIFUL_ITEM_UNIT', 'pcs'),
+        'is_perishable' => (bool) env('OMNIFUL_ITEM_IS_PERISHABLE', false),
+        'is_weighted' => (bool) env('OMNIFUL_ITEM_IS_WEIGHTED', false),
+        'cost' => (float) env('OMNIFUL_ITEM_COST', 1),
+        'retail_price' => (float) env('OMNIFUL_ITEM_RETAIL_PRICE', 1),
+        'selling_price' => (float) env('OMNIFUL_ITEM_SELLING_PRICE', 1),
+        'description' => env('OMNIFUL_ITEM_DESCRIPTION', 'N/A'),
+        'country_of_origin' => env('OMNIFUL_ITEM_COUNTRY_OF_ORIGIN', 'Saudi Arabia'),
+        'manufacturer_name' => env('OMNIFUL_ITEM_MANUFACTURER_NAME', ''),
+        'brand_name' => env('OMNIFUL_ITEM_BRAND_NAME', ''),
+        'weight_min' => env('OMNIFUL_ITEM_WEIGHT_MIN', '0.1 kg'),
+        'weight_max' => env('OMNIFUL_ITEM_WEIGHT_MAX', '0.1 kg'),
+        'weight_type' => env('OMNIFUL_ITEM_WEIGHT_TYPE', 'fixed'),
+        'barcode_fallback_to_code' => (bool) env('OMNIFUL_ITEM_BARCODE_FALLBACK_TO_CODE', true),
     ],
     'sap_item_defaults' => [
         'item_type' => env('SAP_ITEM_TYPE', 'itItems'),

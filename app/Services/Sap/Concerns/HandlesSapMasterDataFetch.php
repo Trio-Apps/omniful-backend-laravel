@@ -551,7 +551,11 @@ trait HandlesSapMasterDataFetch
      */
     public function fetchItems(): array
     {
-        return $this->fetchAll('/Items?$select=ItemCode,ItemName,UoMGroupEntry,InventoryItem,PurchaseItem,SalesItem');
+        return $this->fetchAllWithFallback([
+            '/Items?$select=ItemCode,ItemName,ForeignName,BarCode,SalesUnit,PurchaseUnit,InventoryUOM,UoMGroupEntry,InventoryItem,PurchaseItem,SalesItem,AvgStdPrice,Valid&$top=200',
+            '/Items?$select=ItemCode,ItemName,UoMGroupEntry,InventoryItem,PurchaseItem,SalesItem&$top=200',
+            '/Items?$select=ItemCode,ItemName,UoMGroupEntry,InventoryItem,PurchaseItem,SalesItem',
+        ]);
     }
 
     /**

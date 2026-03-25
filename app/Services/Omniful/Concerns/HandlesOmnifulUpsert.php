@@ -79,14 +79,20 @@ trait HandlesOmnifulUpsert
             ? $this->baseUrl . str_replace('{code}', $code, $endpoint)
             : $base . '/' . $code;
 
-        $payloadWithCode = array_merge(['code' => $code], $payload);
-
-        $attempts = [
-            [$method, $method === 'put' ? $urlWithCode : $base, $payload],
-            ['post', $base, $payloadWithCode],
-            ['put', $urlWithCode, $payload],
-            ['patch', $urlWithCode, $payload],
-        ];
+        if (array_is_list($payload)) {
+            $attempts = [
+                [$method, $base, $payload],
+                ['post', $base, $payload],
+            ];
+        } else {
+            $payloadWithCode = array_merge(['code' => $code], $payload);
+            $attempts = [
+                [$method, $method === 'put' ? $urlWithCode : $base, $payload],
+                ['post', $base, $payloadWithCode],
+                ['put', $urlWithCode, $payload],
+                ['patch', $urlWithCode, $payload],
+            ];
+        }
 
         $last = null;
         foreach ($attempts as [$tryMethod, $tryUrl, $tryPayload]) {
@@ -235,4 +241,3 @@ trait HandlesOmnifulUpsert
     }
 
 }
-

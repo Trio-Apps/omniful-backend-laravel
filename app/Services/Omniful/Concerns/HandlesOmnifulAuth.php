@@ -76,7 +76,7 @@ trait HandlesOmnifulAuth
 
     private function selectAuthContext(string $resource): void
     {
-        if ($resource === 'suppliers') {
+        if (in_array($resource, ['suppliers', 'items'], true)) {
             $this->activeAuth = $this->sellerAuth;
         } else {
             $this->activeAuth = $this->tenantAuth;
@@ -102,4 +102,3 @@ trait HandlesOmnifulAuth
         return now()->addSeconds($seconds);
     }
 }
-
