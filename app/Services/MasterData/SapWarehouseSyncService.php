@@ -6,6 +6,7 @@ use App\Models\SapWarehouse;
 use App\Services\OmnifulCityStateResolver;
 use App\Services\OmnifulApiClient;
 use App\Services\SapServiceLayerClient;
+use Illuminate\Support\Arr;
 
 class SapWarehouseSyncService
 {
@@ -102,26 +103,21 @@ class SapWarehouseSyncService
                 }
 
                 $configuration = $defaults['configuration'] ?? [];
-                if (!is_array($configuration) || $configuration === []) {
-                    $configuration = [
-                        'inventory' => true,
-                        'picking' => true,
-                        'packing' => true,
-                        'putaway' => true,
-                        'cycle_count' => true,
-                        'schedule_order' => true,
-                    ];
+                if (!is_array($configuration)) {
+                    $configuration = [];
                 }
 
-                $currency = ['code' => (string) ($defaults['currency_code'] ?? 'SAR')];
-                if (!empty($defaults['currency_name'])) {
-                    $currency['name'] = (string) $defaults['currency_name'];
-                }
-                if (!empty($defaults['currency_symbol'])) {
-                    $currency['symbol'] = (string) $defaults['currency_symbol'];
-                }
+                $currencyCode = (string) ($defaults['currency_code'] ?? 'SAR');
+                $currencyName = (string) ($defaults['currency_name'] ?? 'Saudi Riyal');
+                $currencyDisplayName = (string) ($defaults['currency_display_name'] ?? ($currencyCode . ' (' . $currencyName . ')'));
+                $currency = [
+                    'name' => $currencyName,
+                    'code' => $currencyCode,
+                    'display_name' => $currencyDisplayName,
+                ];
 
                 $fallbackCountry = (string) ($defaults['country'] ?? 'Saudi Arabia');
+                $fallbackCountryCode = (string) ($defaults['country_code'] ?? 'SA');
                 $fallbackCity = (string) ($defaults['city'] ?? 'Riyadh');
                 $resolvedLocation = app(OmnifulCityStateResolver::class)->resolve(
                     $sapCity !== '' ? $sapCity : $fallbackCity,
@@ -132,30 +128,73 @@ class SapWarehouseSyncService
                 $postalCode = $sapZipCode !== '' ? $sapZipCode : (string) ($defaults['postal_code'] ?? '00000');
                 $stateName = $sapState !== '' ? $sapState : (string) ($resolvedLocation['state_name'] ?? ($defaults['state'] ?? ''));
                 $countryName = $sapCountry !== '' ? $sapCountry : (string) ($resolvedLocation['country_name'] ?? $fallbackCountry);
+                $cityName = (string) ($resolvedLocation['city_name'] ?? $fallbackCity);
+                $phoneNumber = preg_replace('/\D+/', '', (string) ($defaults['phone_number'] ?? '555555555')) ?: '555555555';
+                $services = $defaults['services'] ?? ['wms'];
+                if (!is_array($services) || $services === []) {
+                    $services = ['wms'];
+                }
+                $workingHours = $defaults['working_hours'] ?? [];
+                if (!is_array($workingHours) || $workingHours === []) {
+                    $workingHours = [
+                        'monday' => [['start_time' => 900, 'end_time' => 2359]],
+                        'tuesday' => [['start_time' => 900, 'end_time' => 2359]],
+                        'wednesday' => [['start_time' => 900, 'end_time' => 2359]],
+                        'thursday' => [['start_time' => 900, 'end_time' => 2359]],
+                        'friday' => [['start_time' => 900, 'end_time' => 2359]],
+                        'saturday' => [['start_time' => 900, 'end_time' => 2359]],
+                        'sunday' => [['start_time' => 900, 'end_time' => 2359]],
+                    ];
+                }
 
                 $payload = [
                     'code' => $record->code,
                     'name' => $record->name ?: $record->code,
                     'type' => (string) ($defaults['type'] ?? 'warehouse'),
                     'email' => $email,
-                    'phone_number' => (string) ($defaults['phone_number'] ?? '0000000000'),
-                    'country_code' => (string) ($defaults['country_code'] ?? 'SA'),
+                    'phone_number' => $phoneNumber,
+                    'country_code' => $fallbackCountryCode,
                     'country_calling_code' => (string) ($defaults['country_calling_code'] ?? '+966'),
+                    'services' => array_values($services),
                     'address' => [
                         'address_line1' => $addressLine1,
                         'address_line2' => (string) ($defaults['address_line2'] ?? ''),
                         'building_number' => (string) ($defaults['building_number'] ?? ''),
-                        'city' => $resolvedLocation['city_name'],
-                        'city_name' => $resolvedLocation['city_name'],
-                        'state' => $stateName,
+                        'city_name' => $cityName,
                         'state_name' => $stateName,
-                        'country' => $countryName,
+                        'country' => [
+                            'name' => $countryName,
+                            'code' => $fallbackCountryCode,
+                        ],
                         'postal_code' => $postalCode,
                     ],
                     'currency' => $currency,
                     'timezone' => (string) ($defaults['timezone'] ?? 'Asia/Riyadh'),
+                    'working_hours' => $workingHours,
                     'configuration' => $configuration,
+                    'is_click_and_collect' => (bool) ($defaults['is_click_and_collect'] ?? false),
+                    'is_pos_enabled' => (bool) ($defaults['is_pos_enabled'] ?? false),
+                    'is_wms_enabled' => (bool) ($defaults['is_wms_enabled'] ?? true),
                 ];
+
+                if ($latitude = Arr::get($defaults, 'address.latitude')) {
+                    $payload['address']['latitude'] = $latitude;
+                }
+                if ($longitude = Arr::get($defaults, 'address.longitude')) {
+                    $payload['address']['longitude'] = $longitude;
+                }
+                if ($nationalAddressCode = Arr::get($defaults, 'address.national_address_code')) {
+                    $payload['address']['national_address_code'] = $nationalAddressCode;
+                }
+                if ($additionalNumber = Arr::get($defaults, 'address.additional_number')) {
+                    $payload['address']['additional_number'] = $additionalNumber;
+                }
+                if ($street = Arr::get($defaults, 'address.street')) {
+                    $payload['address']['street'] = $street;
+                }
+                if ($area = Arr::get($defaults, 'address.area')) {
+                    $payload['address']['area'] = $area;
+                }
 
                 $response = $client->upsert('warehouses', $record->code, $payload);
                 if (!$response['ok']) {

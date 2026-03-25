@@ -208,30 +208,97 @@ return [
         'type' => env('OMNIFUL_HUB_TYPE', 'warehouse'),
         'email' => env('OMNIFUL_HUB_EMAIL'),
         'email_domain' => env('OMNIFUL_HUB_EMAIL_DOMAIN', 'example.com'),
-        'phone_number' => env('OMNIFUL_HUB_PHONE', '0000000000'),
+        'phone_number' => env('OMNIFUL_HUB_PHONE', '555555555'),
         'country_code' => env('OMNIFUL_HUB_COUNTRY_CODE', 'SA'),
         'country_calling_code' => env('OMNIFUL_HUB_COUNTRY_CALLING_CODE', '+966'),
         'currency_code' => env('OMNIFUL_HUB_CURRENCY', 'SAR'),
-        'currency_name' => env('OMNIFUL_HUB_CURRENCY_NAME'),
-        'currency_symbol' => env('OMNIFUL_HUB_CURRENCY_SYMBOL'),
+        'currency_name' => env('OMNIFUL_HUB_CURRENCY_NAME', 'Saudi Riyal'),
+        'currency_display_name' => env('OMNIFUL_HUB_CURRENCY_DISPLAY_NAME', 'SAR (Saudi Riyal)'),
         'timezone' => env('OMNIFUL_HUB_TIMEZONE', 'Asia/Riyadh'),
         'address_line1' => env('OMNIFUL_HUB_ADDRESS_LINE1', 'N/A'),
         'address_line2' => env('OMNIFUL_HUB_ADDRESS_LINE2', ''),
         'building_number' => '1234',
         'city' => env('OMNIFUL_HUB_CITY', 'Riyadh'),
         'state' => env('OMNIFUL_HUB_STATE', ''),
-        'country' => env('OMNIFUL_HUB_COUNTRY', 'SA'),
-        'postal_code' => env('OMNIFUL_HUB_POSTAL_CODE', '00000'),
+        'country' => env('OMNIFUL_HUB_COUNTRY', 'Saudi Arabia'),
+        'postal_code' => env('OMNIFUL_HUB_POSTAL_CODE', '122001'),
+        'is_click_and_collect' => (bool) env('OMNIFUL_HUB_CLICK_AND_COLLECT', false),
+        'is_pos_enabled' => (bool) env('OMNIFUL_HUB_POS_ENABLED', false),
+        'is_wms_enabled' => (bool) env('OMNIFUL_HUB_WMS_ENABLED', true),
+        'services' => ['wms'],
+        'working_hours' => [
+            'monday' => [['start_time' => 900, 'end_time' => 2359]],
+            'tuesday' => [['start_time' => 900, 'end_time' => 2359]],
+            'wednesday' => [['start_time' => 900, 'end_time' => 2359]],
+            'thursday' => [['start_time' => 900, 'end_time' => 2359]],
+            'friday' => [['start_time' => 900, 'end_time' => 2359]],
+            'saturday' => [['start_time' => 900, 'end_time' => 2359]],
+            'sunday' => [['start_time' => 900, 'end_time' => 2359]],
+        ],
         'configuration' => (function () {
             $raw = env('OMNIFUL_HUB_CONFIGURATION', '');
             if ($raw === '') {
                 return [
-                    'inventory' => true,
-                    'picking' => true,
-                    'packing' => true,
-                    'putaway' => true,
-                    'cycle_count' => true,
-                    'schedule_order' => true,
+                    'adjust_inventory' => [
+                        'manual_barcode_allowed' => false,
+                        'enter_quantity_manually' => false,
+                    ],
+                    'gate_entry' => [
+                        'enabled' => false,
+                    ],
+                    'bulk_ship_configuration' => [
+                        'picker_capacity' => 100,
+                    ],
+                    'picking' => [
+                        'enabled' => true,
+                        'cart_capacity' => 9,
+                        'picker_capacity' => 1,
+                        'bin_scan_enabled' => true,
+                        'single_order_tags' => [],
+                        'location_scan_enabled' => false,
+                        'manual_barcode_allowed' => false,
+                        'enter_quantity_manually' => false,
+                        'multi_order_picking_type' => 3,
+                        'single_order_picking_type' => 2,
+                        'multi_order_picking_allowed' => false,
+                        'single_order_picking_allowed' => true,
+                        'multi_piece_picking_cart_association' => false,
+                        'single_piece_picking_cart_association' => false,
+                    ],
+                    'put_away' => [
+                        'manual_barcode_allowed' => false,
+                        'enter_quantity_manually' => false,
+                    ],
+                    'expiry_configuration' => [
+                        'include_near_expiry_items' => false,
+                    ],
+                    'acceptable_shelf_life_validation' => [
+                        'enabled' => false,
+                    ],
+                    'schedule_order' => [
+                        'time' => [
+                            'hour' => '2',
+                            'minute' => '45',
+                        ],
+                        'enabled' => true,
+                    ],
+                    'cycle_count_configuration' => [
+                        'blind_count' => true,
+                        'update_inventory' => true,
+                        'manual_barcode_allowed' => false,
+                        'enter_quantity_manually' => false,
+                    ],
+                    'packing_configuration' => [
+                        'qc_enabled' => true,
+                        'manual_barcode_allowed' => true,
+                        'enter_quantity_manually' => false,
+                        'automatic_shipment_creation' => false,
+                        'auto_print_awb_on_all_items_scanned' => false,
+                    ],
+                    'purchase_order' => [
+                        'enabled' => true,
+                        'over_receive_allowed' => true,
+                    ],
                 ];
             }
             $decoded = json_decode($raw, true);
