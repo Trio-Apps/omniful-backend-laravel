@@ -5,9 +5,7 @@ namespace App\Filament\Pages;
 use App\Models\SapSyncEvent;
 use App\Models\SapSupplier;
 use App\Services\IntegrationDirectionService;
-use App\Services\MasterData\SapSupplierSyncService;
-use App\Services\OmnifulApiClient;
-use App\Services\SapServiceLayerClient;
+use App\Services\SapSupplierBackgroundPushService;
 use App\Services\SapSupplierBackgroundSyncService;
 use Filament\Actions\Action;
 use Filament\Notifications\Notification;
@@ -120,7 +118,7 @@ class SapSuppliers extends Page implements HasTable
                     'wire:loading.attr' => 'disabled',
                     'wire:loading.class' => 'opacity-70',
                 ])
-                ->action('pushSuppliers'),
+                ->action('queueSupplierPush'),
         ];
     }
 
@@ -146,10 +144,8 @@ class SapSuppliers extends Page implements HasTable
             ->send();
     }
 
-    public function pushSuppliers(OmnifulApiClient $client): void
+    public function queueSupplierPush(SapSupplierBackgroundPushService $dispatcher): void
     {
-        @ini_set('max_execution_time', '0');
-        @set_time_limit(0);
         if (app(IntegrationDirectionService::class)->isOmnifulToSap('suppliers')) {
             Notification::make()
                 ->title('Action blocked')
@@ -159,32 +155,40 @@ class SapSuppliers extends Page implements HasTable
             return;
         }
 
-        $batchSize = (int) config('omniful.push_batch.suppliers', 50);
-        $result = app(SapSupplierSyncService::class)->pushToOmniful($client, $batchSize);
-        $ok = (int) ($result['ok'] ?? 0);
-        $failed = (int) ($result['failed'] ?? 0);
-        $remaining = (int) ($result['remaining'] ?? 0);
-        $errors = (array) ($result['errors'] ?? []);
+        $result = $dispatcher->dispatch('sap_suppliers_page');
+        $event = $result['event'];
 
-        $body = 'Batch: ' . $batchSize . ' | Synced: ' . $ok . ' | Failed: ' . $failed . ' | Remaining: ' . $remaining;
-        if ($failed > 0) {
-            $body .= "\n" . implode("\n", array_slice($errors, 0, 5));
-        }
-        if ($remaining > 0 && $failed === 0) {
-            $body .= "\nRun Push again to continue next batch.";
+        if ((bool) $result['already_running']) {
+            Notification::make()
+                ->title('Supplier push already queued')
+                ->body('Current event: ' . $event->event_key)
+                ->warning()
+                ->send();
+
+            return;
         }
 
         Notification::make()
-            ->title($remaining > 0 ? 'Omniful push batch finished' : 'Omniful push finished')
-            ->body($body)
-            ->{$failed > 0 ? 'warning' : 'success'}()
+            ->title('Supplier push queued')
+            ->body('Background job queued: ' . $event->event_key)
+            ->success()
             ->send();
     }
 
     public function getSupplierSyncPanel(): array
     {
+        return $this->buildPanel('sap_suppliers');
+    }
+
+    public function getSupplierPushPanel(): array
+    {
+        return $this->buildPanel('omniful_suppliers_push');
+    }
+
+    private function buildPanel(string $sourceType): array
+    {
         $event = SapSyncEvent::query()
-            ->where('source_type', 'sap_suppliers')
+            ->where('source_type', $sourceType)
             ->latest('id')
             ->first();
 

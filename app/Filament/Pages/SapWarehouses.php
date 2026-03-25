@@ -5,9 +5,7 @@ namespace App\Filament\Pages;
 use App\Models\SapWarehouse;
 use App\Models\SapSyncEvent;
 use App\Services\IntegrationDirectionService;
-use App\Services\MasterData\SapWarehouseSyncService;
-use App\Services\OmnifulApiClient;
-use App\Services\SapServiceLayerClient;
+use App\Services\SapWarehouseBackgroundPushService;
 use App\Services\SapWarehouseBackgroundSyncService;
 use Filament\Actions\Action;
 use Filament\Notifications\Notification;
@@ -118,7 +116,7 @@ class SapWarehouses extends Page implements HasTable
                     'wire:loading.attr' => 'disabled',
                     'wire:loading.class' => 'opacity-70',
                 ])
-                ->action('pushWarehouses'),
+                ->action('queueWarehousePush'),
         ];
     }
 
@@ -144,10 +142,8 @@ class SapWarehouses extends Page implements HasTable
             ->send();
     }
 
-    public function pushWarehouses(OmnifulApiClient $client): void
+    public function queueWarehousePush(SapWarehouseBackgroundPushService $dispatcher): void
     {
-        @ini_set('max_execution_time', '0');
-        @set_time_limit(0);
         if (app(IntegrationDirectionService::class)->isOmnifulToSap('warehouses')) {
             Notification::make()
                 ->title('Action blocked')
@@ -157,27 +153,40 @@ class SapWarehouses extends Page implements HasTable
             return;
         }
 
-        $result = app(SapWarehouseSyncService::class)->pushToOmniful($client);
-        $ok = (int) ($result['ok'] ?? 0);
-        $failed = (int) ($result['failed'] ?? 0);
-        $errors = (array) ($result['errors'] ?? []);
+        $result = $dispatcher->dispatch('sap_warehouses_page');
+        $event = $result['event'];
 
-        $body = 'Synced: ' . $ok . ' | Failed: ' . $failed;
-        if ($failed > 0) {
-            $body .= "\n" . implode("\n", array_slice($errors, 0, 5));
+        if ((bool) $result['already_running']) {
+            Notification::make()
+                ->title('Warehouse push already queued')
+                ->body('Current event: ' . $event->event_key)
+                ->warning()
+                ->send();
+
+            return;
         }
 
         Notification::make()
-            ->title('Omniful push finished')
-            ->body($body)
-            ->{$failed > 0 ? 'warning' : 'success'}()
+            ->title('Warehouse push queued')
+            ->body('Background job queued: ' . $event->event_key)
+            ->success()
             ->send();
     }
 
     public function getWarehouseSyncPanel(): array
     {
+        return $this->buildPanel('sap_warehouses');
+    }
+
+    public function getWarehousePushPanel(): array
+    {
+        return $this->buildPanel('omniful_warehouses_push');
+    }
+
+    private function buildPanel(string $sourceType): array
+    {
         $event = SapSyncEvent::query()
-            ->where('source_type', 'sap_warehouses')
+            ->where('source_type', $sourceType)
             ->latest('id')
             ->first();
 
