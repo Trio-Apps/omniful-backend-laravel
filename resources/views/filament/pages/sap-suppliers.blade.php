@@ -46,7 +46,14 @@
                 <div class="sap-queue-title">Background Supplier Push</div>
                 <div class="sap-queue-subtitle">Push supplier updates to Omniful in the background without blocking the page.</div>
             </div>
-            <span class="sap-queue-badge sap-queue-badge--{{ $push['tone'] }}">{{ $push['status_label'] }}</span>
+            <div class="sap-queue-actions">
+                @if ($push['can_stop'])
+                    <button type="button" class="sap-queue-stop" wire:click="cancelSupplierPush">
+                        {{ $push['status'] === 'cancel_requested' ? 'Stopping...' : 'Stop' }}
+                    </button>
+                @endif
+                <span class="sap-queue-badge sap-queue-badge--{{ $push['tone'] }}">{{ $push['status_label'] }}</span>
+            </div>
         </div>
 
         @if ($push['has_event'])
@@ -126,6 +133,24 @@
             font-size: 0.78rem;
             font-weight: 800;
             white-space: nowrap;
+        }
+        .sap-queue-actions {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        .sap-queue-stop {
+            border: 1px solid #efcaca;
+            background: #fff5f5;
+            color: #b42318;
+            padding: 0.45rem 0.8rem;
+            border-radius: 999px;
+            font-size: 0.78rem;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .sap-queue-stop:hover {
+            background: #feeaea;
         }
         .sap-queue-badge--success {
             background: #eaf8ef;

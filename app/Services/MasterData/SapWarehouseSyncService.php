@@ -3,6 +3,7 @@
 namespace App\Services\MasterData;
 
 use App\Models\SapWarehouse;
+use App\Models\SapSyncEvent;
 use App\Services\OmnifulCityStateResolver;
 use App\Services\OmnifulApiClient;
 use App\Services\SapServiceLayerClient;
@@ -74,7 +75,7 @@ class SapWarehouseSyncService
         ];
     }
 
-    public function pushToOmniful(OmnifulApiClient $client): array
+    public function pushToOmniful(OmnifulApiClient $client, ?SapSyncEvent $event = null): array
     {
         $records = SapWarehouse::query()
             ->whereNull('omniful_status')
@@ -87,6 +88,10 @@ class SapWarehouseSyncService
         $errors = [];
 
         foreach ($records as $record) {
+            if ($event?->fresh()?->sap_status === 'cancel_requested') {
+                return ['ok' => $ok, 'failed' => $failed, 'errors' => $errors, 'cancelled' => true];
+            }
+
             $record->omniful_status = 'syncing';
             $record->omniful_error = null;
             $record->save();
@@ -229,7 +234,7 @@ class SapWarehouseSyncService
             }
         }
 
-        return ['ok' => $ok, 'failed' => $failed, 'errors' => $errors];
+        return ['ok' => $ok, 'failed' => $failed, 'errors' => $errors, 'cancelled' => false];
     }
 
     public function syncFromOmniful(OmnifulApiClient $omnifulClient, SapServiceLayerClient $sapClient): array

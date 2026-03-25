@@ -3,6 +3,7 @@
 namespace App\Services\MasterData;
 
 use App\Models\SapItem;
+use App\Models\SapSyncEvent;
 use App\Services\OmnifulApiClient;
 use App\Services\SapServiceLayerClient;
 
@@ -47,7 +48,7 @@ class SapItemSyncService
         ];
     }
 
-    public function pushToOmniful(OmnifulApiClient $client): array
+    public function pushToOmniful(OmnifulApiClient $client, ?SapSyncEvent $event = null): array
     {
         $records = SapItem::query()
             ->whereNull('omniful_status')
@@ -60,6 +61,10 @@ class SapItemSyncService
         $errors = [];
 
         foreach ($records as $record) {
+            if ($event?->fresh()?->sap_status === 'cancel_requested') {
+                return ['ok' => $ok, 'failed' => $failed, 'errors' => $errors, 'cancelled' => true];
+            }
+
             $record->omniful_status = 'syncing';
             $record->omniful_error = null;
             $record->save();
@@ -98,7 +103,7 @@ class SapItemSyncService
             }
         }
 
-        return ['ok' => $ok, 'failed' => $failed, 'errors' => $errors];
+        return ['ok' => $ok, 'failed' => $failed, 'errors' => $errors, 'cancelled' => false];
     }
 
     public function syncFromOmniful(OmnifulApiClient $omnifulClient, SapServiceLayerClient $sapClient): array

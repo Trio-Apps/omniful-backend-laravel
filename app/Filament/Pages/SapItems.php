@@ -184,6 +184,39 @@ class SapItems extends Page implements HasTable
         return $this->buildPanel('omniful_items_push');
     }
 
+    public function cancelItemPush(): void
+    {
+        $event = SapSyncEvent::query()
+            ->where('source_type', 'omniful_items_push')
+            ->whereIn('sap_status', ['queued', 'running'])
+            ->latest('id')
+            ->first();
+
+        if ($event === null) {
+            Notification::make()
+                ->title('No running item push')
+                ->body('There is no active background item push to stop.')
+                ->warning()
+                ->send();
+
+            return;
+        }
+
+        $payload = (array) ($event->payload ?? []);
+        $event->update([
+            'sap_status' => 'cancel_requested',
+            'payload' => array_merge($payload, [
+                'cancel_requested_at' => now()->toDateTimeString(),
+            ]),
+        ]);
+
+        Notification::make()
+            ->title('Stop requested')
+            ->body('The current item push will stop after the current record finishes.')
+            ->success()
+            ->send();
+    }
+
     private function buildPanel(string $sourceType): array
     {
         $event = SapSyncEvent::query()
@@ -197,6 +230,7 @@ class SapItems extends Page implements HasTable
                 'status' => 'idle',
                 'status_label' => 'Idle',
                 'tone' => 'gray',
+                'can_stop' => false,
                 'event_key' => null,
                 'requested_at' => null,
                 'updated_at' => null,
@@ -220,6 +254,7 @@ class SapItems extends Page implements HasTable
             'status' => $status,
             'status_label' => ucwords(str_replace('_', ' ', $status)),
             'tone' => $this->statusTone($status),
+            'can_stop' => in_array($status, ['queued', 'running', 'cancel_requested'], true),
             'event_key' => $event->event_key,
             'requested_at' => $event->created_at?->toDateTimeString(),
             'updated_at' => $event->updated_at?->toDateTimeString(),
@@ -232,7 +267,8 @@ class SapItems extends Page implements HasTable
     {
         return match ($status) {
             'completed' => 'success',
-            'queued', 'running' => 'warning',
+            'queued', 'running', 'cancel_requested' => 'warning',
+            'cancelled' => 'gray',
             'failed' => 'danger',
             default => 'gray',
         };

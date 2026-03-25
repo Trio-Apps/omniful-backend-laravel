@@ -31,6 +31,18 @@ class RunSapWarehouseBackgroundPush implements ShouldQueue
         }
 
         $basePayload = (array) ($event->payload ?? []);
+        if ($event->sap_status === 'cancel_requested') {
+            $event->update([
+                'sap_status' => 'cancelled',
+                'sap_error' => 'Push stopped by user request.',
+                'payload' => array_merge($basePayload, [
+                    'finished_at' => now()->toDateTimeString(),
+                ]),
+            ]);
+
+            return;
+        }
+
         $event->update([
             'sap_status' => 'running',
             'sap_error' => null,
@@ -40,15 +52,17 @@ class RunSapWarehouseBackgroundPush implements ShouldQueue
         ]);
 
         try {
-            $details = $warehouseSync->pushToOmniful($client);
+            $details = $warehouseSync->pushToOmniful($client, $event);
             $summary = [
                 'synced' => (int) ($details['ok'] ?? 0),
                 'failed' => (int) ($details['failed'] ?? 0),
             ];
 
+            $finalStatus = !empty($details['cancelled']) ? 'cancelled' : 'completed';
+
             $event->update([
-                'sap_status' => 'completed',
-                'sap_error' => null,
+                'sap_status' => $finalStatus,
+                'sap_error' => !empty($details['cancelled']) ? 'Push stopped by user request.' : null,
                 'payload' => array_merge($basePayload, [
                     'started_at' => $basePayload['started_at'] ?? now()->toDateTimeString(),
                     'finished_at' => now()->toDateTimeString(),

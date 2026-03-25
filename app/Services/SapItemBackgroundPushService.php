@@ -46,7 +46,7 @@ class SapItemBackgroundPushService
     {
         return SapSyncEvent::query()
             ->where('source_type', 'omniful_items_push')
-            ->whereIn('sap_status', ['queued', 'running'])
+            ->whereIn('sap_status', ['queued', 'running', 'cancel_requested'])
             ->where('updated_at', '>=', now()->subHours(6))
             ->latest('id')
             ->first();

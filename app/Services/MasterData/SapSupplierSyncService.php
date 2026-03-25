@@ -3,6 +3,7 @@
 namespace App\Services\MasterData;
 
 use App\Models\SapSupplier;
+use App\Models\SapSyncEvent;
 use App\Services\OmnifulApiClient;
 use App\Services\SapServiceLayerClient;
 
@@ -60,7 +61,7 @@ class SapSupplierSyncService
         ];
     }
 
-    public function pushToOmniful(OmnifulApiClient $client, ?int $limit = null): array
+    public function pushToOmniful(OmnifulApiClient $client, ?int $limit = null, ?SapSyncEvent $event = null): array
     {
         $query = SapSupplier::query()
             ->where(function ($q): void {
@@ -82,6 +83,17 @@ class SapSupplierSyncService
         $errors = [];
 
         foreach ($records as $record) {
+            if ($event?->fresh()?->sap_status === 'cancel_requested') {
+                $remaining = SapSupplier::query()
+                    ->where(function ($q): void {
+                        $q->whereNull('omniful_status')
+                            ->orWhereIn('omniful_status', ['pending', 'failed']);
+                    })
+                    ->count();
+
+                return ['ok' => $ok, 'failed' => $failed, 'errors' => $errors, 'remaining' => $remaining, 'cancelled' => true];
+            }
+
             $record->omniful_status = 'syncing';
             $record->omniful_error = null;
             $record->save();
@@ -143,7 +155,7 @@ class SapSupplierSyncService
             })
             ->count();
 
-        return ['ok' => $ok, 'failed' => $failed, 'errors' => $errors, 'remaining' => $remaining];
+        return ['ok' => $ok, 'failed' => $failed, 'errors' => $errors, 'remaining' => $remaining, 'cancelled' => false];
     }
 
     public function syncFromOmniful(OmnifulApiClient $omnifulClient, SapServiceLayerClient $sapClient): array
