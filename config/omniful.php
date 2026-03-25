@@ -216,7 +216,7 @@ return [
         'currency_display_name' => env('OMNIFUL_HUB_CURRENCY_DISPLAY_NAME', 'SAR (Saudi Riyal)'),
         'timezone' => env('OMNIFUL_HUB_TIMEZONE', 'Asia/Riyadh'),
         'address_line1' => env('OMNIFUL_HUB_ADDRESS_LINE1', 'N/A'),
-        'address_line2' => env('OMNIFUL_HUB_ADDRESS_LINE2', ''),
+        'address_line2' => env('OMNIFUL_HUB_ADDRESS_LINE2', 'Industrial Area'),
         'building_number' => '1234',
         'city' => env('OMNIFUL_HUB_CITY', 'Riyadh'),
         'state' => env('OMNIFUL_HUB_STATE', ''),
@@ -276,6 +276,59 @@ return [
                     'put_away' => [
                         'manual_barcode_allowed' => false,
                         'enter_quantity_manually' => false,
+                    ],
+                    'location_configuration' => [
+                        'layout' => [
+                            'bin' => [
+                                'exist' => false,
+                                'order' => 8,
+                                'prefix' => 'B',
+                                'display_name' => 'Bin',
+                            ],
+                            'hall' => [
+                                'exist' => false,
+                                'order' => 3,
+                                'prefix' => 'H',
+                                'display_name' => 'Hall',
+                            ],
+                            'rack' => [
+                                'exist' => false,
+                                'order' => 5,
+                                'prefix' => 'R',
+                                'display_name' => 'Rack',
+                            ],
+                            'aisle' => [
+                                'exist' => false,
+                                'order' => 4,
+                                'prefix' => 'A',
+                                'display_name' => 'Aisle',
+                            ],
+                            'floor' => [
+                                'exist' => false,
+                                'order' => 2,
+                                'prefix' => 'F',
+                                'display_name' => 'Floor',
+                            ],
+                            'shelf' => [
+                                'exist' => false,
+                                'order' => 6,
+                                'prefix' => 'S',
+                                'display_name' => 'Shelf',
+                            ],
+                            'location' => [
+                                'exist' => false,
+                                'order' => 7,
+                                'prefix' => 'L',
+                                'display_name' => 'Location',
+                            ],
+                            'custom_prefix' => [
+                                'exist' => true,
+                                'order' => 1,
+                                'prefix' => 'P',
+                                'display_name' => 'Prefix',
+                            ],
+                        ],
+                        'enabled' => false,
                     ],
                     'expiry_configuration' => [
                         'include_near_expiry_items' => false,
