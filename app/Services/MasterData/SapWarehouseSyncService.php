@@ -123,6 +123,7 @@ class SapWarehouseSyncService
                     'address' => [
                         'address_line1' => (string) ($defaults['address_line1'] ?? 'N/A'),
                         'address_line2' => (string) ($defaults['address_line2'] ?? ''),
+                        'building_number' => (string) ($defaults['building_number'] ?? ''),
                         'city' => (string) ($defaults['city'] ?? 'Riyadh'),
                         'state' => (string) ($defaults['state'] ?? ''),
                         'country' => (string) ($defaults['country'] ?? ($defaults['country_code'] ?? 'SA')),

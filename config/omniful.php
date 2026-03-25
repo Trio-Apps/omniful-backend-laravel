@@ -217,6 +217,7 @@ return [
         'timezone' => env('OMNIFUL_HUB_TIMEZONE', 'Asia/Riyadh'),
         'address_line1' => env('OMNIFUL_HUB_ADDRESS_LINE1', 'N/A'),
         'address_line2' => env('OMNIFUL_HUB_ADDRESS_LINE2', ''),
+        'building_number' => '1234',
         'city' => env('OMNIFUL_HUB_CITY', 'Riyadh'),
         'state' => env('OMNIFUL_HUB_STATE', ''),
         'country' => env('OMNIFUL_HUB_COUNTRY', 'SA'),
