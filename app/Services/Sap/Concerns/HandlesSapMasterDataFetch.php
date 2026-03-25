@@ -37,7 +37,7 @@ trait HandlesSapMasterDataFetch
      */
     public function fetchWarehouses(): array
     {
-        return $this->fetchAll('/Warehouses?$select=WarehouseCode,WarehouseName,EnableBinLocations');
+        return $this->fetchAll('/Warehouses?$select=WarehouseCode,WarehouseName,Street,ZipCode,Location,State,City,Country,GlobalLocationNumber,EnableBinLocations');
     }
 
     /**

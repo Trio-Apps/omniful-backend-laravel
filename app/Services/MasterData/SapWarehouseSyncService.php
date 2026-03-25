@@ -86,6 +86,14 @@ class SapWarehouseSyncService
                 }
 
                 $defaults = config('omniful.hub_defaults', []);
+                $warehousePayload = is_array($record->payload) ? $record->payload : [];
+
+                $sapStreet = trim((string) ($warehousePayload['Street'] ?? ''));
+                $sapZipCode = trim((string) ($warehousePayload['ZipCode'] ?? ''));
+                $sapCity = trim((string) ($warehousePayload['City'] ?? ''));
+                $sapState = trim((string) ($warehousePayload['State'] ?? ''));
+                $sapCountry = trim((string) ($warehousePayload['Country'] ?? ''));
+
                 $email = (string) ($defaults['email'] ?? '');
                 if ($email === '') {
                     $domain = (string) ($defaults['email_domain'] ?? 'hub.local');
@@ -113,10 +121,17 @@ class SapWarehouseSyncService
                     $currency['symbol'] = (string) $defaults['currency_symbol'];
                 }
 
+                $fallbackCountry = (string) ($defaults['country'] ?? 'Saudi Arabia');
+                $fallbackCity = (string) ($defaults['city'] ?? 'Riyadh');
                 $resolvedLocation = app(OmnifulCityStateResolver::class)->resolve(
-                    (string) ($defaults['city'] ?? 'Riyadh'),
-                    (string) ($defaults['country'] ?? ($defaults['country_code'] ?? 'SA'))
+                    $sapCity !== '' ? $sapCity : $fallbackCity,
+                    $sapCountry !== '' ? $sapCountry : $fallbackCountry
                 );
+
+                $addressLine1 = $sapStreet !== '' ? $sapStreet : (string) ($defaults['address_line1'] ?? 'N/A');
+                $postalCode = $sapZipCode !== '' ? $sapZipCode : (string) ($defaults['postal_code'] ?? '00000');
+                $stateName = $sapState !== '' ? $sapState : (string) ($resolvedLocation['state_name'] ?? ($defaults['state'] ?? ''));
+                $countryName = $sapCountry !== '' ? $sapCountry : (string) ($resolvedLocation['country_name'] ?? $fallbackCountry);
 
                 $payload = [
                     'code' => $record->code,
@@ -127,15 +142,15 @@ class SapWarehouseSyncService
                     'country_code' => (string) ($defaults['country_code'] ?? 'SA'),
                     'country_calling_code' => (string) ($defaults['country_calling_code'] ?? '+966'),
                     'address' => [
-                        'address_line1' => (string) ($defaults['address_line1'] ?? 'N/A'),
+                        'address_line1' => $addressLine1,
                         'address_line2' => (string) ($defaults['address_line2'] ?? ''),
                         'building_number' => (string) ($defaults['building_number'] ?? ''),
                         'city' => $resolvedLocation['city_name'],
                         'city_name' => $resolvedLocation['city_name'],
-                        'state' => (string) ($resolvedLocation['state_name'] ?? ($defaults['state'] ?? '')),
-                        'state_name' => (string) ($resolvedLocation['state_name'] ?? ($defaults['state'] ?? '')),
-                        'country' => (string) ($resolvedLocation['country_name'] ?? ($defaults['country'] ?? ($defaults['country_code'] ?? 'SA'))),
-                        'postal_code' => (string) ($defaults['postal_code'] ?? '00000'),
+                        'state' => $stateName,
+                        'state_name' => $stateName,
+                        'country' => $countryName,
+                        'postal_code' => $postalCode,
                     ],
                     'currency' => $currency,
                     'timezone' => (string) ($defaults['timezone'] ?? 'Asia/Riyadh'),
