@@ -18,10 +18,6 @@ class OmnifulOrderMonitor extends Page implements HasTable
 {
     use InteractsWithTable;
 
-    public bool $isSapErrorModalOpen = false;
-
-    public ?string $activeSapError = null;
-
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-rectangle-stack';
 
     protected static ?string $navigationLabel = 'Omniful Orders';
@@ -134,16 +130,12 @@ class OmnifulOrderMonitor extends Page implements HasTable
                 ->icon('heroicon-o-exclamation-triangle')
                 ->color('danger')
                 ->visible(fn ($record) => (bool) $record->sap_error)
-                ->action(function ($record): void {
-                    $this->activeSapError = (string) ($record->sap_error ?? '');
-                    $this->isSapErrorModalOpen = $this->activeSapError !== '';
-                }),
+                ->modalHeading('SAP Error')
+                ->modalSubmitAction(false)
+                ->modalCancelActionLabel('Close')
+                ->modalContent(fn ($record) => view('filament.pages.sap-sync-error', [
+                    'error' => $record->sap_error,
+                ])),
         ];
-    }
-
-    public function closeSapErrorModal(): void
-    {
-        $this->isSapErrorModalOpen = false;
-        $this->activeSapError = null;
     }
 }
