@@ -36,6 +36,7 @@ class IntegrationSetting extends Model
         'order_fallback_customer_code',
         'order_fallback_customer_code_by_source',
         'order_fallback_warehouse_code',
+        'order_payment_transfer_account',
     ];
 
     protected $casts = [
@@ -62,5 +63,6 @@ class IntegrationSetting extends Model
         'order_fallback_customer_code' => 'string',
         'order_fallback_customer_code_by_source' => 'string',
         'order_fallback_warehouse_code' => 'string',
+        'order_payment_transfer_account' => 'string',
     ];
 }

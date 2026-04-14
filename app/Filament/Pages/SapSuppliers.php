@@ -4,8 +4,6 @@ namespace App\Filament\Pages;
 
 use App\Models\SapSyncEvent;
 use App\Models\SapSupplier;
-use App\Services\IntegrationDirectionService;
-use App\Services\SapSupplierBackgroundPushService;
 use App\Services\SapSupplierBackgroundSyncService;
 use Filament\Actions\Action;
 use Filament\Notifications\Notification;
@@ -101,29 +99,14 @@ class SapSuppliers extends Page implements HasTable
                 ->url(SapCatalogOverview::getUrl()),
         ];
 
-        if (config('omniful.dashboard_actions.master_data_sync_enabled')) {
-            $actions[] = Action::make('syncSuppliers')
-                ->label(fn () => app(IntegrationDirectionService::class)->isSapToOmniful('suppliers')
-                    ? 'Sync SAP Suppliers'
-                    : 'Sync Omniful Suppliers to SAP')
-                ->icon('heroicon-o-arrow-path')
-                ->extraAttributes([
-                    'wire:loading.attr' => 'disabled',
-                    'wire:loading.class' => 'opacity-70',
-                ])
-                ->action('queueSupplierSync');
-
-            $actions[] = Action::make('pushSuppliers')
-                ->label('Push to Omniful')
-                ->icon('heroicon-o-cloud-arrow-up')
-                ->color('primary')
-                ->disabled(fn () => app(IntegrationDirectionService::class)->isOmnifulToSap('suppliers'))
-                ->extraAttributes([
-                    'wire:loading.attr' => 'disabled',
-                    'wire:loading.class' => 'opacity-70',
-                ])
-                ->action('queueSupplierPush');
-        }
+        $actions[] = Action::make('syncSuppliers')
+            ->label('Sync from SAP')
+            ->icon('heroicon-o-arrow-path')
+            ->extraAttributes([
+                'wire:loading.attr' => 'disabled',
+                'wire:loading.class' => 'opacity-70',
+            ])
+            ->action('queueSupplierSync');
 
         return $actions;
     }
@@ -145,37 +128,6 @@ class SapSuppliers extends Page implements HasTable
 
         Notification::make()
             ->title('Supplier sync queued')
-            ->body('Background job queued: ' . $event->event_key)
-            ->success()
-            ->send();
-    }
-
-    public function queueSupplierPush(SapSupplierBackgroundPushService $dispatcher): void
-    {
-        if (app(IntegrationDirectionService::class)->isOmnifulToSap('suppliers')) {
-            Notification::make()
-                ->title('Action blocked')
-                ->body('Suppliers direction is Omniful -> SAP. Use Sync action instead.')
-                ->warning()
-                ->send();
-            return;
-        }
-
-        $result = $dispatcher->dispatch('sap_suppliers_page');
-        $event = $result['event'];
-
-        if ((bool) $result['already_running']) {
-            Notification::make()
-                ->title('Supplier push already queued')
-                ->body('Current event: ' . $event->event_key)
-                ->warning()
-                ->send();
-
-            return;
-        }
-
-        Notification::make()
-            ->title('Supplier push queued')
             ->body('Background job queued: ' . $event->event_key)
             ->success()
             ->send();

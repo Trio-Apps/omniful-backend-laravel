@@ -3,9 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\SapSyncEvent;
-use App\Services\IntegrationDirectionService;
 use App\Services\MasterData\SapSupplierSyncService;
-use App\Services\OmnifulApiClient;
 use App\Services\SapServiceLayerClient;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -25,9 +23,7 @@ class RunSapSupplierBackgroundSync implements ShouldQueue
 
     public function handle(
         SapServiceLayerClient $client,
-        OmnifulApiClient $omnifulClient,
-        SapSupplierSyncService $supplierSync,
-        IntegrationDirectionService $direction
+        SapSupplierSyncService $supplierSync
     ): void {
         $event = SapSyncEvent::find($this->syncEventId);
         if ($event === null) {
@@ -44,13 +40,8 @@ class RunSapSupplierBackgroundSync implements ShouldQueue
         ]);
 
         try {
-            if ($direction->isSapToOmniful('suppliers')) {
-                $details = $supplierSync->syncFromSap($client);
-                $mode = 'sap_to_local';
-            } else {
-                $details = $supplierSync->syncFromOmniful($omnifulClient, $client);
-                $mode = 'omniful_to_sap';
-            }
+            $details = $supplierSync->syncFromSap($client);
+            $mode = 'sap_to_local';
 
             $summary = [
                 'mode' => $mode,

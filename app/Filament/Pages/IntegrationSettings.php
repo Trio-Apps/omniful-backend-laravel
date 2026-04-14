@@ -286,15 +286,12 @@ class IntegrationSettings extends Page implements HasForms
                 ->icon('heroicon-o-table-cells')
                 ->url(SapCatalogOverview::getUrl())
                 ->color('gray'),
-        ];
-
-        if (config('omniful.dashboard_actions.master_data_sync_enabled')) {
-            $actions[] = Action::make('queueSapCatalogSync')
+            Action::make('queueSapCatalogSync')
                 ->label('Queue SAP Sync')
                 ->icon('heroicon-o-arrow-path-rounded-square')
                 ->action('queueSapCatalogSync')
-                ->color('warning');
-        }
+                ->color('warning'),
+        ];
 
         return $actions;
     }

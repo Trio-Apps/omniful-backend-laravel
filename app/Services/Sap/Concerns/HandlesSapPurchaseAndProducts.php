@@ -165,7 +165,11 @@ trait HandlesSapPurchaseAndProducts
             throw new \RuntimeException('Missing invoice doc entry for incoming payment');
         }
 
-        $transferAccount = trim((string) ($data['transfer_account'] ?? config('omniful.order_payment.transfer_account', '')));
+        $transferAccount = trim((string) (
+            $data['transfer_account']
+            ?? $this->getIntegrationSettingValue('order_payment_transfer_account')
+            ?? config('omniful.order_payment.transfer_account', '')
+        ));
         if ($transferAccount === '') {
             return [
                 'ignored' => true,

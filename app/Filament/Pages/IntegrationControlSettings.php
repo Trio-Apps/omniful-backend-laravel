@@ -3,6 +3,7 @@
 namespace App\Filament\Pages;
 
 use App\Models\IntegrationSetting;
+use App\Models\SapBankAccount;
 use App\Models\SapCostCenter;
 use App\Models\SapCostCenterSetting;
 use App\Services\IntegrationDirectionService;
@@ -127,6 +128,16 @@ class IntegrationControlSettings extends Page implements HasForms
                             ->helperText('Format: source_key:customer_code, one pair per line or comma-separated.'),
                     ])
                     ->columns(2),
+                Section::make('Order Payments')
+                    ->description('Configure incoming payment defaults using SAP bank accounts pulled from the finance master catalog')
+                    ->schema([
+                        Select::make('order_payment_transfer_account')
+                            ->label('Incoming Payment Transfer Account')
+                            ->options(fn () => $this->getBankAccountOptions())
+                            ->searchable()
+                            ->preload()
+                            ->helperText('Used for prepaid incoming payments created from Omniful sales orders.'),
+                    ]),
             ])
             ->statePath('data');
     }
@@ -145,6 +156,7 @@ class IntegrationControlSettings extends Page implements HasForms
                 'order_fallback_customer_code' => $state['order_fallback_customer_code'] ?? null,
                 'order_fallback_customer_code_by_source' => $state['order_fallback_customer_code_by_source'] ?? null,
                 'order_fallback_warehouse_code' => $state['order_fallback_warehouse_code'] ?? null,
+                'order_payment_transfer_account' => $state['order_payment_transfer_account'] ?? null,
             ]
         );
 
@@ -245,6 +257,22 @@ class IntegrationControlSettings extends Page implements HasForms
             ->all();
     }
 
+    private function getBankAccountOptions(): array
+    {
+        return SapBankAccount::query()
+            ->orderBy('bank_code')
+            ->orderBy('account_code')
+            ->get()
+            ->mapWithKeys(fn (SapBankAccount $row) => [
+                $row->account_code => trim(implode(' | ', array_filter([
+                    $row->account_code,
+                    $row->bank_code,
+                    $row->account_number,
+                ], fn ($value) => is_string($value) && trim($value) !== ''))),
+            ])
+            ->all();
+    }
+
     protected function getHeaderActions(): array
     {
         $actions = [
@@ -256,15 +284,12 @@ class IntegrationControlSettings extends Page implements HasForms
                     'style' => 'background-color: #226d64; color: #ffffff;',
                 ])
                 ->keyBindings(['mod+s']),
-        ];
-
-        if (config('omniful.dashboard_actions.master_data_sync_enabled')) {
-            $actions[] = Action::make('syncSapCostCenters')
+            Action::make('syncSapCostCenters')
                 ->label('Sync SAP Cost Centers')
                 ->icon('heroicon-o-arrow-path')
                 ->color('gray')
-                ->action('syncSapCostCenters');
-        }
+                ->action('syncSapCostCenters'),
+        ];
 
         return $actions;
     }

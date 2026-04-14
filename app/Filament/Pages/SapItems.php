@@ -4,8 +4,6 @@ namespace App\Filament\Pages;
 
 use App\Models\SapItem;
 use App\Models\SapSyncEvent;
-use App\Services\IntegrationDirectionService;
-use App\Services\SapItemBackgroundPushService;
 use App\Services\SapItemBackgroundSyncService;
 use Filament\Actions\Action;
 use Filament\Notifications\Notification;
@@ -100,29 +98,14 @@ class SapItems extends Page implements HasTable
                 ->url(SapCatalogOverview::getUrl()),
         ];
 
-        if (config('omniful.dashboard_actions.master_data_sync_enabled')) {
-            $actions[] = Action::make('syncItems')
-                ->label(fn () => app(IntegrationDirectionService::class)->isSapToOmniful('items')
-                    ? 'Sync SAP Items'
-                    : 'Sync Omniful Items to SAP')
-                ->icon('heroicon-o-arrow-path')
-                ->extraAttributes([
-                    'wire:loading.attr' => 'disabled',
-                    'wire:loading.class' => 'opacity-70',
-                ])
-                ->action('queueItemSync');
-
-            $actions[] = Action::make('pushItems')
-                ->label('Push to Omniful')
-                ->icon('heroicon-o-cloud-arrow-up')
-                ->color('primary')
-                ->disabled(fn () => app(IntegrationDirectionService::class)->isOmnifulToSap('items'))
-                ->extraAttributes([
-                    'wire:loading.attr' => 'disabled',
-                    'wire:loading.class' => 'opacity-70',
-                ])
-                ->action('queueItemPush');
-        }
+        $actions[] = Action::make('syncItems')
+            ->label('Sync from SAP')
+            ->icon('heroicon-o-arrow-path')
+            ->extraAttributes([
+                'wire:loading.attr' => 'disabled',
+                'wire:loading.class' => 'opacity-70',
+            ])
+            ->action('queueItemSync');
 
         return $actions;
     }
@@ -144,37 +127,6 @@ class SapItems extends Page implements HasTable
 
         Notification::make()
             ->title('Item sync queued')
-            ->body('Background job queued: ' . $event->event_key)
-            ->success()
-            ->send();
-    }
-
-    public function queueItemPush(SapItemBackgroundPushService $dispatcher): void
-    {
-        if (app(IntegrationDirectionService::class)->isOmnifulToSap('items')) {
-            Notification::make()
-                ->title('Action blocked')
-                ->body('Items direction is Omniful -> SAP. Use Sync action instead.')
-                ->warning()
-                ->send();
-            return;
-        }
-
-        $result = $dispatcher->dispatch('sap_items_page');
-        $event = $result['event'];
-
-        if ((bool) $result['already_running']) {
-            Notification::make()
-                ->title('Item push already queued')
-                ->body('Current event: ' . $event->event_key)
-                ->warning()
-                ->send();
-
-            return;
-        }
-
-        Notification::make()
-            ->title('Item push queued')
             ->body('Background job queued: ' . $event->event_key)
             ->success()
             ->send();

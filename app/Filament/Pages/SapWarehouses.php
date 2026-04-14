@@ -4,8 +4,6 @@ namespace App\Filament\Pages;
 
 use App\Models\SapWarehouse;
 use App\Models\SapSyncEvent;
-use App\Services\IntegrationDirectionService;
-use App\Services\SapWarehouseBackgroundPushService;
 use App\Services\SapWarehouseBackgroundSyncService;
 use Filament\Actions\Action;
 use Filament\Notifications\Notification;
@@ -99,29 +97,14 @@ class SapWarehouses extends Page implements HasTable
                 ->url(SapCatalogOverview::getUrl()),
         ];
 
-        if (config('omniful.dashboard_actions.master_data_sync_enabled')) {
-            $actions[] = Action::make('syncWarehouses')
-                ->label(fn () => app(IntegrationDirectionService::class)->isSapToOmniful('warehouses')
-                    ? 'Sync SAP Warehouses'
-                    : 'Sync Omniful Warehouses to SAP')
-                ->icon('heroicon-o-arrow-path')
-                ->extraAttributes([
-                    'wire:loading.attr' => 'disabled',
-                    'wire:loading.class' => 'opacity-70',
-                ])
-                ->action('queueWarehouseSync');
-
-            $actions[] = Action::make('pushWarehouses')
-                ->label('Push to Omniful')
-                ->icon('heroicon-o-cloud-arrow-up')
-                ->color('primary')
-                ->disabled(fn () => app(IntegrationDirectionService::class)->isOmnifulToSap('warehouses'))
-                ->extraAttributes([
-                    'wire:loading.attr' => 'disabled',
-                    'wire:loading.class' => 'opacity-70',
-                ])
-                ->action('queueWarehousePush');
-        }
+        $actions[] = Action::make('syncWarehouses')
+            ->label('Sync from SAP')
+            ->icon('heroicon-o-arrow-path')
+            ->extraAttributes([
+                'wire:loading.attr' => 'disabled',
+                'wire:loading.class' => 'opacity-70',
+            ])
+            ->action('queueWarehouseSync');
 
         return $actions;
     }
@@ -143,37 +126,6 @@ class SapWarehouses extends Page implements HasTable
 
         Notification::make()
             ->title('Warehouse sync queued')
-            ->body('Background job queued: ' . $event->event_key)
-            ->success()
-            ->send();
-    }
-
-    public function queueWarehousePush(SapWarehouseBackgroundPushService $dispatcher): void
-    {
-        if (app(IntegrationDirectionService::class)->isOmnifulToSap('warehouses')) {
-            Notification::make()
-                ->title('Action blocked')
-                ->body('Warehouses direction is Omniful -> SAP. Use Sync action instead.')
-                ->warning()
-                ->send();
-            return;
-        }
-
-        $result = $dispatcher->dispatch('sap_warehouses_page');
-        $event = $result['event'];
-
-        if ((bool) $result['already_running']) {
-            Notification::make()
-                ->title('Warehouse push already queued')
-                ->body('Current event: ' . $event->event_key)
-                ->warning()
-                ->send();
-
-            return;
-        }
-
-        Notification::make()
-            ->title('Warehouse push queued')
             ->body('Background job queued: ' . $event->event_key)
             ->success()
             ->send();

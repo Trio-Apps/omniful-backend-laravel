@@ -2,6 +2,7 @@
 
 namespace App\Services\Webhooks;
 
+use App\Models\IntegrationSetting;
 use App\Models\OmnifulOrder;
 use App\Models\OmnifulOrderEvent;
 use App\Services\SapServiceLayerClient;
@@ -196,7 +197,7 @@ class OrderWebhookService
             'transfer_date' => data_get($data, 'order_created_at') ?? data_get($data, 'created_at'),
             'reference' => (string) ($order->external_id ?? ''),
             'payment_method' => $this->resolvePaymentMethod($data),
-            'transfer_account' => config('omniful.order_payment.transfer_account'),
+            'transfer_account' => $this->resolveIncomingPaymentTransferAccount(),
             'invoice_type_candidates' => config('omniful.order_payment.invoice_type_candidates', [17, 13]),
         ]);
 
@@ -232,6 +233,17 @@ class OrderWebhookService
         }
 
         return 0.0;
+    }
+
+    private function resolveIncomingPaymentTransferAccount(): string
+    {
+        $settings = IntegrationSetting::query()->first();
+        $configured = trim((string) ($settings?->order_payment_transfer_account ?? ''));
+        if ($configured !== '') {
+            return $configured;
+        }
+
+        return trim((string) config('omniful.order_payment.transfer_account', ''));
     }
 
     private function resolvePaymentMethod(array $data): string
