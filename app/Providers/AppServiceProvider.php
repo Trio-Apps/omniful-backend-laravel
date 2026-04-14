@@ -24,6 +24,7 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->registerFilamentCoreAliases();
+        $this->registerFilamentAuthAliases();
         $this->registerFilamentPageAliases();
     }
 
@@ -31,6 +32,24 @@ class AppServiceProvider extends ServiceProvider
     {
         if (class_exists(\Filament\Livewire\Notifications::class)) {
             Livewire::component('filament.livewire.notifications', \Filament\Livewire\Notifications::class);
+        }
+    }
+
+    private function registerFilamentAuthAliases(): void
+    {
+        $aliases = [
+            'filament.auth.pages.login' => \Filament\Auth\Pages\Login::class,
+            'filament.auth.pages.register' => \Filament\Auth\Pages\Register::class,
+            'filament.auth.pages.edit-profile' => \Filament\Auth\Pages\EditProfile::class,
+            'filament.auth.pages.email-verification.email-verification-prompt' => \Filament\Auth\Pages\EmailVerification\EmailVerificationPrompt::class,
+            'filament.auth.pages.password-reset.request-password-reset' => \Filament\Auth\Pages\PasswordReset\RequestPasswordReset::class,
+            'filament.auth.pages.password-reset.reset-password' => \Filament\Auth\Pages\PasswordReset\ResetPassword::class,
+        ];
+
+        foreach ($aliases as $alias => $class) {
+            if (class_exists($class)) {
+                Livewire::component($alias, $class);
+            }
         }
     }
 
