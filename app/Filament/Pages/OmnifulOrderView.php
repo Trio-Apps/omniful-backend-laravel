@@ -31,6 +31,8 @@ class OmnifulOrderView extends Page
 
     public array $sapResponses = [];
 
+    public array $flowSummary = [];
+
     public function mount(int|string|null $record = null): void
     {
         $recordId = $record ?? request()->query('record');
@@ -51,6 +53,7 @@ class OmnifulOrderView extends Page
             ->latest('received_at')
             ->first();
         $this->flowSteps = $this->buildFlowSteps();
+        $this->flowSummary = $this->buildFlowSummary($this->flowSteps);
         $this->debugPayloads = $this->buildDebugPayloads();
         $this->sapResponses = $this->buildSapResponses();
     }
@@ -257,6 +260,114 @@ class OmnifulOrderView extends Page
                 ],
             ],
         ];
+    }
+
+    private function buildFlowSummary(array $steps): array
+    {
+        $statusCode = strtolower(trim((string) data_get($this->data, 'status_code', $this->record->omniful_status ?: '')));
+        $activeKeys = ['order', 'payment'];
+
+        if ($this->isFulfillmentStatus($statusCode) || $this->hasStepStarted($steps, 'delivery')) {
+            $activeKeys[] = 'delivery';
+        }
+
+        if ($this->hasStepStarted($steps, 'card_fee')) {
+            $activeKeys[] = 'card_fee';
+        }
+
+        if ($this->hasStepStarted($steps, 'cogs')) {
+            $activeKeys[] = 'cogs';
+        }
+
+        if ($this->isCancellationStatus($statusCode) || $this->hasStepStarted($steps, 'credit_note')) {
+            $activeKeys[] = 'credit_note';
+        }
+
+        if ($this->hasStepStarted($steps, 'cancel_cogs')) {
+            $activeKeys[] = 'cancel_cogs';
+        }
+
+        $activeKeys = array_values(array_unique($activeKeys));
+        $relevantSteps = array_values(array_filter($steps, fn (array $step) => in_array($step['key'], $activeKeys, true)));
+        $completedStatuses = ['created', 'updated', 'logged', 'created_mixed', 'received_logged'];
+        $issueStatuses = ['failed', 'blocked', 'ignored', 'retrying', 'pending'];
+        $completedCount = count(array_filter($relevantSteps, fn (array $step) => in_array($step['status'], $completedStatuses, true)));
+
+        $currentKey = null;
+        foreach ($relevantSteps as $step) {
+            if (in_array($step['status'], $issueStatuses, true)) {
+                $currentKey = $step['key'];
+                break;
+            }
+        }
+
+        if ($currentKey === null) {
+            foreach ($relevantSteps as $step) {
+                if ($step['status'] === 'not_started') {
+                    $currentKey = $step['key'];
+                    break;
+                }
+            }
+        }
+
+        $overallTone = 'success';
+        $overallLabel = 'Completed';
+        if ($currentKey !== null) {
+            $currentStep = collect($relevantSteps)->firstWhere('key', $currentKey);
+            $currentStatus = (string) ($currentStep['status'] ?? 'not_started');
+            $overallTone = in_array($currentStatus, ['failed', 'blocked'], true) ? 'danger' : 'warning';
+            $overallLabel = in_array($currentStatus, ['failed', 'blocked'], true) ? 'Blocked' : 'In Progress';
+        }
+
+        $progressPercent = $relevantSteps === []
+            ? 0
+            : (int) round(($completedCount / max(count($relevantSteps), 1)) * 100);
+
+        return [
+            'current_key' => $currentKey,
+            'overall_label' => $overallLabel,
+            'overall_tone' => $overallTone,
+            'progress_percent' => max(0, min(100, $progressPercent)),
+            'completed_count' => $completedCount,
+            'relevant_count' => count($relevantSteps),
+            'current_title' => $currentKey !== null
+                ? (string) (collect($relevantSteps)->firstWhere('key', $currentKey)['title'] ?? '-')
+                : 'Flow completed',
+        ];
+    }
+
+    private function hasStepStarted(array $steps, string $key): bool
+    {
+        $step = collect($steps)->firstWhere('key', $key);
+        if (!$step) {
+            return false;
+        }
+
+        return (string) ($step['status'] ?? 'not_started') !== 'not_started';
+    }
+
+    private function isFulfillmentStatus(string $status): bool
+    {
+        return in_array($status, [
+            'ready_to_ship',
+            'shipped',
+            'dispatched',
+            'out_for_delivery',
+            'in_transit',
+            'partially_delivered',
+            'delivered',
+            'completed',
+        ], true);
+    }
+
+    private function isCancellationStatus(string $status): bool
+    {
+        return in_array($status, [
+            'cancelled',
+            'canceled',
+            'returned',
+            'return_to_origin',
+        ], true);
     }
 
     private function buildSapResponses(): array

@@ -4,6 +4,7 @@
         @media (min-width: 768px) { .po-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
         @media (min-width: 1024px) { .po-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
         .po-card { border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px; background: #ffffff; }
+        .po-card--active { border-color: #0f766e; box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.12); background: #f0fdfa; }
         .po-kv { border: 1px solid #f1f5f9; background: #f8fafc; border-radius: 10px; padding: 12px; }
         .po-label { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: #6b7280; font-weight: 600; }
         .po-value { margin-top: 4px; font-size: 14px; font-weight: 600; color: #111827; word-break: break-word; }
@@ -23,6 +24,10 @@
         .po-section-pad { padding: 24px 16px; margin-top: 6px; margin-bottom: 6px; }
         .po-section-gap { margin-bottom: 22px; }
         .po-debug { white-space: pre-wrap; font-size: 12px; background: #0f172a; color: #e2e8f0; border-radius: 10px; padding: 16px; overflow-x: auto; }
+        .po-progress { border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; background: #ffffff; }
+        .po-progress__bar { width: 100%; height: 10px; background: #e5e7eb; border-radius: 999px; overflow: hidden; margin-top: 10px; }
+        .po-progress__fill { height: 100%; background: linear-gradient(90deg, #0f766e, #14b8a6); border-radius: 999px; }
+        .po-progress__meta { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
     </style>
 
     <div class="space-y-6">
@@ -214,9 +219,32 @@
 
         <x-filament::section class="po-section-gap">
             <x-slot name="heading">Process Steps</x-slot>
-            <div class="po-grid po-grid-3 po-section-pad">
+            <div class="po-section-pad space-y-6">
+                <div class="po-progress">
+                    <div class="po-progress__meta">
+                        <div>
+                            <div class="po-label">Flow Status</div>
+                            <div class="po-value">
+                                <span class="po-badge po-badge--{{ $flowSummary['overall_tone'] }}">{{ $flowSummary['overall_label'] }}</span>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="po-label">Current Step</div>
+                            <div class="po-value">{{ $flowSummary['current_title'] }}</div>
+                        </div>
+                        <div>
+                            <div class="po-label">Progress</div>
+                            <div class="po-value">{{ $flowSummary['completed_count'] }}/{{ $flowSummary['relevant_count'] }}</div>
+                        </div>
+                    </div>
+                    <div class="po-progress__bar">
+                        <div class="po-progress__fill" style="width: {{ $flowSummary['progress_percent'] }}%;"></div>
+                    </div>
+                </div>
+
+                <div class="po-grid po-grid-3">
                 @foreach ($flowSteps as $step)
-                    <div class="po-card">
+                    <div class="po-card {{ ($flowSummary['current_key'] ?? null) === $step['key'] ? 'po-card--active' : '' }}">
                         <div class="po-label">{{ $step['title'] }}</div>
                         <div class="po-value">
                             <span class="po-badge po-badge--{{ $step['tone'] }}">{{ str_replace('_', ' ', $step['status']) }}</span>
@@ -227,6 +255,7 @@
                         <div class="po-value po-break">{{ $step['error'] ?? '-' }}</div>
                     </div>
                 @endforeach
+                </div>
             </div>
         </x-filament::section>
 
