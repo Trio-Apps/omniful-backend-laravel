@@ -8,6 +8,11 @@
         .po-label { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: #6b7280; font-weight: 600; }
         .po-value { margin-top: 4px; font-size: 14px; font-weight: 600; color: #111827; word-break: break-word; }
         .po-break { word-break: break-word; overflow-wrap: anywhere; }
+        .po-badge { display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; padding: 0.25rem 0.625rem; font-size: 12px; font-weight: 700; text-transform: capitalize; }
+        .po-badge--success { background: #eaf8ef; color: #166534; }
+        .po-badge--warning { background: #fff7db; color: #9a6700; }
+        .po-badge--danger { background: #fdecec; color: #b42318; }
+        .po-badge--gray { background: #eef2f6; color: #475569; }
         .po-table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
         .po-table th { text-align: left; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: #6b7280; background: #f3f4f6; padding: 10px 12px; border-bottom: 1px solid #e5e7eb; white-space: nowrap; }
         .po-table td { padding: 10px 12px; border-bottom: 1px solid #eef2f7; font-size: 13px; color: #374151; }
@@ -17,6 +22,7 @@
         .po-table-wrap { overflow-x: auto; border: 1px solid #e5e7eb; border-radius: 10px; background: #ffffff; }
         .po-section-pad { padding: 24px 16px; margin-top: 6px; margin-bottom: 6px; }
         .po-section-gap { margin-bottom: 22px; }
+        .po-debug { white-space: pre-wrap; font-size: 12px; background: #0f172a; color: #e2e8f0; border-radius: 10px; padding: 16px; overflow-x: auto; }
     </style>
 
     <div class="space-y-6">
@@ -203,48 +209,38 @@
         </x-filament::section>
 
         <x-filament::section class="po-section-gap">
-            <x-slot name="heading">SAP Tracking</x-slot>
+            <x-slot name="heading">Process Steps</x-slot>
             <div class="po-grid po-grid-3 po-section-pad">
-                <div class="po-card">
-                    <div class="po-label">Payment</div>
-                    <div class="po-value">{{ $record->sap_payment_doc_num ?: ($record->sap_payment_status ?: '-') }}</div>
-                </div>
-                <div class="po-card">
-                    <div class="po-label">Delivery</div>
-                    <div class="po-value">{{ $record->sap_delivery_doc_num ?: ($record->sap_delivery_status ?: '-') }}</div>
-                </div>
-                <div class="po-card">
-                    <div class="po-label">Card Fee JE</div>
-                    <div class="po-value">{{ $record->sap_card_fee_journal_num ?: ($record->sap_card_fee_status ?: '-') }}</div>
-                </div>
-                <div class="po-card">
-                    <div class="po-label">COGS JE</div>
-                    <div class="po-value">{{ $record->sap_cogs_journal_num ?: ($record->sap_cogs_status ?: '-') }}</div>
-                </div>
-                <div class="po-card">
-                    <div class="po-label">Credit Note</div>
-                    <div class="po-value">{{ $record->sap_credit_note_doc_num ?: ($record->sap_credit_note_status ?: '-') }}</div>
-                </div>
-                <div class="po-card">
-                    <div class="po-label">Cancel COGS JE</div>
-                    <div class="po-value">{{ $record->sap_cancel_cogs_journal_num ?: ($record->sap_cancel_cogs_status ?: '-') }}</div>
-                </div>
-                <div class="po-card">
-                    <div class="po-label">Payment Error</div>
-                    <div class="po-value po-break">{{ $record->sap_payment_error ?: '-' }}</div>
-                </div>
-                <div class="po-card">
-                    <div class="po-label">Delivery Error</div>
-                    <div class="po-value po-break">{{ $record->sap_delivery_error ?: '-' }}</div>
-                </div>
-                <div class="po-card">
-                    <div class="po-label">Card Fee Error</div>
-                    <div class="po-value po-break">{{ $record->sap_card_fee_error ?: '-' }}</div>
-                </div>
-                <div class="po-card">
-                    <div class="po-label">COGS Error</div>
-                    <div class="po-value po-break">{{ $record->sap_cogs_error ?: '-' }}</div>
-                </div>
+                @foreach ($flowSteps as $step)
+                    <div class="po-card">
+                        <div class="po-label">{{ $step['title'] }}</div>
+                        <div class="po-value">
+                            <span class="po-badge po-badge--{{ $step['tone'] }}">{{ str_replace('_', ' ', $step['status']) }}</span>
+                        </div>
+                        <div class="po-label" style="margin-top: 12px;">SAP Reference</div>
+                        <div class="po-value po-break">{{ $step['reference'] }}</div>
+                        <div class="po-label" style="margin-top: 12px;">Error</div>
+                        <div class="po-value po-break">{{ $step['error'] ?? '-' }}</div>
+                    </div>
+                @endforeach
+            </div>
+        </x-filament::section>
+
+        <x-filament::section class="po-section-gap">
+            <x-slot name="heading">Step Payload Debug</x-slot>
+            <div class="space-y-6 po-section-pad">
+                @foreach ($debugPayloads as $debugPayload)
+                    <div class="po-card">
+                        <div class="po-label">{{ $debugPayload['title'] }}</div>
+                        <div class="po-value" style="margin-bottom: 12px;">
+                            @php($matchedStep = collect($flowSteps)->firstWhere('key', $debugPayload['key']))
+                            @if ($matchedStep)
+                                <span class="po-badge po-badge--{{ $matchedStep['tone'] }}">{{ str_replace('_', ' ', $matchedStep['status']) }}</span>
+                            @endif
+                        </div>
+                        <pre class="po-debug">{{ json_encode($debugPayload['payload'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) }}</pre>
+                    </div>
+                @endforeach
             </div>
         </x-filament::section>
     </div>
