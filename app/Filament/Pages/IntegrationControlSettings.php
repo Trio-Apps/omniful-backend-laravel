@@ -10,6 +10,8 @@ use App\Services\MasterData\SapCostCenterSyncService;
 use App\Services\SapServiceLayerClient;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Select;
+use Filament\Forms\Components\Textarea;
+use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Forms\Concerns\InteractsWithForms;
 use Filament\Forms\Contracts\HasForms;
@@ -109,6 +111,22 @@ class IntegrationControlSettings extends Page implements HasForms
                             ->default(false),
                     ])
                     ->columns(2),
+                Section::make('Order Flow Fallbacks')
+                    ->description('Fallback values for Omniful to SAP sales flows when payload mapping is incomplete')
+                    ->schema([
+                        TextInput::make('order_fallback_customer_code')
+                            ->label('Fallback Customer Code')
+                            ->placeholder('Example: C00046'),
+                        TextInput::make('order_fallback_warehouse_code')
+                            ->label('Fallback Warehouse Code')
+                            ->placeholder('Example: CEN11'),
+                        Textarea::make('order_fallback_customer_code_by_source')
+                            ->label('Customer Code by Source')
+                            ->rows(4)
+                            ->placeholder("One per line\nsalla:C00046\nsource2:C00047")
+                            ->helperText('Format: source_key:customer_code, one pair per line or comma-separated.'),
+                    ])
+                    ->columns(2),
             ])
             ->statePath('data');
     }
@@ -124,6 +142,9 @@ class IntegrationControlSettings extends Page implements HasForms
                 'sync_direction_suppliers' => $state['sync_direction_suppliers'] ?? null,
                 'sync_direction_warehouses' => $state['sync_direction_warehouses'] ?? null,
                 'sync_direction_inventory' => $state['sync_direction_inventory'] ?? null,
+                'order_fallback_customer_code' => $state['order_fallback_customer_code'] ?? null,
+                'order_fallback_customer_code_by_source' => $state['order_fallback_customer_code_by_source'] ?? null,
+                'order_fallback_warehouse_code' => $state['order_fallback_warehouse_code'] ?? null,
             ]
         );
 
@@ -226,7 +247,7 @@ class IntegrationControlSettings extends Page implements HasForms
 
     protected function getHeaderActions(): array
     {
-        return [
+        $actions = [
             Action::make('save')
                 ->label('Save')
                 ->action('save')
@@ -235,11 +256,16 @@ class IntegrationControlSettings extends Page implements HasForms
                     'style' => 'background-color: #226d64; color: #ffffff;',
                 ])
                 ->keyBindings(['mod+s']),
-            Action::make('syncSapCostCenters')
+        ];
+
+        if (config('omniful.dashboard_actions.master_data_sync_enabled')) {
+            $actions[] = Action::make('syncSapCostCenters')
                 ->label('Sync SAP Cost Centers')
                 ->icon('heroicon-o-arrow-path')
                 ->color('gray')
-                ->action('syncSapCostCenters'),
-        ];
+                ->action('syncSapCostCenters');
+        }
+
+        return $actions;
     }
 }

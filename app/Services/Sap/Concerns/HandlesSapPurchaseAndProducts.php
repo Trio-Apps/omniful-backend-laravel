@@ -2,6 +2,7 @@
 
 namespace App\Services\Sap\Concerns;
 
+use App\Models\IntegrationSetting;
 use App\Models\SapCostCenterSetting;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -10,19 +11,25 @@ trait HandlesSapPurchaseAndProducts
 {
     public function createArReserveInvoiceFromOmnifulOrder(array $data, string $externalId): array
     {
-        $docDate = $this->formatDate((string) (data_get($data, 'order_created_at') ?? data_get($data, 'created_at') ?? null));
+        $docDate = $this->resolveOrderDocumentDate($data, [
+            'order_created_at',
+            'created_at',
+        ]);
+        $taxDate = $this->resolveOrderTaxDate($data, $docDate, [
+            'document_date',
+            'invoice.document_date',
+            'order_created_at',
+            'created_at',
+        ]);
         $currency = data_get($data, 'invoice.currency') ?? data_get($data, 'currency');
-        $hubCode = data_get($data, 'hub_code');
+        $hubCode = $this->resolveOrderWarehouseCode(data_get($data, 'hub_code'));
         $preferredSeries = $this->getPreferredSeriesId('17');
         $seriesInfo = $preferredSeries !== null
             ? ['series' => $preferredSeries, 'docDate' => $docDate, 'indicator' => 'preferred']
             : $this->resolveSeriesForDocument('17', $docDate);
         $docDate = $seriesInfo['docDate'];
 
-        $customerCode = data_get($data, 'customer.code');
-        if (!$customerCode) {
-            $customerCode = $this->buildCustomerCode($data, $externalId);
-        }
+        $customerCode = $this->resolveOrderCustomerCode($data, $externalId);
         $customerCode = $this->ensureCustomerExists((string) $customerCode, $data, $externalId);
 
         $lines = [];
@@ -95,6 +102,7 @@ trait HandlesSapPurchaseAndProducts
             'CardCode' => (string) $customerCode,
             'DocDate' => $docDate,
             'DocDueDate' => $docDate,
+            'TaxDate' => $taxDate,
             'DocumentLines' => $lines,
             'NumAtCard' => $externalId,
             'Comments' => $comments,
@@ -187,9 +195,19 @@ trait HandlesSapPurchaseAndProducts
         }
 
         $transferDate = $this->formatDate((string) ($data['transfer_date'] ?? now()->format('Y-m-d')));
+        $reference = trim((string) ($data['reference'] ?? ''));
+        $paymentMethod = trim((string) ($data['payment_method'] ?? ''));
         $attemptErrors = [];
 
         foreach ($invoiceTypeCandidates as $invoiceType) {
+            $remarks = 'Incoming payment from Omniful prepaid order';
+            if ($reference !== '') {
+                $remarks .= ' | order=' . $reference;
+            }
+            if ($paymentMethod !== '') {
+                $remarks .= ' | method=' . $paymentMethod;
+            }
+
             $body = [
                 'CardCode' => $cardCode,
                 'DocType' => 'rCustomer',
@@ -203,7 +221,7 @@ trait HandlesSapPurchaseAndProducts
                         'SumApplied' => $sumApplied,
                     ],
                 ],
-                'Remarks' => 'Incoming payment from Omniful prepaid order',
+                'Remarks' => $remarks,
             ];
 
             $response = $this->post('/IncomingPayments', $body);
@@ -289,11 +307,25 @@ trait HandlesSapPurchaseAndProducts
         }
 
         $salesDoc = $this->getSalesOrder($orderDocEntry);
-        $hubCode = (string) ($data['hub_code'] ?? '');
+        $hubCode = (string) $this->resolveOrderWarehouseCode($data['hub_code'] ?? null);
         $externalId = (string) ($data['external_id'] ?? '');
-        $docDate = $this->formatDate((string) now()->format('Y-m-d'));
+        $docDate = $this->resolveOrderDocumentDate($data, [
+            'delivery_date',
+            'shipment.delivery_date',
+            'updated_at',
+            'order_created_at',
+            'created_at',
+        ]);
         $seriesInfo = $this->resolveSeriesForDocument('15', $docDate);
         $docDate = $seriesInfo['docDate'];
+        $taxDate = $this->resolveOrderTaxDate($data, $docDate, [
+            'delivery_date',
+            'shipment.delivery_date',
+            'document_date',
+            'updated_at',
+            'order_created_at',
+            'created_at',
+        ]);
 
         $orderItems = (array) ($data['order_items'] ?? []);
         $lines = $this->buildDeliveryLinesFromRequestedItems($salesDoc, $orderItems, $orderDocEntry, $hubCode);
@@ -337,6 +369,7 @@ trait HandlesSapPurchaseAndProducts
             'CardCode' => (string) ($salesDoc['CardCode'] ?? ''),
             'DocDate' => $docDate,
             'DocDueDate' => $docDate,
+            'TaxDate' => $taxDate,
             'Comments' => 'Delivery from Omniful order ' . $externalId,
             'DocumentLines' => $lines,
         ];
@@ -579,7 +612,7 @@ trait HandlesSapPurchaseAndProducts
     public function createArCreditMemoFromReturnOrder(array $data, array $options = []): array
     {
         $externalId = (string) ($options['external_id'] ?? '');
-        $hubCode = (string) (data_get($data, 'hub_code') ?? '');
+        $hubCode = (string) $this->resolveOrderWarehouseCode(data_get($data, 'hub_code'));
         $baseDeliveryDocEntry = (int) ($options['base_delivery_doc_entry'] ?? 0);
         $baseOrderDocEntry = (int) ($options['base_order_doc_entry'] ?? 0);
         $items = (array) ($options['parsed_items'] ?? []);
@@ -593,9 +626,18 @@ trait HandlesSapPurchaseAndProducts
             ];
         }
 
-        $docDate = $this->formatDate((string) (data_get($data, 'updated_at') ?? data_get($data, 'created_at') ?? null));
+        $docDate = $this->resolveOrderDocumentDate($data, [
+            'document_date',
+            'updated_at',
+            'created_at',
+        ]);
         $seriesInfo = $this->resolveSeriesForDocument('14', $docDate);
         $docDate = $seriesInfo['docDate'];
+        $taxDate = $this->resolveOrderTaxDate($data, $docDate, [
+            'document_date',
+            'updated_at',
+            'created_at',
+        ]);
 
         $cardCode = '';
         $documentLines = [];
@@ -618,18 +660,13 @@ trait HandlesSapPurchaseAndProducts
         }
 
         if ($cardCode === '') {
-            $customerCode = data_get($data, 'customer.code');
-            if ($customerCode) {
-                $cardCode = (string) $customerCode;
-            } else {
-                $seedId = (string) (
-                    data_get($data, 'order_reference_id')
-                    ?? data_get($data, 'return_order_id')
-                    ?? data_get($data, 'id')
-                    ?? $externalId
-                );
-                $cardCode = $this->buildCustomerCode($data, $seedId);
-            }
+            $seedId = (string) (
+                data_get($data, 'order_reference_id')
+                ?? data_get($data, 'return_order_id')
+                ?? data_get($data, 'id')
+                ?? $externalId
+            );
+            $cardCode = $this->resolveOrderCustomerCode($data, $seedId);
             $cardCode = $this->ensureCustomerExists($cardCode, $data, $externalId !== '' ? $externalId : $cardCode);
         }
 
@@ -645,6 +682,7 @@ trait HandlesSapPurchaseAndProducts
             'CardCode' => $cardCode,
             'DocDate' => $docDate,
             'DocDueDate' => $docDate,
+            'TaxDate' => $taxDate,
             'DocumentLines' => $documentLines,
             'Comments' => 'AR Credit Memo from Omniful return ' . ($externalId !== '' ? $externalId : 'event'),
         ];
@@ -733,13 +771,20 @@ trait HandlesSapPurchaseAndProducts
 
     public function createPurchaseOrderFromOmniful(array $data): array
     {
-        $docDate = $this->formatDate(data_get($data, 'created_at'));
+        $docDate = $this->resolveOrderDocumentDate($data, [
+            'document_date',
+            'created_at',
+        ]);
         $preferredSeries = $this->getPreferredSeriesId('22');
         $seriesInfo = $preferredSeries !== null
             ? ['series' => $preferredSeries, 'docDate' => $docDate, 'indicator' => 'preferred']
             : $this->resolveSeriesForDocument('22', $docDate);
         $docDate = $seriesInfo['docDate'];
         $dueDate = $docDate;
+        $taxDate = $this->resolveOrderTaxDate($data, $docDate, [
+            'document_date',
+            'created_at',
+        ]);
         $currency = data_get($data, 'currency');
         $hubCode = data_get($data, 'hub_code');
         $displayId = data_get($data, 'display_id');
@@ -796,6 +841,7 @@ trait HandlesSapPurchaseAndProducts
             'CardCode' => $supplierCode,
             'DocDate' => $docDate,
             'DocDueDate' => $dueDate,
+            'TaxDate' => $taxDate,
             'DocumentLines' => $lines,
             'Comments' => $comments,
         ];
@@ -1994,9 +2040,12 @@ trait HandlesSapPurchaseAndProducts
             $comments .= ' | PO ' . $displayId;
         }
 
+        $docDate = now()->format('Y-m-d');
+
         $body = [
             'CardCode' => $po['CardCode'] ?? null,
-            'DocDate' => now()->format('Y-m-d'),
+            'DocDate' => $docDate,
+            'TaxDate' => $docDate,
             'DocumentLines' => $lines,
             'Comments' => $comments,
         ];
@@ -2358,6 +2407,12 @@ trait HandlesSapPurchaseAndProducts
 
     private function buildCustomerCode(array $data, string $externalId): string
     {
+        $configuredCustomerCode = $this->resolveConfiguredSourceCustomerCode($data)
+            ?? $this->resolveConfiguredFallbackCustomerCode('Omniful Customer ' . $externalId, null);
+        if ($configuredCustomerCode !== null) {
+            return $configuredCustomerCode;
+        }
+
         $seed = (string) (
             data_get($data, 'customer.email')
             ?? data_get($data, 'customer.phone')
@@ -2366,6 +2421,118 @@ trait HandlesSapPurchaseAndProducts
         );
         $hash = strtoupper(substr(sha1($seed), 0, 10));
         return 'OMNC' . $hash;
+    }
+
+    private function resolveOrderCustomerCode(array $data, string $externalId): string
+    {
+        $explicitCustomerCode = trim((string) data_get($data, 'customer.code', ''));
+        if ($explicitCustomerCode !== '') {
+            return $explicitCustomerCode;
+        }
+
+        $configuredCustomerCode = $this->resolveConfiguredSourceCustomerCode($data);
+        if ($configuredCustomerCode !== null) {
+            return $configuredCustomerCode;
+        }
+
+        return $this->buildCustomerCode($data, $externalId);
+    }
+
+    private function resolveConfiguredSourceCustomerCode(array $data): ?string
+    {
+        $source = $this->extractOrderSourceKey($data);
+        if ($source === '') {
+            return null;
+        }
+
+        $map = $this->getOrderFallbackCustomerCodeBySourceMap();
+        if (!is_array($map)) {
+            return null;
+        }
+
+        $customerCode = trim((string) ($map[$source] ?? ''));
+        return $customerCode !== '' ? $customerCode : null;
+    }
+
+    private function extractOrderSourceKey(array $data): string
+    {
+        $candidates = [
+            data_get($data, 'source'),
+            data_get($data, 'source_name'),
+            data_get($data, 'source_code'),
+            data_get($data, 'order_source'),
+            data_get($data, 'order_source_name'),
+            data_get($data, 'channel'),
+            data_get($data, 'channel_name'),
+            data_get($data, 'channel_code'),
+            data_get($data, 'sales_channel'),
+            data_get($data, 'sales_channel.name'),
+            data_get($data, 'sales_channel.code'),
+            data_get($data, 'platform'),
+            data_get($data, 'platform_name'),
+            data_get($data, 'store.name'),
+            data_get($data, 'store.code'),
+        ];
+
+        foreach ($candidates as $candidate) {
+            if (is_array($candidate)) {
+                $candidate = $candidate['code'] ?? $candidate['name'] ?? null;
+            }
+
+            $normalized = $this->normalizeSourceKey((string) ($candidate ?? ''));
+            if ($normalized !== '') {
+                return $normalized;
+            }
+        }
+
+        return '';
+    }
+
+    private function normalizeSourceKey(string $value): string
+    {
+        $normalized = strtolower(trim($value));
+        if ($normalized === '') {
+            return '';
+        }
+
+        $normalized = preg_replace('/[^a-z0-9]+/', '_', $normalized) ?? '';
+        return trim($normalized, '_');
+    }
+
+    private function resolveOrderWarehouseCode(mixed $hubCode): ?string
+    {
+        $resolved = trim((string) ($hubCode ?? ''));
+        if ($resolved !== '') {
+            return $resolved;
+        }
+
+        $fallback = trim((string) ($this->getIntegrationSettingValue('order_fallback_warehouse_code')
+            ?? config('omniful.order_fallback.warehouse_code', '')));
+        return $fallback !== '' ? $fallback : null;
+    }
+
+    private function resolveOrderDocumentDate(array $data, array $paths): string
+    {
+        foreach ($paths as $path) {
+            $value = data_get($data, $path);
+            if ($value !== null && trim((string) $value) !== '') {
+                return $this->formatDate((string) $value);
+            }
+        }
+
+        return $this->formatDate(now()->format('Y-m-d'));
+    }
+
+    private function resolveOrderTaxDate(array $data, string $docDate, array $paths): string
+    {
+        foreach ($paths as $path) {
+            $value = data_get($data, $path);
+            if ($value !== null && trim((string) $value) !== '') {
+                return $this->formatDate((string) $value);
+            }
+        }
+
+        return $docDate;
     }
 
     private function buildFallbackCustomerPhone(string $cardCode, string $externalId, int $attempt = 0): string
@@ -2886,7 +3053,8 @@ trait HandlesSapPurchaseAndProducts
 
     private function resolveConfiguredFallbackCustomerCode(string $cardName, mixed $email): ?string
     {
-        $fallback = trim((string) config('omniful.order_fallback.customer_code', ''));
+        $fallback = trim((string) ($this->getIntegrationSettingValue('order_fallback_customer_code')
+            ?? config('omniful.order_fallback.customer_code', '')));
         if ($fallback === '') {
             return null;
         }
@@ -2912,6 +3080,67 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return null;
+    }
+
+    private function getOrderFallbackCustomerCodeBySourceMap(): array
+    {
+        $raw = $this->getIntegrationSettingValue('order_fallback_customer_code_by_source');
+        if (!is_string($raw) || trim($raw) === '') {
+            $fallback = config('omniful.order_fallback.customer_code_by_source', []);
+            return is_array($fallback) ? $fallback : [];
+        }
+
+        return $this->parseSourceCustomerCodeMap($raw);
+    }
+
+    private function parseSourceCustomerCodeMap(string $raw): array
+    {
+        $normalizedRaw = str_replace(["\r\n", "\r"], "\n", trim($raw));
+        if ($normalizedRaw === '') {
+            return [];
+        }
+
+        $decoded = json_decode($normalizedRaw, true);
+        if (is_array($decoded)) {
+            $map = [];
+            foreach ($decoded as $source => $customerCode) {
+                $sourceKey = $this->normalizeSourceKey((string) $source);
+                $customerCode = trim((string) $customerCode);
+                if ($sourceKey !== '' && $customerCode !== '') {
+                    $map[$sourceKey] = $customerCode;
+                }
+            }
+
+            return $map;
+        }
+
+        $pairs = preg_split('/[\n,]+/', $normalizedRaw) ?: [];
+        $map = [];
+        foreach ($pairs as $pair) {
+            $pair = trim($pair);
+            if ($pair === '' || !str_contains($pair, ':')) {
+                continue;
+            }
+
+            [$source, $customerCode] = array_map('trim', explode(':', $pair, 2));
+            $sourceKey = $this->normalizeSourceKey($source);
+            if ($sourceKey !== '' && $customerCode !== '') {
+                $map[$sourceKey] = $customerCode;
+            }
+        }
+
+        return $map;
+    }
+
+    private function getIntegrationSettingValue(string $key): mixed
+    {
+        static $settings = null;
+
+        if ($settings === null) {
+            $settings = IntegrationSetting::query()->first();
+        }
+
+        return $settings?->{$key};
     }
 
     /**

@@ -92,13 +92,16 @@ class SapItems extends Page implements HasTable
 
     protected function getHeaderActions(): array
     {
-        return [
+        $actions = [
             Action::make('openCatalog')
                 ->label('Open SAP Catalog')
                 ->icon('heroicon-o-table-cells')
                 ->color('gray')
                 ->url(SapCatalogOverview::getUrl()),
-            Action::make('syncItems')
+        ];
+
+        if (config('omniful.dashboard_actions.master_data_sync_enabled')) {
+            $actions[] = Action::make('syncItems')
                 ->label(fn () => app(IntegrationDirectionService::class)->isSapToOmniful('items')
                     ? 'Sync SAP Items'
                     : 'Sync Omniful Items to SAP')
@@ -107,8 +110,9 @@ class SapItems extends Page implements HasTable
                     'wire:loading.attr' => 'disabled',
                     'wire:loading.class' => 'opacity-70',
                 ])
-                ->action('queueItemSync'),
-            Action::make('pushItems')
+                ->action('queueItemSync');
+
+            $actions[] = Action::make('pushItems')
                 ->label('Push to Omniful')
                 ->icon('heroicon-o-cloud-arrow-up')
                 ->color('primary')
@@ -117,8 +121,10 @@ class SapItems extends Page implements HasTable
                     'wire:loading.attr' => 'disabled',
                     'wire:loading.class' => 'opacity-70',
                 ])
-                ->action('queueItemPush'),
-        ];
+                ->action('queueItemPush');
+        }
+
+        return $actions;
     }
 
     public function queueItemSync(SapItemBackgroundSyncService $dispatcher): void

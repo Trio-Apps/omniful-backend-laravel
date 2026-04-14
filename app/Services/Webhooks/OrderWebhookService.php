@@ -194,6 +194,8 @@ class OrderWebhookService
             'card_code' => data_get($invoiceResult ?? [], 'CardCode') ?? data_get($data, 'customer.code'),
             'sum_applied' => $this->resolveIncomingPaymentAmount($data, $invoiceResult),
             'transfer_date' => data_get($data, 'order_created_at') ?? data_get($data, 'created_at'),
+            'reference' => (string) ($order->external_id ?? ''),
+            'payment_method' => $this->resolvePaymentMethod($data),
             'transfer_account' => config('omniful.order_payment.transfer_account'),
             'invoice_type_candidates' => config('omniful.order_payment.invoice_type_candidates', [17, 13]),
         ]);
@@ -230,6 +232,42 @@ class OrderWebhookService
         }
 
         return 0.0;
+    }
+
+    private function resolvePaymentMethod(array $data): string
+    {
+        $candidates = [
+            data_get($data, 'payment_method'),
+            data_get($data, 'payment.method'),
+            data_get($data, 'payment_type'),
+            data_get($data, 'payment_mode'),
+            data_get($data, 'invoice.payment_method'),
+            data_get($data, 'invoice.payment_mode'),
+        ];
+
+        foreach ($candidates as $value) {
+            $normalized = trim((string) ($value ?? ''));
+            if ($normalized !== '') {
+                return $this->normalizePaymentMethod($normalized);
+            }
+        }
+
+        return '';
+    }
+
+    private function normalizePaymentMethod(string $value): string
+    {
+        $normalized = strtolower(trim($value));
+        $normalized = str_replace([' ', '-', '_'], '', $normalized);
+
+        return match ($normalized) {
+            'visa' => 'Visa',
+            'master', 'mastercard' => 'Master',
+            'tamara' => 'Tamara',
+            'tabby' => 'Tabby',
+            'tab' => 'Tab',
+            default => trim($value),
+        };
     }
 
     private function createCardFeeJournalIfEligible(OmnifulOrder $order, array $data): void

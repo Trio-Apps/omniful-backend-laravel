@@ -33,6 +33,9 @@ class IntegrationSetting extends Model
         'sync_direction_suppliers',
         'sync_direction_warehouses',
         'sync_direction_inventory',
+        'order_fallback_customer_code',
+        'order_fallback_customer_code_by_source',
+        'order_fallback_warehouse_code',
     ];
 
     protected $casts = [
@@ -56,5 +59,8 @@ class IntegrationSetting extends Model
         'sync_direction_suppliers' => 'string',
         'sync_direction_warehouses' => 'string',
         'sync_direction_inventory' => 'string',
+        'order_fallback_customer_code' => 'string',
+        'order_fallback_customer_code_by_source' => 'string',
+        'order_fallback_warehouse_code' => 'string',
     ];
 }

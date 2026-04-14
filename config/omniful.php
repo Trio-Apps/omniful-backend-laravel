@@ -1,6 +1,9 @@
 <?php
 
 return [
+    'dashboard_actions' => [
+        'master_data_sync_enabled' => (bool) env('OMNIFUL_DASHBOARD_MASTER_DATA_SYNC_ENABLED', false),
+    ],
     'sync_endpoints' => [
         'warehouses' => env('OMNIFUL_WAREHOUSES_ENDPOINT', '/sales-channel/public/v1/tenants/hubs'),
         'suppliers' => env('OMNIFUL_SUPPLIERS_ENDPOINT', '/sales-channel/public/v1/suppliers'),
@@ -179,6 +182,42 @@ return [
     ],
     'order_fallback' => [
         'customer_code' => env('OMNIFUL_FALLBACK_CUSTOMER_CODE', ''),
+        'customer_code_by_source' => (function () {
+            $raw = trim((string) env('OMNIFUL_ORDER_CUSTOMER_CODE_BY_SOURCE', ''));
+            if ($raw === '') {
+                return [];
+            }
+
+            $decoded = json_decode($raw, true);
+            if (is_array($decoded)) {
+                $map = [];
+                foreach ($decoded as $source => $customerCode) {
+                    $source = strtolower(trim((string) $source));
+                    $customerCode = trim((string) $customerCode);
+                    if ($source !== '' && $customerCode !== '') {
+                        $map[$source] = $customerCode;
+                    }
+                }
+
+                return $map;
+            }
+
+            $pairs = array_filter(array_map('trim', explode(',', $raw)));
+            $map = [];
+            foreach ($pairs as $pair) {
+                if (!str_contains($pair, ':')) {
+                    continue;
+                }
+
+                [$source, $customerCode] = array_map('trim', explode(':', $pair, 2));
+                if ($source !== '' && $customerCode !== '') {
+                    $map[strtolower($source)] = $customerCode;
+                }
+            }
+
+            return $map;
+        })(),
+        'warehouse_code' => env('OMNIFUL_ORDER_FALLBACK_WAREHOUSE_CODE', ''),
     ],
     'sap_cost_centers' => [
         'costing_code' => env('SAP_COSTING_CODE', ''),

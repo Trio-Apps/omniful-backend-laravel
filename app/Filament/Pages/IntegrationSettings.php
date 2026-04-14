@@ -268,7 +268,7 @@ class IntegrationSettings extends Page implements HasForms
 
     protected function getHeaderActions(): array
     {
-        return [
+        $actions = [
             Action::make('save')
                 ->label('Save')
                 ->action('save')
@@ -281,16 +281,21 @@ class IntegrationSettings extends Page implements HasForms
                 ->label('Test Connection')
                 ->action('testConnection')
                 ->color('gray'),
-            Action::make('queueSapCatalogSync')
-                ->label('Queue SAP Sync')
-                ->icon('heroicon-o-arrow-path-rounded-square')
-                ->action('queueSapCatalogSync')
-                ->color('warning'),
             Action::make('openSapCatalog')
                 ->label('Open SAP Catalog')
                 ->icon('heroicon-o-table-cells')
                 ->url(SapCatalogOverview::getUrl())
                 ->color('gray'),
         ];
+
+        if (config('omniful.dashboard_actions.master_data_sync_enabled')) {
+            $actions[] = Action::make('queueSapCatalogSync')
+                ->label('Queue SAP Sync')
+                ->icon('heroicon-o-arrow-path-rounded-square')
+                ->action('queueSapCatalogSync')
+                ->color('warning');
+        }
+
+        return $actions;
     }
 }

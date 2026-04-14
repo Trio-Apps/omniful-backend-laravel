@@ -91,13 +91,16 @@ class SapWarehouses extends Page implements HasTable
 
     protected function getHeaderActions(): array
     {
-        return [
+        $actions = [
             Action::make('openCatalog')
                 ->label('Open SAP Catalog')
                 ->icon('heroicon-o-table-cells')
                 ->color('gray')
                 ->url(SapCatalogOverview::getUrl()),
-            Action::make('syncWarehouses')
+        ];
+
+        if (config('omniful.dashboard_actions.master_data_sync_enabled')) {
+            $actions[] = Action::make('syncWarehouses')
                 ->label(fn () => app(IntegrationDirectionService::class)->isSapToOmniful('warehouses')
                     ? 'Sync SAP Warehouses'
                     : 'Sync Omniful Warehouses to SAP')
@@ -106,8 +109,9 @@ class SapWarehouses extends Page implements HasTable
                     'wire:loading.attr' => 'disabled',
                     'wire:loading.class' => 'opacity-70',
                 ])
-                ->action('queueWarehouseSync'),
-            Action::make('pushWarehouses')
+                ->action('queueWarehouseSync');
+
+            $actions[] = Action::make('pushWarehouses')
                 ->label('Push to Omniful')
                 ->icon('heroicon-o-cloud-arrow-up')
                 ->color('primary')
@@ -116,8 +120,10 @@ class SapWarehouses extends Page implements HasTable
                     'wire:loading.attr' => 'disabled',
                     'wire:loading.class' => 'opacity-70',
                 ])
-                ->action('queueWarehousePush'),
-        ];
+                ->action('queueWarehousePush');
+        }
+
+        return $actions;
     }
 
     public function queueWarehouseSync(SapWarehouseBackgroundSyncService $dispatcher): void

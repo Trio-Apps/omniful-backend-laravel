@@ -93,13 +93,16 @@ class SapSuppliers extends Page implements HasTable
 
     protected function getHeaderActions(): array
     {
-        return [
+        $actions = [
             Action::make('openCatalog')
                 ->label('Open SAP Catalog')
                 ->icon('heroicon-o-table-cells')
                 ->color('gray')
                 ->url(SapCatalogOverview::getUrl()),
-            Action::make('syncSuppliers')
+        ];
+
+        if (config('omniful.dashboard_actions.master_data_sync_enabled')) {
+            $actions[] = Action::make('syncSuppliers')
                 ->label(fn () => app(IntegrationDirectionService::class)->isSapToOmniful('suppliers')
                     ? 'Sync SAP Suppliers'
                     : 'Sync Omniful Suppliers to SAP')
@@ -108,8 +111,9 @@ class SapSuppliers extends Page implements HasTable
                     'wire:loading.attr' => 'disabled',
                     'wire:loading.class' => 'opacity-70',
                 ])
-                ->action('queueSupplierSync'),
-            Action::make('pushSuppliers')
+                ->action('queueSupplierSync');
+
+            $actions[] = Action::make('pushSuppliers')
                 ->label('Push to Omniful')
                 ->icon('heroicon-o-cloud-arrow-up')
                 ->color('primary')
@@ -118,8 +122,10 @@ class SapSuppliers extends Page implements HasTable
                     'wire:loading.attr' => 'disabled',
                     'wire:loading.class' => 'opacity-70',
                 ])
-                ->action('queueSupplierPush'),
-        ];
+                ->action('queueSupplierPush');
+        }
+
+        return $actions;
     }
 
     public function queueSupplierSync(SapSupplierBackgroundSyncService $dispatcher): void
