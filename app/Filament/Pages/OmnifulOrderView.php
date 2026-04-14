@@ -194,6 +194,7 @@ class OmnifulOrderView extends Page
                 'title' => 'Incoming Payment Payload',
                 'payload' => [
                     'invoice_doc_entry' => $this->record->sap_doc_entry,
+                    'invoice_doc_num' => $this->record->sap_doc_num,
                     'reference' => $this->record->external_id,
                     'payment_method' => data_get($this->data, 'payment_method', data_get($this->data, 'invoice.payment_mode')),
                     'amount' => data_get($this->data, 'invoice.total_paid', data_get($this->data, 'invoice.total')),

@@ -62,6 +62,10 @@
                     <div class="po-value">{{ $record->sap_doc_num ?: '-' }}</div>
                 </div>
                 <div class="po-card">
+                    <div class="po-label">SAP DocEntry</div>
+                    <div class="po-value">{{ $record->sap_doc_entry ?: '-' }}</div>
+                </div>
+                <div class="po-card">
                     <div class="po-label">SAP Credit Note</div>
                     <div class="po-value">{{ $record->sap_credit_note_doc_num ?: ($record->sap_credit_note_status ?: '-') }}</div>
                 </div>
