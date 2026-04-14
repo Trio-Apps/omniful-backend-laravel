@@ -120,7 +120,7 @@ class OmnifulOrderView extends Page
         ];
     }
 
-    private function makeStep(string $key, string $title, string $status, string $reference, string $error): array
+    private function makeStep(string $key, string $title, string $status, string $reference, ?string $error): array
     {
         $normalizedStatus = trim($status);
 
