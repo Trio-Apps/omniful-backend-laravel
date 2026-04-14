@@ -49,6 +49,12 @@
                     <div class="mt-1 text-sm font-semibold text-gray-900">{{ data_get($data, 'entity_id', data_get($data, 'display_id', '-')) }}</div>
                 </div>
                 <div class="rounded-xl border border-gray-200 bg-white p-4">
+                    <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Matched SAP PO</div>
+                    <div class="mt-1 text-sm font-semibold text-gray-900">
+                        {{ $purchaseOrderEvent?->sap_doc_num ?: '-' }}
+                    </div>
+                </div>
+                <div class="rounded-xl border border-gray-200 bg-white p-4">
                     <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Destination Hub</div>
                     <div class="mt-1 text-sm font-semibold text-gray-900">{{ data_get($data, 'grn_details.destination_hub_code', data_get($data, 'destination_hub_code', '-')) }}</div>
                 </div>
@@ -59,6 +65,70 @@
                 <div class="rounded-xl border border-gray-200 bg-white p-4">
                     <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">GRN Items</div>
                     <div class="mt-1 text-sm font-semibold text-gray-900">{{ count($grnItems) }}</div>
+                </div>
+                <div class="rounded-xl border border-gray-200 bg-white p-4">
+                    <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Supplier</div>
+                    <div class="mt-1 text-sm font-semibold text-gray-900">{{ data_get($data, 'grn_details.supplier_name', '-') }}</div>
+                </div>
+            </div>
+        </x-filament::section>
+
+        <x-filament::section>
+            <x-slot name="heading">Process Steps</x-slot>
+            <div class="space-y-4">
+                <div class="rounded-2xl border border-gray-200 bg-white p-4">
+                    <div class="grid gap-4 md:grid-cols-3">
+                        <div>
+                            <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Flow Status</div>
+                            <div class="mt-2">
+                                <span @class([
+                                    'inline-flex rounded-full px-3 py-1 text-sm font-semibold',
+                                    'bg-emerald-100 text-emerald-700' => ($flowSummary['overall_tone'] ?? '') === 'success',
+                                    'bg-amber-100 text-amber-700' => ($flowSummary['overall_tone'] ?? '') === 'warning',
+                                    'bg-rose-100 text-rose-700' => ($flowSummary['overall_tone'] ?? '') === 'danger',
+                                ])>{{ $flowSummary['overall_label'] ?? '-' }}</span>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Current Step</div>
+                            <div class="mt-2 text-lg font-semibold text-gray-900">{{ $flowSummary['current_title'] ?? '-' }}</div>
+                        </div>
+                        <div class="text-right">
+                            <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Progress</div>
+                            <div class="mt-2 text-2xl font-semibold text-gray-900">{{ $flowSummary['completed_count'] ?? 0 }}/{{ $flowSummary['relevant_count'] ?? 0 }}</div>
+                        </div>
+                    </div>
+
+                    <div class="mt-4 h-3 w-full overflow-hidden rounded-full bg-slate-200">
+                        <div class="h-full rounded-full bg-teal-500" style="width: {{ $flowSummary['progress_percent'] ?? 0 }}%"></div>
+                    </div>
+                </div>
+
+                <div class="grid gap-4 md:grid-cols-2">
+                    @foreach ($flowSteps as $step)
+                        <div @class([
+                            'rounded-2xl border bg-white p-5',
+                            'border-teal-400 ring-2 ring-teal-100' => ($flowSummary['current_key'] ?? null) === ($step['key'] ?? null),
+                            'border-gray-200' => ($flowSummary['current_key'] ?? null) !== ($step['key'] ?? null),
+                        ])>
+                            <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">{{ $step['title'] ?? '-' }}</div>
+                            <div class="mt-3">
+                                <span @class([
+                                    'inline-flex rounded-full px-3 py-1 text-sm font-semibold',
+                                    'bg-emerald-100 text-emerald-700' => ($step['status'] ?? '') === 'created',
+                                    'bg-amber-100 text-amber-700' => in_array(($step['status'] ?? ''), ['pending', 'running', 'ignored'], true),
+                                    'bg-rose-100 text-rose-700' => in_array(($step['status'] ?? ''), ['failed', 'blocked'], true),
+                                    'bg-slate-100 text-slate-700' => ($step['status'] ?? '') === 'not_started',
+                                ])>{{ \Illuminate\Support\Str::headline((string) ($step['status'] ?? 'not_started')) }}</span>
+                            </div>
+
+                            <div class="mt-5 text-xs font-semibold uppercase tracking-wide text-gray-500">Reference</div>
+                            <div class="mt-2 text-lg font-semibold text-gray-900">{{ $step['reference'] ?: '-' }}</div>
+
+                            <div class="mt-5 text-xs font-semibold uppercase tracking-wide text-gray-500">Error</div>
+                            <div class="mt-2 text-sm font-semibold text-gray-900 whitespace-pre-wrap">{{ $step['error'] ?: '-' }}</div>
+                        </div>
+                    @endforeach
                 </div>
             </div>
         </x-filament::section>

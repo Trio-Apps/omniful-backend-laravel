@@ -40,11 +40,24 @@ class OmnifulInwardingEvents extends Page implements HasTable
                 ->getStateUsing(fn ($record) => data_get($record->payload, 'event_name'))
                 ->toggleable(),
             TextColumn::make('external_id')
-                ->label('Reference ID')
+                ->label('GRN ID')
+                ->searchable(),
+            TextColumn::make('po_reference')
+                ->label('PO Reference')
+                ->getStateUsing(fn ($record) => data_get($record->payload, 'data.entity_id'))
                 ->searchable(),
             TextColumn::make('entity_type')
                 ->label('Entity')
                 ->getStateUsing(fn ($record) => data_get($record->payload, 'data.entity_type'))
+                ->toggleable(),
+            TextColumn::make('hub_code')
+                ->label('Hub')
+                ->getStateUsing(fn ($record) => data_get($record->payload, 'data.grn_details.destination_hub_code', data_get($record->payload, 'data.hub_code')))
+                ->toggleable(),
+            TextColumn::make('supplier_name')
+                ->label('Supplier')
+                ->getStateUsing(fn ($record) => data_get($record->payload, 'data.grn_details.supplier_name', data_get($record->payload, 'data.supplier.name')))
+                ->limit(30)
                 ->toggleable(),
             IconColumn::make('signature_valid')
                 ->label('Signature')
@@ -67,11 +80,6 @@ class OmnifulInwardingEvents extends Page implements HasTable
                 ->toggleable(),
             TextColumn::make('sap_doc_num')
                 ->label('SAP DocNum')
-                ->toggleable(),
-            TextColumn::make('payload')
-                ->label('Payload')
-                ->formatStateUsing(fn ($state) => is_array($state) ? json_encode($state) : (string) $state)
-                ->limit(120)
                 ->toggleable(),
         ];
     }
