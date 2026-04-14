@@ -2,6 +2,7 @@
 
 namespace App\Services\Webhooks;
 
+use App\Jobs\ProcessOmnifulOrderEvent;
 use App\Models\OmnifulInventoryEvent;
 use App\Models\OmnifulInwardingEvent;
 use App\Models\OmnifulOrder;
@@ -26,17 +27,9 @@ class WebhookRetryService
             $order->save();
         }
 
-        try {
-            app(OrderWebhookService::class)->process($event);
-            return ['ok' => true, 'message' => 'Order event retried successfully'];
-        } catch (\Throwable $e) {
-            if ($order) {
-                $order->sap_status = 'failed';
-                $order->sap_error = $e->getMessage();
-                $order->save();
-            }
-            return ['ok' => false, 'message' => $e->getMessage()];
-        }
+        ProcessOmnifulOrderEvent::dispatch($event->id);
+
+        return ['ok' => true, 'message' => 'Order event queued for retry'];
     }
 
     /**

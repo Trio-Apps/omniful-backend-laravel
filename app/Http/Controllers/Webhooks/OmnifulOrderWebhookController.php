@@ -2,15 +2,14 @@
 
 namespace App\Http\Controllers\Webhooks;
 
+use App\Jobs\ProcessOmnifulOrderEvent;
 use App\Models\OmnifulOrder;
 use App\Models\OmnifulOrderEvent;
-use App\Services\Webhooks\OrderWebhookService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
 
 class OmnifulOrderWebhookController extends OmnifulWebhookBase
 {
-    public function __invoke(Request $request, OrderWebhookService $service)
+    public function __invoke(Request $request)
     {
         $result = $this->storeEvent($request, 'order', OmnifulOrderEvent::class, true);
 
@@ -27,30 +26,14 @@ class OmnifulOrderWebhookController extends OmnifulWebhookBase
 
         if (!empty($event->external_id)) {
             OmnifulOrder::where('external_id', $event->external_id)
-                ->whereNull('sap_status')
                 ->update([
                     'sap_status' => 'pending',
                     'sap_error' => null,
                 ]);
         }
 
-        try {
-            $service->process($event);
-        } catch (\Throwable $e) {
-            Log::error('SAP order sync failed', [
-                'event_id' => $event->id,
-                'external_id' => $event->external_id,
-                'error' => $e->getMessage(),
-            ]);
+        ProcessOmnifulOrderEvent::dispatch($event->id);
 
-            if (!empty($event->external_id)) {
-                OmnifulOrder::where('external_id', $event->external_id)->update([
-                    'sap_status' => 'failed',
-                    'sap_error' => $e->getMessage(),
-                ]);
-            }
-        }
-
-        return response()->json(['status' => 'ok', 'id' => $event->id]);
+        return response()->json(['status' => 'queued', 'id' => $event->id]);
     }
 }

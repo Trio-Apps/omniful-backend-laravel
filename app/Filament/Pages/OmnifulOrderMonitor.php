@@ -147,7 +147,7 @@ class OmnifulOrderMonitor extends Page implements HasTable
                 ->action(function ($record) {
                     $result = app(WebhookRetryService::class)->retryLatestOrderEventForOrder($record);
                     Notification::make()
-                        ->title($result['ok'] ? 'Retry completed' : 'Retry failed')
+                        ->title($result['ok'] ? 'Retry queued' : 'Retry failed')
                         ->body($result['message'])
                         ->{$result['ok'] ? 'success' : 'danger'}()
                         ->send();
