@@ -177,13 +177,6 @@ trait HandlesSapPurchaseAndProducts
             ];
         }
 
-        $invoiceTypeCandidates = $this->normalizeInvoiceTypeCandidates(
-            $data['invoice_type_candidates'] ?? config('omniful.order_payment.invoice_type_candidates', [13])
-        );
-        if ($invoiceTypeCandidates === []) {
-            $invoiceTypeCandidates = [13];
-        }
-
         $salesDoc = $this->getSalesOrder($invoiceDocEntry);
         $cardCode = (string) ($data['card_code'] ?? ($salesDoc['CardCode'] ?? ''));
         if ($cardCode === '') {
@@ -201,47 +194,39 @@ trait HandlesSapPurchaseAndProducts
         $transferDate = $this->formatDate((string) ($data['transfer_date'] ?? now()->format('Y-m-d')));
         $reference = trim((string) ($data['reference'] ?? ''));
         $paymentMethod = trim((string) ($data['payment_method'] ?? ''));
-        $attemptErrors = [];
 
-        foreach ($invoiceTypeCandidates as $invoiceType) {
-            $remarks = 'Incoming payment from Omniful prepaid order';
-            if ($reference !== '') {
-                $remarks .= ' | order=' . $reference;
-            }
-            if ($paymentMethod !== '') {
-                $remarks .= ' | method=' . $paymentMethod;
-            }
-
-            $body = [
-                'CardCode' => $cardCode,
-                'DocType' => 'rCustomer',
-                'TransferAccount' => $transferAccount,
-                'TransferDate' => $transferDate,
-                'TransferSum' => $sumApplied,
-                'PaymentInvoices' => [
-                    [
-                        'DocEntry' => $invoiceDocEntry,
-                        'InvoiceType' => $invoiceType,
-                        'SumApplied' => $sumApplied,
-                    ],
-                ],
-                'Remarks' => $remarks,
-            ];
-
-            $response = $this->post('/IncomingPayments', $body);
-            if ($response->successful()) {
-                $payload = $response->json() ?? [];
-                $payload['ignored'] = false;
-                $payload['invoice_type_used'] = $invoiceType;
-                return $payload;
-            }
-
-            $attemptErrors[] = 'invoice_type=' . $invoiceType . ': ' . $response->status() . ' ' . $response->body();
+        $remarks = 'Incoming payment from Omniful prepaid order';
+        if ($reference !== '') {
+            $remarks .= ' | order=' . $reference;
+        }
+        if ($paymentMethod !== '') {
+            $remarks .= ' | method=' . $paymentMethod;
         }
 
-        throw new \RuntimeException(
-            'SAP incoming payment create failed for all invoice types: ' . implode(' | ', $attemptErrors)
-        );
+        $body = [
+            'CardCode' => $cardCode,
+            'DocType' => 'rCustomer',
+            'TransferAccount' => $transferAccount,
+            'TransferDate' => $transferDate,
+            'TransferSum' => $sumApplied,
+            'PaymentInvoices' => [
+                [
+                    'DocEntry' => $invoiceDocEntry,
+                    'SumApplied' => $sumApplied,
+                ],
+            ],
+            'Remarks' => $remarks,
+        ];
+
+        $response = $this->post('/IncomingPayments', $body);
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP incoming payment create failed: ' . $response->status() . ' ' . $response->body());
+        }
+
+        $payload = $response->json() ?? [];
+        $payload['ignored'] = false;
+
+        return $payload;
     }
 
     public function createCardFeeJournalEntryForOrder(array $data): array
