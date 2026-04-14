@@ -131,6 +131,10 @@ class IntegrationControlSettings extends Page implements HasForms
                 Section::make('Order Payments')
                     ->description('Configure incoming payment defaults using SAP bank accounts pulled from the finance master catalog')
                     ->schema([
+                        Toggle::make('order_payment_enabled')
+                            ->label('Enable Incoming Payments')
+                            ->default(false)
+                            ->helperText('Disable temporarily to stop creating SAP incoming payments from Omniful sales orders.'),
                         Select::make('order_payment_transfer_account')
                             ->label('Incoming Payment Transfer Account')
                             ->options(fn () => $this->getBankAccountOptions())
@@ -163,6 +167,7 @@ class IntegrationControlSettings extends Page implements HasForms
                 'order_fallback_customer_code' => $state['order_fallback_customer_code'] ?? null,
                 'order_fallback_customer_code_by_source' => $state['order_fallback_customer_code_by_source'] ?? null,
                 'order_fallback_warehouse_code' => $state['order_fallback_warehouse_code'] ?? null,
+                'order_payment_enabled' => (bool) ($state['order_payment_enabled'] ?? false),
                 'order_payment_transfer_account' => $state['order_payment_transfer_account'] ?? null,
                 'order_payment_invoice_type_candidates' => array_values(array_map(
                     'intval',

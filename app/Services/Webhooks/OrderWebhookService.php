@@ -172,7 +172,7 @@ class OrderWebhookService
 
     private function createIncomingPaymentIfEligible(OmnifulOrder $order, array $data, ?array $invoiceResult): void
     {
-        if (!(bool) config('omniful.order_payment.enabled', true)) {
+        if (!$this->isIncomingPaymentEnabled()) {
             return;
         }
 
@@ -244,6 +244,16 @@ class OrderWebhookService
         }
 
         return trim((string) config('omniful.order_payment.transfer_account', ''));
+    }
+
+    private function isIncomingPaymentEnabled(): bool
+    {
+        $settings = IntegrationSetting::query()->first();
+        if ($settings && $settings->order_payment_enabled !== null) {
+            return (bool) $settings->order_payment_enabled;
+        }
+
+        return (bool) config('omniful.order_payment.enabled', true);
     }
 
     /**

@@ -81,6 +81,8 @@
 
     {{ $this->table }}
 
+    <x-filament-actions::modals />
+
     <style>
         .fi-ta-table tbody tr {
             animation: sap-row-in 0.35s ease both;
