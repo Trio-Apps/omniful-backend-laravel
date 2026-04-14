@@ -132,30 +132,23 @@ trait HandlesSapPurchaseAndProducts
         }
 
         $payload = $response->json() ?? [];
-        $payload['ignored'] = false;
-        if ($usedReserveInvoiceFallback) {
-            $payload['reserve_invoice_fallback'] = true;
+        if ((string) ($payload['ReserveInvoice'] ?? '') !== 'tYES') {
+            throw new \RuntimeException(
+                'SAP did not create an A/R Reserve Invoice. Orders fallback is out of BRS scope. Response ReserveInvoice='
+                . (string) ($payload['ReserveInvoice'] ?? 'null')
+            );
         }
+
+        $payload['ignored'] = false;
 
         return $payload;
     }
 
     private function postArOrderWithReserveFallback(array $body, bool &$usedReserveInvoiceFallback)
     {
-        $response = $this->post('/Orders', $body);
-        if (
-            !$response->successful()
-            && str_contains((string) $response->body(), 'This field is not supported in this document [OINV.isIns]')
-            && array_key_exists('ReserveInvoice', $body)
-        ) {
-            // Some SAP B1 setups reject ReserveInvoice on /Orders. Retry without it to keep order flow alive.
-            $fallbackBody = $body;
-            unset($fallbackBody['ReserveInvoice']);
-            $response = $this->post('/Orders', $fallbackBody);
-            $usedReserveInvoiceFallback = $response->successful() || $usedReserveInvoiceFallback;
-        }
+        $usedReserveInvoiceFallback = false;
 
-        return $response;
+        return $this->post('/Orders', $body);
     }
 
     public function createIncomingPaymentForInvoice(array $data): array
