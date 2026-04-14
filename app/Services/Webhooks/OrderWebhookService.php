@@ -248,6 +248,18 @@ class OrderWebhookService
             return;
         }
 
+        if ($this->wasReserveInvoiceDowngradedToSalesOrder($order, $invoiceResult)) {
+            $order->sap_payment_status = 'ignored';
+            $order->sap_payment_error = 'Incoming payment skipped: SAP created a Sales Order fallback instead of an A/R Reserve Invoice';
+            $order->sap_payment_response = [
+                'ignored' => true,
+                'reason' => 'Incoming payment skipped: SAP created a Sales Order fallback instead of an A/R Reserve Invoice',
+            ];
+            $order->save();
+
+            return;
+        }
+
         if (!empty($order->sap_payment_doc_entry)) {
             if ((string) $order->sap_payment_status === '') {
                 $order->sap_payment_status = 'created';
@@ -287,6 +299,20 @@ class OrderWebhookService
         $order->sap_payment_error = null;
         $order->sap_payment_response = $result;
         $order->save();
+    }
+
+    private function wasReserveInvoiceDowngradedToSalesOrder(OmnifulOrder $order, ?array $invoiceResult): bool
+    {
+        $response = $invoiceResult ?? $order->sap_order_response ?? [];
+        if (!is_array($response) || $response === []) {
+            return false;
+        }
+
+        if (($response['reserve_invoice_fallback'] ?? false) === true) {
+            return true;
+        }
+
+        return (string) ($response['ReserveInvoice'] ?? '') === 'tNO';
     }
 
     private function resolveIncomingPaymentAmount(array $data, ?array $invoiceResult): float
