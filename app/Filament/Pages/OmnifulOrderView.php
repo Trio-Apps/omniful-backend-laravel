@@ -7,6 +7,7 @@ use App\Models\OmnifulOrderEvent;
 use Filament\Pages\Page;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Str;
 
 class OmnifulOrderView extends Page
 {
@@ -58,13 +59,21 @@ class OmnifulOrderView extends Page
 
     private function buildFlowSteps(): array
     {
+        $orderReference = (string) ($this->record->sap_doc_num ?: $this->record->sap_doc_entry ?: '');
+        $orderError = $this->resolveOrderStepError($orderReference);
+        $deliveryError = $this->resolveStepError(
+            primaryError: (string) ($this->record->sap_delivery_error ?: ''),
+            fallbackError: (string) ($this->record->sap_error ?: ''),
+            keywords: ['delivery', 'delivery note'],
+        );
+
         return [
             $this->makeStep(
                 key: 'order',
                 title: 'Create SAP Order / AR Reserve Invoice',
-                status: (string) ($this->record->sap_status ?: ''),
-                reference: (string) ($this->record->sap_doc_num ?: $this->record->sap_doc_entry ?: ''),
-                error: (string) ($this->record->sap_error ?: '')
+                status: $this->resolveOrderStepStatus($orderReference, $orderError),
+                reference: $orderReference,
+                error: $orderError
             ),
             $this->makeStep(
                 key: 'payment',
@@ -83,9 +92,9 @@ class OmnifulOrderView extends Page
             $this->makeStep(
                 key: 'delivery',
                 title: 'Create Delivery Note',
-                status: (string) ($this->record->sap_delivery_status ?: ''),
+                status: $this->resolveDeliveryStepStatus($deliveryError),
                 reference: (string) ($this->record->sap_delivery_doc_num ?: $this->record->sap_delivery_doc_entry ?: ''),
-                error: (string) ($this->record->sap_delivery_error ?: '')
+                error: $deliveryError
             ),
             $this->makeStep(
                 key: 'cogs',
@@ -244,5 +253,92 @@ class OmnifulOrderView extends Page
                 ],
             ],
         ];
+    }
+
+    private function resolveOrderStepStatus(string $reference, ?string $error): string
+    {
+        if ($reference !== '') {
+            return 'created';
+        }
+
+        if ($error !== null) {
+            return 'failed';
+        }
+
+        return (string) ($this->record->sap_status ?: 'not_started');
+    }
+
+    private function resolveDeliveryStepStatus(?string $error): string
+    {
+        $existingStatus = trim((string) ($this->record->sap_delivery_status ?: ''));
+
+        if ($existingStatus !== '') {
+            return $existingStatus;
+        }
+
+        if ((string) ($this->record->sap_delivery_doc_num ?: $this->record->sap_delivery_doc_entry ?: '') !== '') {
+            return 'created';
+        }
+
+        if ($error !== null) {
+            return 'failed';
+        }
+
+        return 'not_started';
+    }
+
+    private function resolveOrderStepError(string $reference): ?string
+    {
+        $generalError = trim((string) ($this->record->sap_error ?: ''));
+
+        if ($generalError === '') {
+            return null;
+        }
+
+        if ($reference !== '' && $this->isDownstreamError($generalError)) {
+            return null;
+        }
+
+        return $generalError;
+    }
+
+    /**
+     * @param array<int,string> $keywords
+     */
+    private function resolveStepError(string $primaryError, string $fallbackError, array $keywords): ?string
+    {
+        $primaryError = trim($primaryError);
+        if ($primaryError !== '') {
+            return $primaryError;
+        }
+
+        $fallbackError = trim($fallbackError);
+        if ($fallbackError === '') {
+            return null;
+        }
+
+        $normalized = Str::lower($fallbackError);
+        foreach ($keywords as $keyword) {
+            if (Str::contains($normalized, Str::lower($keyword))) {
+                return $fallbackError;
+            }
+        }
+
+        return null;
+    }
+
+    private function isDownstreamError(string $error): bool
+    {
+        $normalized = Str::lower($error);
+
+        return Str::contains($normalized, [
+            'incoming payment',
+            'card fee',
+            'delivery',
+            'delivery note',
+            'cogs',
+            'credit note',
+            'cancel cogs',
+        ]);
     }
 }
