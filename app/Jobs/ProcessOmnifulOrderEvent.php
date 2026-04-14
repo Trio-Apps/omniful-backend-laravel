@@ -45,7 +45,7 @@ class ProcessOmnifulOrderEvent implements ShouldQueue
 
         try {
             OmnifulOrder::where('external_id', $externalId)->update([
-                'sap_status' => 'retrying',
+                'sap_status' => 'running',
                 'sap_error' => null,
             ]);
 

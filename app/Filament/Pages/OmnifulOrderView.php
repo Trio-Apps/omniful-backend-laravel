@@ -162,7 +162,7 @@ class OmnifulOrderView extends Page
         return match ($status) {
             'created', 'updated', 'logged', 'created_mixed', 'received_logged' => 'success',
             'failed' => 'danger',
-            'ignored', 'blocked', 'pending', 'retrying' => 'warning',
+            'ignored', 'blocked', 'pending', 'retrying', 'running' => 'warning',
             'not_started' => 'gray',
             default => 'gray',
         };
@@ -299,7 +299,7 @@ class OmnifulOrderView extends Page
         $activeKeys = array_values(array_unique($activeKeys));
         $relevantSteps = array_values(array_filter($steps, fn (array $step) => in_array($step['key'], $activeKeys, true)));
         $completedStatuses = ['created', 'updated', 'logged', 'created_mixed', 'received_logged'];
-        $issueStatuses = ['failed', 'blocked', 'ignored', 'retrying', 'pending'];
+        $issueStatuses = ['failed', 'blocked', 'ignored', 'retrying', 'pending', 'running'];
         $completedCount = count(array_filter($relevantSteps, fn (array $step) => in_array($step['status'], $completedStatuses, true)));
 
         $currentKey = null;

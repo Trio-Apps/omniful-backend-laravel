@@ -50,7 +50,7 @@ class OmnifulOrderMonitor extends Page implements HasTable
                 ->color(fn ($state) => match ($state) {
                     'created', 'updated', 'logged', 'created_mixed' => 'success',
                     'failed' => 'danger',
-                    'ignored', 'blocked', 'pending', 'retrying' => 'warning',
+                    'ignored', 'blocked', 'pending', 'retrying', 'running' => 'warning',
                     default => 'gray',
                 })
                 ->toggleable(),
