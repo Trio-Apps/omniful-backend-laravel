@@ -243,7 +243,7 @@
                 </div>
 
                 <div class="po-grid po-grid-3">
-                @foreach ($flowSteps as $step)
+                @foreach ($visibleFlowSteps as $step)
                     <div class="po-card {{ ($flowSummary['current_key'] ?? null) === $step['key'] ? 'po-card--active' : '' }}">
                         <div class="po-label">{{ $step['title'] }}</div>
                         <div class="po-value">
@@ -262,11 +262,11 @@
         <x-filament::section class="po-section-gap">
             <x-slot name="heading">Step Payload Debug</x-slot>
             <div class="space-y-6 po-section-pad">
-                @foreach ($debugPayloads as $debugPayload)
+                @foreach ($visibleDebugPayloads as $debugPayload)
                     <div class="po-card">
                         <div class="po-label">{{ $debugPayload['title'] }}</div>
                         <div class="po-value" style="margin-bottom: 12px;">
-                            @php($matchedStep = collect($flowSteps)->firstWhere('key', $debugPayload['key']))
+                            @php($matchedStep = collect($visibleFlowSteps)->firstWhere('key', $debugPayload['key']))
                             @if ($matchedStep)
                                 <span class="po-badge po-badge--{{ $matchedStep['tone'] }}">{{ str_replace('_', ' ', $matchedStep['status']) }}</span>
                             @endif
@@ -280,11 +280,11 @@
         <x-filament::section class="po-section-gap">
             <x-slot name="heading">SAP Responses</x-slot>
             <div class="space-y-6 po-section-pad">
-                @foreach ($sapResponses as $sapResponse)
+                @foreach ($visibleSapResponses as $sapResponse)
                     <div class="po-card">
                         <div class="po-label">{{ $sapResponse['title'] }}</div>
                         <div class="po-value" style="margin-bottom: 12px;">
-                            @php($matchedStep = collect($flowSteps)->firstWhere('key', $sapResponse['key']))
+                            @php($matchedStep = collect($visibleFlowSteps)->firstWhere('key', $sapResponse['key']))
                             @if ($matchedStep)
                                 <span class="po-badge po-badge--{{ $matchedStep['tone'] }}">{{ str_replace('_', ' ', $matchedStep['status']) }}</span>
                             @endif

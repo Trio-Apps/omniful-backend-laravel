@@ -33,6 +33,12 @@ class OmnifulOrderView extends Page
 
     public array $flowSummary = [];
 
+    public array $visibleFlowSteps = [];
+
+    public array $visibleDebugPayloads = [];
+
+    public array $visibleSapResponses = [];
+
     public function mount(int|string|null $record = null): void
     {
         $recordId = $record ?? request()->query('record');
@@ -56,6 +62,9 @@ class OmnifulOrderView extends Page
         $this->flowSummary = $this->buildFlowSummary($this->flowSteps);
         $this->debugPayloads = $this->buildDebugPayloads();
         $this->sapResponses = $this->buildSapResponses();
+        $this->visibleFlowSteps = $this->filterFlowArtifacts($this->flowSteps, $this->flowSummary['active_keys'] ?? []);
+        $this->visibleDebugPayloads = $this->filterFlowArtifacts($this->debugPayloads, $this->flowSummary['active_keys'] ?? []);
+        $this->visibleSapResponses = $this->filterFlowArtifacts($this->sapResponses, $this->flowSummary['active_keys'] ?? []);
     }
 
     public function getTitle(): string
@@ -324,6 +333,7 @@ class OmnifulOrderView extends Page
             : (int) round(($completedCount / max(count($relevantSteps), 1)) * 100);
 
         return [
+            'active_keys' => $activeKeys,
             'current_key' => $currentKey,
             'overall_label' => $overallLabel,
             'overall_tone' => $overallTone,
@@ -334,6 +344,18 @@ class OmnifulOrderView extends Page
                 ? (string) (collect($relevantSteps)->firstWhere('key', $currentKey)['title'] ?? '-')
                 : 'Flow completed',
         ];
+    }
+
+    private function filterFlowArtifacts(array $items, array $activeKeys): array
+    {
+        if ($activeKeys === []) {
+            return $items;
+        }
+
+        return array_values(array_filter(
+            $items,
+            fn (array $item) => in_array((string) ($item['key'] ?? ''), $activeKeys, true)
+        ));
     }
 
     private function hasStepStarted(array $steps, string $key): bool
