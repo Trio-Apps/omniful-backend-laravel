@@ -142,6 +142,13 @@ class WebhookStatusMapper
             return ['eligible' => true, 'reason' => null];
         }
 
+        // Some orders reach SAP for the first time at fulfillment stages like
+        // ready_to_ship or delivered. Allow creating the base sales document
+        // so follow-up delivery/credit actions can continue on the same order.
+        if ($isPrepaid && $this->isOrderDeliveryStatus($status)) {
+            return ['eligible' => true, 'reason' => null];
+        }
+
         if ($strict) {
             return ['eligible' => false, 'reason' => 'Unmapped order event/status/payment for AR reserve invoice'];
         }
@@ -289,6 +296,16 @@ class WebhookStatusMapper
         );
 
         return in_array($status, $initialStatuses, true);
+    }
+
+    private function isOrderDeliveryStatus(string $status): bool
+    {
+        $deliveryStatuses = array_map(
+            [$this, 'normalize'],
+            (array) config('omniful.status_mapping.order.delivery_statuses', [])
+        );
+
+        return in_array($status, $deliveryStatuses, true);
     }
 
     /**
