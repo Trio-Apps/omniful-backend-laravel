@@ -5,9 +5,10 @@ namespace App\Filament\Pages;
 use App\Models\SapWarehouse;
 use App\Models\SapSyncEvent;
 use App\Services\SapWarehouseBackgroundSyncService;
-use Filament\Actions\Action;
+use Filament\Actions\Action as HeaderAction;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
+use Filament\Tables\Actions\Action as TableAction;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
@@ -62,7 +63,7 @@ class SapWarehouses extends Page implements HasTable
     protected function getTableActions(): array
     {
         return [
-            Action::make('error')
+            TableAction::make('error')
                 ->label('Reason')
                 ->icon('heroicon-o-exclamation-triangle')
                 ->color('warning')
@@ -73,7 +74,7 @@ class SapWarehouses extends Page implements HasTable
                 ->modalContent(fn ($record) => view('filament.pages.sap-sync-error', [
                     'error' => $record->error,
                 ])),
-            Action::make('omnifulError')
+            TableAction::make('omnifulError')
                 ->label('Omniful Error')
                 ->icon('heroicon-o-exclamation-triangle')
                 ->color('warning')
@@ -90,14 +91,14 @@ class SapWarehouses extends Page implements HasTable
     protected function getHeaderActions(): array
     {
         $actions = [
-            Action::make('openCatalog')
+            HeaderAction::make('openCatalog')
                 ->label('Open SAP Catalog')
                 ->icon('heroicon-o-table-cells')
                 ->color('gray')
                 ->url(SapCatalogOverview::getUrl()),
         ];
 
-        $actions[] = Action::make('syncWarehouses')
+        $actions[] = HeaderAction::make('syncWarehouses')
             ->label('Sync from SAP')
             ->icon('heroicon-o-arrow-path')
             ->extraAttributes([

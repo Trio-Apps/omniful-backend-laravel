@@ -2,8 +2,8 @@
 
 namespace App\Filament\Pages\Concerns;
 
-use Filament\Actions\Action;
 use Filament\Notifications\Notification;
+use Filament\Tables\Actions\Action;
 
 trait InteractsWithSapCatalogPage
 {

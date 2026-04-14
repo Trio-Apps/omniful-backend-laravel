@@ -4,9 +4,9 @@ namespace App\Filament\Pages;
 
 use App\Models\OmnifulProductEvent;
 use App\Services\Webhooks\WebhookRetryService;
-use Filament\Actions\Action;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
+use Filament\Tables\Actions\Action;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
