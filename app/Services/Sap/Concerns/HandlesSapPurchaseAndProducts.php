@@ -847,6 +847,10 @@ trait HandlesSapPurchaseAndProducts
         }
 
         $response = $this->post('/PurchaseOrders', $body);
+        if (!$response->successful() && $this->isSapInactiveVendorError((string) $response->body())) {
+            $this->ensureSupplierIsActive($supplierCode, $data);
+            $response = $this->post('/PurchaseOrders', $body);
+        }
         if (!$response->successful() && $this->isSapSeriesPeriodMismatchError($response->body())) {
             $response = $this->retryPurchaseOrderWithDynamicSeries($body, $docDate);
         }
@@ -1484,6 +1488,7 @@ trait HandlesSapPurchaseAndProducts
     {
         $existing = $this->getBusinessPartner($cardCode);
         if ($existing) {
+            $this->ensureSupplierIsActive($cardCode, $data, $existing);
             return $cardCode;
         }
 
@@ -1533,6 +1538,77 @@ trait HandlesSapPurchaseAndProducts
         }
 
         throw new \RuntimeException('SAP vendor create failed: ' . $response->status() . ' ' . $response->body());
+    }
+
+    private function ensureSupplierIsActive(string $cardCode, array $data, ?array $existing = null): void
+    {
+        $existing ??= $this->getBusinessPartner($cardCode);
+        if (!$existing) {
+            return;
+        }
+
+        if (!$this->isBusinessPartnerInactive($existing)) {
+            return;
+        }
+
+        $supplier = (array) data_get($data, 'supplier', []);
+        $cardName = (string) (data_get($supplier, 'name') ?: ($existing['CardName'] ?? $cardCode));
+        $email = data_get($supplier, 'email') ?: ($existing['EmailAddress'] ?? null);
+        $phone = $this->extractSupplierPhone($data);
+        $phoneValue = $this->normalizePhoneForSap($phone);
+
+        $patch = array_filter([
+            'CardName' => $cardName,
+            'EmailAddress' => $email ?: null,
+            'Phone1' => $phoneValue !== '' ? $phoneValue : null,
+            'Cellular' => $phoneValue !== '' ? $phoneValue : null,
+            'Valid' => 'tYES',
+            'Frozen' => 'tNO',
+        ], fn ($value) => $value !== null && $value !== '');
+
+        $encoded = str_replace("'", "''", $cardCode);
+        $response = $this->patch("/BusinessPartners('{$encoded}')", $patch);
+
+        if (!$response->successful()) {
+            $fallback = $patch;
+            unset($fallback['Valid'], $fallback['Frozen']);
+            $fallback['frozen'] = 'tNO';
+            $fallback['validFor'] = 'tYES';
+
+            $response = $this->patch("/BusinessPartners('{$encoded}')", $fallback);
+        }
+
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP vendor activation failed: ' . $response->status() . ' ' . $response->body());
+        }
+    }
+
+    private function isBusinessPartnerInactive(array $bp): bool
+    {
+        $valid = strtolower(trim((string) ($bp['Valid'] ?? $bp['validFor'] ?? '')));
+        if ($valid !== '' && in_array($valid, ['tno', 'no', 'n', 'false', '0', 'inactive'], true)) {
+            return true;
+        }
+
+        $active = strtolower(trim((string) ($bp['Active'] ?? '')));
+        if ($active !== '' && in_array($active, ['tno', 'no', 'n', 'false', '0', 'inactive'], true)) {
+            return true;
+        }
+
+        $frozen = strtolower(trim((string) ($bp['Frozen'] ?? $bp['frozenFor'] ?? '')));
+        if ($frozen !== '' && in_array($frozen, ['tyes', 'yes', 'y', 'true', '1', 'frozen'], true)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    private function isSapInactiveVendorError(string $body): bool
+    {
+        $normalized = strtolower($body);
+
+        return str_contains($normalized, 'vendor')
+            && str_contains($normalized, 'inactive');
     }
 
 
