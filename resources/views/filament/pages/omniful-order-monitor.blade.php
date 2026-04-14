@@ -3,26 +3,26 @@
 
     @if ($isSapErrorModalOpen)
         <div
-            class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            style="position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center; justify-content: center; background: rgba(15, 23, 42, 0.55); padding: 1rem;"
             wire:click="closeSapErrorModal"
         >
             <div
-                class="w-full max-w-3xl rounded-2xl bg-white shadow-2xl"
+                style="width: 100%; max-width: 56rem; max-height: 80vh; overflow: hidden; border-radius: 16px; background: #ffffff; box-shadow: 0 24px 64px rgba(15, 23, 42, 0.24);"
                 wire:click.stop
             >
-                <div class="flex items-center justify-between border-b px-6 py-4">
-                    <h2 class="text-lg font-semibold text-gray-900">SAP Error</h2>
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 1rem; border-bottom: 1px solid #e5e7eb; padding: 1rem 1.5rem;">
+                    <h2 style="margin: 0; font-size: 1.125rem; font-weight: 700; color: #111827;">SAP Error</h2>
                     <button
                         type="button"
-                        class="rounded-md px-3 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                        style="border: 0; border-radius: 8px; background: #f3f4f6; padding: 0.5rem 0.875rem; font-size: 0.875rem; font-weight: 600; color: #374151; cursor: pointer;"
                         wire:click="closeSapErrorModal"
                     >
                         Close
                     </button>
                 </div>
 
-                <div class="max-h-[70vh] overflow-auto px-6 py-5">
-                    <pre class="whitespace-pre-wrap break-words rounded-xl bg-slate-950 p-4 text-sm text-slate-100">{{ $activeSapError }}</pre>
+                <div style="max-height: calc(80vh - 73px); overflow: auto; padding: 1.25rem 1.5rem;">
+                    <pre style="margin: 0; white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; border-radius: 12px; background: #020617; padding: 1rem; font-size: 0.875rem; line-height: 1.6; color: #e2e8f0;">{{ $activeSapError }}</pre>
                 </div>
             </div>
         </div>
