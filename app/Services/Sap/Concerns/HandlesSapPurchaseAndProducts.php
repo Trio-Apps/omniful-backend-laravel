@@ -320,8 +320,12 @@ trait HandlesSapPurchaseAndProducts
             'order_created_at',
             'created_at',
         ]);
-        $seriesInfo = $this->resolveSeriesForDocument('15', $docDate);
-        $docDate = $seriesInfo['docDate'];
+        $series = null;
+        try {
+            $series = $this->getDefaultSeries('15');
+        } catch (\Throwable $e) {
+            $series = null;
+        }
         $taxDate = $this->resolveOrderTaxDate($data, $docDate, [
             'delivery_date',
             'shipment.delivery_date',
@@ -378,8 +382,8 @@ trait HandlesSapPurchaseAndProducts
             'DocumentLines' => $lines,
         ];
 
-        if ($seriesInfo['series']) {
-            $body['Series'] = $seriesInfo['series'];
+        if ($series) {
+            $body['Series'] = $series;
         }
 
         $response = $this->post('/DeliveryNotes', $body);
