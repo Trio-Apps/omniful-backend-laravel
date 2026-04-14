@@ -23,10 +23,10 @@ trait HandlesSapPurchaseAndProducts
         ]);
         $currency = data_get($data, 'invoice.currency') ?? data_get($data, 'currency');
         $hubCode = $this->resolveOrderWarehouseCode(data_get($data, 'hub_code'));
-        $preferredSeries = $this->getPreferredSeriesId('17');
+        $preferredSeries = $this->getPreferredSeriesId('13');
         $seriesInfo = $preferredSeries !== null
             ? ['series' => $preferredSeries, 'docDate' => $docDate, 'indicator' => 'preferred']
-            : $this->resolveSeriesForDocument('17', $docDate);
+            : $this->resolveSeriesForDocument('13', $docDate);
         $docDate = $seriesInfo['docDate'];
 
         $customerCode = $this->resolveOrderCustomerCode($data, $externalId);
@@ -106,7 +106,7 @@ trait HandlesSapPurchaseAndProducts
             'DocumentLines' => $lines,
             'NumAtCard' => $externalId,
             'Comments' => $comments,
-            // SAP B1 AR Reserve Invoice via Orders with ReserveInvoice = tYES
+            // SAP B1 AR Reserve Invoice via Invoices with ReserveInvoice = tYES
             'ReserveInvoice' => 'tYES',
         ];
 
@@ -134,7 +134,7 @@ trait HandlesSapPurchaseAndProducts
         $payload = $response->json() ?? [];
         if ((string) ($payload['ReserveInvoice'] ?? '') !== 'tYES') {
             throw new \RuntimeException(
-                'SAP did not create an A/R Reserve Invoice. Orders fallback is out of BRS scope. Response ReserveInvoice='
+                'SAP did not create an A/R Reserve Invoice. Sales Order fallback is out of BRS scope. Response ReserveInvoice='
                 . (string) ($payload['ReserveInvoice'] ?? 'null')
             );
         }
@@ -148,7 +148,7 @@ trait HandlesSapPurchaseAndProducts
     {
         $usedReserveInvoiceFallback = false;
 
-        return $this->post('/Orders', $body);
+        return $this->post('/Invoices', $body);
     }
 
     public function createIncomingPaymentForInvoice(array $data): array
@@ -170,7 +170,7 @@ trait HandlesSapPurchaseAndProducts
             ];
         }
 
-        $salesDoc = $this->getSalesOrder($invoiceDocEntry);
+        $salesDoc = $this->getArReserveInvoice($invoiceDocEntry);
         $cardCode = (string) ($data['card_code'] ?? ($salesDoc['CardCode'] ?? ''));
         if ($cardCode === '') {
             throw new \RuntimeException('Missing CardCode for incoming payment');
@@ -288,7 +288,7 @@ trait HandlesSapPurchaseAndProducts
             throw new \RuntimeException('Missing SAP order doc entry for delivery');
         }
 
-        $salesDoc = $this->getSalesOrder($orderDocEntry);
+        $salesDoc = $this->getArReserveInvoice($orderDocEntry);
         $hubCode = (string) $this->resolveOrderWarehouseCode($data['hub_code'] ?? null);
         $externalId = (string) ($data['external_id'] ?? '');
         $docDate = $this->resolveOrderDocumentDate($data, [
@@ -329,7 +329,7 @@ trait HandlesSapPurchaseAndProducts
                 }
 
                 $deliveryLine = [
-                    'BaseType' => 17,
+                    'BaseType' => 13,
                     'BaseEntry' => $orderDocEntry,
                     'BaseLine' => (int) $lineNum,
                     'Quantity' => $openQty,
@@ -424,7 +424,7 @@ trait HandlesSapPurchaseAndProducts
                 }
 
                 $deliveryLine = [
-                    'BaseType' => 17,
+                    'BaseType' => 13,
                     'BaseEntry' => $orderDocEntry,
                     'BaseLine' => (int) $salesLine['line_num'],
                     'Quantity' => $allocQty,
@@ -634,7 +634,7 @@ trait HandlesSapPurchaseAndProducts
         }
 
         if ($documentLines === [] && $baseOrderDocEntry > 0) {
-            $order = $this->getSalesOrder($baseOrderDocEntry);
+            $order = $this->getArReserveInvoice($baseOrderDocEntry);
             if ($cardCode === '') {
                 $cardCode = (string) ($order['CardCode'] ?? '');
             }
@@ -1446,13 +1446,13 @@ trait HandlesSapPurchaseAndProducts
             throw new \RuntimeException('Missing SAP sales order doc entry for sync');
         }
 
-        $salesOrder = $this->getSalesOrder($docEntry);
+        $salesOrder = $this->getArReserveInvoice($docEntry);
         $payload = $this->buildSalesOrderSyncPayload($salesOrder, $eventName, $status);
         if ($payload === []) {
             return;
         }
 
-        $response = $this->patch('/Orders(' . $docEntry . ')', $payload);
+        $response = $this->patch('/Invoices(' . $docEntry . ')', $payload);
         if (!$response->successful() && count($payload) > 1) {
             $fallback = $payload;
             foreach (array_keys($payload) as $field) {
@@ -1466,12 +1466,12 @@ trait HandlesSapPurchaseAndProducts
             }
 
             if ($fallback !== $payload && $fallback !== []) {
-                $response = $this->patch('/Orders(' . $docEntry . ')', $fallback);
+                $response = $this->patch('/Invoices(' . $docEntry . ')', $fallback);
             }
         }
 
         if (!$response->successful()) {
-            throw new \RuntimeException('SAP sales order update failed: ' . $response->status() . ' ' . $response->body());
+            throw new \RuntimeException('SAP reserve invoice update failed: ' . $response->status() . ' ' . $response->body());
         }
     }
 
@@ -2253,6 +2253,17 @@ trait HandlesSapPurchaseAndProducts
 
         if (!$response->successful()) {
             throw new \RuntimeException('SAP order fetch failed: ' . $response->status() . ' ' . $response->body());
+        }
+
+        return $response->json() ?? [];
+    }
+
+    private function getArReserveInvoice(int $docEntry): array
+    {
+        $response = $this->get('/Invoices(' . $docEntry . ')');
+
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP reserve invoice fetch failed: ' . $response->status() . ' ' . $response->body());
         }
 
         return $response->json() ?? [];
@@ -3491,7 +3502,7 @@ trait HandlesSapPurchaseAndProducts
 
     private function retryArOrderWithDynamicSeries(array $body, string $initialDocDate, bool &$usedReserveInvoiceFallback)
     {
-        $seriesList = $this->getDocumentSeries('17');
+        $seriesList = $this->getDocumentSeries('13');
         $today = now()->format('Y-m-d');
         $currentYear = substr($today, 0, 4);
         $candidateSeries = [];
@@ -3533,7 +3544,7 @@ trait HandlesSapPurchaseAndProducts
 
                 $response = $this->postArOrderWithReserveFallback($attemptBody, $usedReserveInvoiceFallback);
                 if ($response->successful()) {
-                    $this->rememberPreferredSeriesId('17', $seriesId);
+                    $this->rememberPreferredSeriesId('13', $seriesId);
                     return $response;
                 }
 
@@ -3553,7 +3564,7 @@ trait HandlesSapPurchaseAndProducts
 
             $response = $this->postArOrderWithReserveFallback($attemptBody, $usedReserveInvoiceFallback);
             if ($response->successful()) {
-                $this->forgetPreferredSeriesId('17');
+                $this->forgetPreferredSeriesId('13');
                 return $response;
             }
 
@@ -3609,7 +3620,7 @@ trait HandlesSapPurchaseAndProducts
         $retryBody['DocumentLines'] = $lines;
         $retryBody['Comments'] = ($body['Comments'] ?? 'Omniful AR reserve order') . ' | retry with resolved UoM';
 
-        $preferredSeries = $this->getPreferredSeriesId('17');
+        $preferredSeries = $this->getPreferredSeriesId('13');
         if ($preferredSeries !== null) {
             $retryBody['Series'] = $preferredSeries;
         }
