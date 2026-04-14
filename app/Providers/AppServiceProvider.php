@@ -2,7 +2,11 @@
 
 namespace App\Providers;
 
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Support\Str;
+use Livewire\Component as LivewireComponent;
+use Livewire\Livewire;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -19,6 +23,32 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        //
+        $this->registerFilamentPageAliases();
+    }
+
+    private function registerFilamentPageAliases(): void
+    {
+        foreach (File::allFiles(app_path('Filament/Pages')) as $file) {
+            $relativePath = str_replace(
+                ['/', '.php'],
+                ['\\', ''],
+                $file->getRelativePathname()
+            );
+
+            $class = 'App\\Filament\\Pages\\' . $relativePath;
+
+            if (!class_exists($class) || !is_subclass_of($class, LivewireComponent::class)) {
+                continue;
+            }
+
+            $alias = Str::of($class)
+                ->replace('\\', '.')
+                ->trim('.')
+                ->explode('.')
+                ->map(fn (string $segment): string => Str::kebab($segment))
+                ->implode('.');
+
+            Livewire::component($alias, $class);
+        }
     }
 }
