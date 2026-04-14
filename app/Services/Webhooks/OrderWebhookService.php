@@ -173,6 +173,12 @@ class OrderWebhookService
     private function createIncomingPaymentIfEligible(OmnifulOrder $order, array $data, ?array $invoiceResult): void
     {
         if (!$this->isIncomingPaymentEnabled()) {
+            if ((string) ($order->sap_payment_doc_entry ?? '') === '') {
+                $order->sap_payment_status = 'ignored';
+                $order->sap_payment_error = 'Incoming payments disabled from integration settings';
+                $order->save();
+            }
+
             return;
         }
 
