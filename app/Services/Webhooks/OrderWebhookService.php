@@ -32,24 +32,24 @@ class OrderWebhookService
             'order.status',
         ]);
         $deliveryStatus = $this->extractStatusValue($data, [
+            'status_code',
+            'status',
+            'order_status',
             'shipment.delivery_status',
             'shipment.status',
             'shipment.shipping_partner_status',
             'delivery_status',
             'shipment_status',
-            'status_code',
-            'status',
-            'order_status',
         ]);
         $creditStatus = $this->extractStatusValue($data, [
             'cancel_status',
             'cancellation_status',
-            'shipment.delivery_status',
-            'shipment.status',
-            'shipment.shipping_partner_status',
             'status_code',
             'status',
             'order_status',
+            'shipment.delivery_status',
+            'shipment.status',
+            'shipment.shipping_partner_status',
         ]);
         $paymentSignals = $this->extractPaymentSignals($data);
 
