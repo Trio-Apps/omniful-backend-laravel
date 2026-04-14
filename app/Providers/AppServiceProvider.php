@@ -23,7 +23,15 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        $this->registerFilamentCoreAliases();
         $this->registerFilamentPageAliases();
+    }
+
+    private function registerFilamentCoreAliases(): void
+    {
+        if (class_exists(\Filament\Livewire\Notifications::class)) {
+            Livewire::component('filament.livewire.notifications', \Filament\Livewire\Notifications::class);
+        }
     }
 
     private function registerFilamentPageAliases(): void
