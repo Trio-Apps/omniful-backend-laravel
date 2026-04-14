@@ -12,6 +12,7 @@ use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Filters\Filter;
+use Filament\Tables\Filters\SelectFilter;
 use Illuminate\Database\Eloquent\Builder;
 
 class OmnifulOrderMonitor extends Page implements HasTable
@@ -99,9 +100,35 @@ class OmnifulOrderMonitor extends Page implements HasTable
     protected function getTableFilters(): array
     {
         return [
+            SelectFilter::make('omniful_status')
+                ->label('Omniful Status')
+                ->options(fn () => OmnifulOrder::query()
+                    ->whereNotNull('omniful_status')
+                    ->where('omniful_status', '!=', '')
+                    ->distinct()
+                    ->orderBy('omniful_status')
+                    ->pluck('omniful_status', 'omniful_status')
+                    ->all())
+                ->multiple()
+                ->searchable(),
+            SelectFilter::make('sap_status')
+                ->label('SAP Status')
+                ->options(fn () => OmnifulOrder::query()
+                    ->whereNotNull('sap_status')
+                    ->where('sap_status', '!=', '')
+                    ->distinct()
+                    ->orderBy('sap_status')
+                    ->pluck('sap_status', 'sap_status')
+                    ->all())
+                ->multiple()
+                ->searchable(),
             Filter::make('stuck')
                 ->label('SAP Pending')
-                ->query(fn (Builder $query) => $query->whereNull('sap_status')),
+                ->query(fn (Builder $query) => $query->where(function (Builder $query) {
+                    $query->whereNull('sap_status')
+                        ->orWhere('sap_status', '')
+                        ->orWhere('sap_status', 'pending');
+                })),
         ];
     }
 
