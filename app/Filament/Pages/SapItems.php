@@ -5,10 +5,9 @@ namespace App\Filament\Pages;
 use App\Models\SapItem;
 use App\Models\SapSyncEvent;
 use App\Services\SapItemBackgroundSyncService;
-use Filament\Actions\Action as HeaderAction;
+use Filament\Actions\Action;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
-use Filament\Tables\Actions\Action as TableAction;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
@@ -64,7 +63,7 @@ class SapItems extends Page implements HasTable
     protected function getTableActions(): array
     {
         return [
-            TableAction::make('error')
+            Action::make('error')
                 ->label('Reason')
                 ->icon('heroicon-o-exclamation-triangle')
                 ->color('warning')
@@ -75,7 +74,7 @@ class SapItems extends Page implements HasTable
                 ->modalContent(fn ($record) => view('filament.pages.sap-sync-error', [
                     'error' => $record->error,
                 ])),
-            TableAction::make('omnifulError')
+            Action::make('omnifulError')
                 ->label('Omniful Error')
                 ->icon('heroicon-o-exclamation-triangle')
                 ->color('warning')
@@ -92,14 +91,14 @@ class SapItems extends Page implements HasTable
     protected function getHeaderActions(): array
     {
         $actions = [
-            HeaderAction::make('openCatalog')
+            Action::make('openCatalog')
                 ->label('Open SAP Catalog')
                 ->icon('heroicon-o-table-cells')
                 ->color('gray')
                 ->url(SapCatalogOverview::getUrl()),
         ];
 
-        $actions[] = HeaderAction::make('syncItems')
+        $actions[] = Action::make('syncItems')
             ->label('Sync from SAP')
             ->icon('heroicon-o-arrow-path')
             ->extraAttributes([

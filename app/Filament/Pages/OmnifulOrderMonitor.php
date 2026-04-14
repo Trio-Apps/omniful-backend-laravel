@@ -5,9 +5,9 @@ namespace App\Filament\Pages;
 use App\Models\OmnifulOrder;
 use App\Filament\Pages\OmnifulOrderView;
 use App\Services\Webhooks\WebhookRetryService;
+use Filament\Actions\Action;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
-use Filament\Tables\Actions\Action;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
@@ -130,12 +130,7 @@ class OmnifulOrderMonitor extends Page implements HasTable
                 ->icon('heroicon-o-exclamation-triangle')
                 ->color('danger')
                 ->visible(fn ($record) => (bool) $record->sap_error)
-                ->modalHeading('SAP Error')
-                ->modalSubmitAction(false)
-                ->modalCancelActionLabel('Close')
-                ->modalContent(fn ($record) => view('filament.pages.sap-sync-error', [
-                    'error' => $record->sap_error,
-                ])),
+                ->url(fn ($record) => OmnifulOrderView::getUrl(['record' => $record]) . '#sap-error'),
         ];
     }
 }
