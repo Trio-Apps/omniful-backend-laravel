@@ -280,13 +280,21 @@ class IntegrationControlSettings extends Page implements HasForms
             ->orderBy('account_code')
             ->get()
             ->mapWithKeys(fn (SapBankAccount $row) => [
-                $row->account_code => trim(implode(' | ', array_filter([
-                    $row->account_code,
+                $this->resolveBankTransferAccountValue($row) => trim(implode(' | ', array_filter([
+                    $this->resolveBankTransferAccountValue($row),
                     $row->bank_code,
                     $row->account_number,
+                    data_get($row->payload, 'AccountName'),
                 ], fn ($value) => is_string($value) && trim($value) !== ''))),
             ])
             ->all();
+    }
+
+    private function resolveBankTransferAccountValue(SapBankAccount $row): string
+    {
+        $glAccount = trim((string) data_get($row->payload, 'GLAccount', ''));
+
+        return $glAccount !== '' ? $glAccount : $row->account_code;
     }
 
     private function getIncomingPaymentInvoiceTypeOptions(): array

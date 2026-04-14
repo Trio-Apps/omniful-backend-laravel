@@ -3,6 +3,7 @@
 namespace App\Services\Sap\Concerns;
 
 use App\Models\IntegrationSetting;
+use App\Models\SapBankAccount;
 use App\Models\SapCostCenterSetting;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -163,6 +164,7 @@ trait HandlesSapPurchaseAndProducts
             ?? $this->getIntegrationSettingValue('order_payment_transfer_account')
             ?? config('omniful.order_payment.transfer_account', '')
         ));
+        $transferAccount = $this->resolveSapTransferAccountValue($transferAccount);
         if ($transferAccount === '') {
             return [
                 'ignored' => true,
@@ -2267,6 +2269,27 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return $response->json() ?? [];
+    }
+
+    private function resolveSapTransferAccountValue(string $configured): string
+    {
+        $configured = trim($configured);
+        if ($configured === '') {
+            return '';
+        }
+
+        $bankAccount = SapBankAccount::query()
+            ->where('account_code', $configured)
+            ->first();
+
+        if (!$bankAccount) {
+            return $configured;
+        }
+
+        $payload = (array) ($bankAccount->payload ?? []);
+        $glAccount = trim((string) ($payload['GLAccount'] ?? ''));
+
+        return $glAccount !== '' ? $glAccount : $configured;
     }
 
     private function buildSalesOrderSyncPayload(array $salesOrder, string $eventName, string $status): array

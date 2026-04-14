@@ -158,7 +158,7 @@ class SapFinanceMasterDataSyncService
     {
         $count = 0;
         foreach ($client->fetchHouseBankAccounts() as $index => $row) {
-            $accountCode = $this->firstScalar($row, ['AccountCode', 'AbsEntry', 'AccountNo']);
+            $accountCode = $this->firstScalar($row, ['GLAccount', 'AccountCode', 'AbsEntry', 'AccountNo']);
             if ($accountCode === null) {
                 $accountCode = 'row-' . ($index + 1);
             }
