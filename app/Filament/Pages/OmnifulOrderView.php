@@ -265,38 +265,56 @@ class OmnifulOrderView extends Page
             [
                 'key' => 'order',
                 'title' => 'SAP Order Response',
+                'summary' => $this->buildOrderResponseSummary(),
                 'payload' => $this->record->sap_order_response,
             ],
             [
                 'key' => 'payment',
                 'title' => 'SAP Incoming Payment Response',
+                'summary' => [],
                 'payload' => $this->record->sap_payment_response,
             ],
             [
                 'key' => 'card_fee',
                 'title' => 'SAP Card Fee Journal Response',
+                'summary' => [],
                 'payload' => $this->record->sap_card_fee_response,
             ],
             [
                 'key' => 'delivery',
                 'title' => 'SAP Delivery Response',
+                'summary' => [],
                 'payload' => $this->record->sap_delivery_response,
             ],
             [
                 'key' => 'cogs',
                 'title' => 'SAP COGS Journal Response',
+                'summary' => [],
                 'payload' => $this->record->sap_cogs_response,
             ],
             [
                 'key' => 'credit_note',
                 'title' => 'SAP Credit Note Response',
+                'summary' => [],
                 'payload' => $this->record->sap_credit_note_response,
             ],
             [
                 'key' => 'cancel_cogs',
                 'title' => 'SAP Cancel COGS Response',
+                'summary' => [],
                 'payload' => $this->record->sap_cancel_cogs_response,
             ],
+        ];
+    }
+
+    private function buildOrderResponseSummary(): array
+    {
+        $response = is_array($this->record->sap_order_response) ? $this->record->sap_order_response : [];
+
+        return [
+            'reserve_invoice' => (string) ($response['ReserveInvoice'] ?? '-'),
+            'fallback_used' => ($response['reserve_invoice_fallback'] ?? false) ? 'true' : 'false',
+            'doc_object_code' => (string) ($response['DocObjectCode'] ?? '-'),
         ];
     }
 

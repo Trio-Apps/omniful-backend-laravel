@@ -260,6 +260,16 @@
                                 <span class="po-badge po-badge--{{ $matchedStep['tone'] }}">{{ str_replace('_', ' ', $matchedStep['status']) }}</span>
                             @endif
                         </div>
+                        @if (!empty($sapResponse['summary']))
+                            <div class="po-grid po-grid-3" style="margin-bottom: 12px;">
+                                @foreach ($sapResponse['summary'] as $label => $value)
+                                    <div class="po-kv">
+                                        <div class="po-label">{{ str_replace('_', ' ', $label) }}</div>
+                                        <div class="po-value po-break">{{ $value !== '' ? $value : '-' }}</div>
+                                    </div>
+                                @endforeach
+                            </div>
+                        @endif
                         <pre class="po-debug">{{ json_encode($sapResponse['payload'] ?? ['message' => 'No SAP response stored yet'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) }}</pre>
                     </div>
                 @endforeach
