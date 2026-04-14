@@ -89,6 +89,7 @@ class OrderWebhookService
             if (($invoiceResult['ignored'] ?? false) === true) {
                 $order->sap_status = 'ignored';
                 $order->sap_error = (string) ($invoiceResult['reason'] ?? 'Ignored: no order lines found');
+                $order->sap_order_response = $invoiceResult;
                 $order->save();
                 return;
             }
@@ -97,6 +98,7 @@ class OrderWebhookService
             $order->sap_doc_entry = (string) ($invoiceResult['DocEntry'] ?? '');
             $order->sap_doc_num = (string) ($invoiceResult['DocNum'] ?? '');
             $order->sap_error = null;
+            $order->sap_order_response = $invoiceResult;
             $order->save();
         }
 
@@ -138,6 +140,7 @@ class OrderWebhookService
         if (($invoiceResult['ignored'] ?? false) === true) {
             $order->sap_status = 'ignored';
             $order->sap_error = (string) ($invoiceResult['reason'] ?? 'Ignored: no order lines found');
+            $order->sap_order_response = $invoiceResult;
             $order->save();
 
             return $invoiceResult;
@@ -147,6 +150,7 @@ class OrderWebhookService
         $order->sap_doc_entry = (string) ($invoiceResult['DocEntry'] ?? '');
         $order->sap_doc_num = (string) ($invoiceResult['DocNum'] ?? '');
         $order->sap_error = null;
+        $order->sap_order_response = $invoiceResult;
         $order->save();
 
         return $invoiceResult;
@@ -232,9 +236,13 @@ class OrderWebhookService
     {
         if (!$this->isIncomingPaymentEnabled()) {
             if ((string) ($order->sap_payment_doc_entry ?? '') === '') {
-                $order->sap_payment_status = 'ignored';
-                $order->sap_payment_error = 'Incoming payments disabled from integration settings';
-                $order->save();
+            $order->sap_payment_status = 'ignored';
+            $order->sap_payment_error = 'Incoming payments disabled from integration settings';
+            $order->sap_payment_response = [
+                'ignored' => true,
+                'reason' => 'Incoming payments disabled from integration settings',
+            ];
+            $order->save();
             }
 
             return;
@@ -268,6 +276,7 @@ class OrderWebhookService
         if (($result['ignored'] ?? false) === true) {
             $order->sap_payment_status = 'ignored';
             $order->sap_payment_error = (string) ($result['reason'] ?? 'Incoming payment ignored');
+            $order->sap_payment_response = $result;
             $order->save();
             return;
         }
@@ -276,6 +285,7 @@ class OrderWebhookService
         $order->sap_payment_doc_entry = (string) ($result['DocEntry'] ?? '');
         $order->sap_payment_doc_num = (string) ($result['DocNum'] ?? '');
         $order->sap_payment_error = null;
+        $order->sap_payment_response = $result;
         $order->save();
     }
 
@@ -399,6 +409,10 @@ class OrderWebhookService
         if ($feeAmount <= 0) {
             $order->sap_card_fee_status = 'ignored';
             $order->sap_card_fee_error = 'Ignored: card fee amount missing';
+            $order->sap_card_fee_response = [
+                'ignored' => true,
+                'reason' => 'Ignored: card fee amount missing',
+            ];
             $order->save();
             return;
         }
@@ -416,6 +430,7 @@ class OrderWebhookService
         if (($result['ignored'] ?? false) === true) {
             $order->sap_card_fee_status = 'ignored';
             $order->sap_card_fee_error = (string) ($result['reason'] ?? 'Card fee journal ignored');
+            $order->sap_card_fee_response = $result;
             $order->save();
             return;
         }
@@ -424,6 +439,7 @@ class OrderWebhookService
         $order->sap_card_fee_journal_entry = (string) ($result['TransId'] ?? '');
         $order->sap_card_fee_journal_num = (string) ($result['Number'] ?? $result['JdtNum'] ?? '');
         $order->sap_card_fee_error = null;
+        $order->sap_card_fee_response = $result;
         $order->save();
     }
 
@@ -477,6 +493,10 @@ class OrderWebhookService
         if ($invoiceDocEntry <= 0) {
             $order->sap_delivery_status = 'blocked';
             $order->sap_delivery_error = 'Delivery blocked: source order is missing in SAP';
+            $order->sap_delivery_response = [
+                'ignored' => true,
+                'reason' => 'Delivery blocked: source order is missing in SAP',
+            ];
             $order->save();
             return;
         }
@@ -492,6 +512,7 @@ class OrderWebhookService
         if (($result['ignored'] ?? false) === true) {
             $order->sap_delivery_status = 'ignored';
             $order->sap_delivery_error = (string) ($result['reason'] ?? 'Delivery ignored');
+            $order->sap_delivery_response = $result;
             $order->save();
             return;
         }
@@ -500,6 +521,7 @@ class OrderWebhookService
         $order->sap_delivery_doc_entry = (string) ($result['DocEntry'] ?? '');
         $order->sap_delivery_doc_num = (string) ($result['DocNum'] ?? '');
         $order->sap_delivery_error = null;
+        $order->sap_delivery_response = $result;
         $order->save();
     }
 
@@ -518,6 +540,10 @@ class OrderWebhookService
         if (empty($order->sap_doc_entry) && empty($order->sap_delivery_doc_entry)) {
             $order->sap_credit_note_status = 'blocked';
             $order->sap_credit_note_error = 'Credit note blocked: source order is missing in SAP';
+            $order->sap_credit_note_response = [
+                'ignored' => true,
+                'reason' => 'Credit note blocked: source order is missing in SAP',
+            ];
             $order->save();
             return;
         }
@@ -535,6 +561,7 @@ class OrderWebhookService
         if (($result['ignored'] ?? false) === true) {
             $order->sap_credit_note_status = 'ignored';
             $order->sap_credit_note_error = (string) ($result['reason'] ?? 'Credit note ignored');
+            $order->sap_credit_note_response = $result;
             $order->save();
             return;
         }
@@ -543,6 +570,7 @@ class OrderWebhookService
         $order->sap_credit_note_doc_entry = (string) ($result['DocEntry'] ?? '');
         $order->sap_credit_note_doc_num = (string) ($result['DocNum'] ?? '');
         $order->sap_credit_note_error = null;
+        $order->sap_credit_note_response = $result;
         $order->save();
 
         $this->createCancelCogsReversalIfEligible($order);
@@ -579,6 +607,7 @@ class OrderWebhookService
         if (($result['ignored'] ?? false) === true) {
             $order->sap_cogs_status = 'ignored';
             $order->sap_cogs_error = (string) ($result['reason'] ?? 'COGS journal ignored');
+            $order->sap_cogs_response = $result;
             $order->save();
             return;
         }
@@ -587,6 +616,7 @@ class OrderWebhookService
         $order->sap_cogs_journal_entry = (string) ($result['TransId'] ?? '');
         $order->sap_cogs_journal_num = (string) ($result['Number'] ?? $result['JdtNum'] ?? '');
         $order->sap_cogs_error = null;
+        $order->sap_cogs_response = $result;
         $order->save();
     }
 
@@ -621,6 +651,7 @@ class OrderWebhookService
         if (($result['ignored'] ?? false) === true) {
             $order->sap_cancel_cogs_status = 'ignored';
             $order->sap_cancel_cogs_error = (string) ($result['reason'] ?? 'Cancel COGS reversal ignored');
+            $order->sap_cancel_cogs_response = $result;
             $order->save();
             return;
         }
@@ -629,6 +660,7 @@ class OrderWebhookService
         $order->sap_cancel_cogs_journal_entry = (string) ($result['TransId'] ?? '');
         $order->sap_cancel_cogs_journal_num = (string) ($result['Number'] ?? $result['JdtNum'] ?? '');
         $order->sap_cancel_cogs_error = null;
+        $order->sap_cancel_cogs_response = $result;
         $order->save();
     }
 

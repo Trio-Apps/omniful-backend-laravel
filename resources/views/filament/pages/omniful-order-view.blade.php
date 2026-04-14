@@ -247,5 +247,23 @@
                 @endforeach
             </div>
         </x-filament::section>
+
+        <x-filament::section class="po-section-gap">
+            <x-slot name="heading">SAP Responses</x-slot>
+            <div class="space-y-6 po-section-pad">
+                @foreach ($sapResponses as $sapResponse)
+                    <div class="po-card">
+                        <div class="po-label">{{ $sapResponse['title'] }}</div>
+                        <div class="po-value" style="margin-bottom: 12px;">
+                            @php($matchedStep = collect($flowSteps)->firstWhere('key', $sapResponse['key']))
+                            @if ($matchedStep)
+                                <span class="po-badge po-badge--{{ $matchedStep['tone'] }}">{{ str_replace('_', ' ', $matchedStep['status']) }}</span>
+                            @endif
+                        </div>
+                        <pre class="po-debug">{{ json_encode($sapResponse['payload'] ?? ['message' => 'No SAP response stored yet'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) }}</pre>
+                    </div>
+                @endforeach
+            </div>
+        </x-filament::section>
     </div>
 </x-filament::page>

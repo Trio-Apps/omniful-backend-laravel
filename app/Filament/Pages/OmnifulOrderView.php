@@ -29,6 +29,8 @@ class OmnifulOrderView extends Page
 
     public array $debugPayloads = [];
 
+    public array $sapResponses = [];
+
     public function mount(int|string|null $record = null): void
     {
         $recordId = $record ?? request()->query('record');
@@ -50,6 +52,7 @@ class OmnifulOrderView extends Page
             ->first();
         $this->flowSteps = $this->buildFlowSteps();
         $this->debugPayloads = $this->buildDebugPayloads();
+        $this->sapResponses = $this->buildSapResponses();
     }
 
     public function getTitle(): string
@@ -252,6 +255,47 @@ class OmnifulOrderView extends Page
                     'credit_memo_doc_entry' => $this->record->sap_credit_note_doc_entry,
                     'reference' => $this->record->external_id,
                 ],
+            ],
+        ];
+    }
+
+    private function buildSapResponses(): array
+    {
+        return [
+            [
+                'key' => 'order',
+                'title' => 'SAP Order Response',
+                'payload' => $this->record->sap_order_response,
+            ],
+            [
+                'key' => 'payment',
+                'title' => 'SAP Incoming Payment Response',
+                'payload' => $this->record->sap_payment_response,
+            ],
+            [
+                'key' => 'card_fee',
+                'title' => 'SAP Card Fee Journal Response',
+                'payload' => $this->record->sap_card_fee_response,
+            ],
+            [
+                'key' => 'delivery',
+                'title' => 'SAP Delivery Response',
+                'payload' => $this->record->sap_delivery_response,
+            ],
+            [
+                'key' => 'cogs',
+                'title' => 'SAP COGS Journal Response',
+                'payload' => $this->record->sap_cogs_response,
+            ],
+            [
+                'key' => 'credit_note',
+                'title' => 'SAP Credit Note Response',
+                'payload' => $this->record->sap_credit_note_response,
+            ],
+            [
+                'key' => 'cancel_cogs',
+                'title' => 'SAP Cancel COGS Response',
+                'payload' => $this->record->sap_cancel_cogs_response,
             ],
         ];
     }
