@@ -198,7 +198,7 @@ class OrderWebhookService
             'reference' => (string) ($order->external_id ?? ''),
             'payment_method' => $this->resolvePaymentMethod($data),
             'transfer_account' => $this->resolveIncomingPaymentTransferAccount(),
-            'invoice_type_candidates' => config('omniful.order_payment.invoice_type_candidates', [17, 13]),
+            'invoice_type_candidates' => $this->resolveIncomingPaymentInvoiceTypeCandidates(),
         ]);
 
         if (($result['ignored'] ?? false) === true) {
@@ -244,6 +244,27 @@ class OrderWebhookService
         }
 
         return trim((string) config('omniful.order_payment.transfer_account', ''));
+    }
+
+    /**
+     * @return array<int,int>
+     */
+    private function resolveIncomingPaymentInvoiceTypeCandidates(): array
+    {
+        $settings = IntegrationSetting::query()->first();
+        $configured = array_values(array_map(
+            'intval',
+            array_filter((array) ($settings?->order_payment_invoice_type_candidates ?? []), fn ($value) => is_numeric($value))
+        ));
+
+        if ($configured !== []) {
+            return $configured;
+        }
+
+        return array_values(array_map(
+            'intval',
+            array_filter((array) config('omniful.order_payment.invoice_type_candidates', [13]), fn ($value) => is_numeric($value))
+        ));
     }
 
     private function resolvePaymentMethod(array $data): string

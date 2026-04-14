@@ -137,6 +137,13 @@ class IntegrationControlSettings extends Page implements HasForms
                             ->searchable()
                             ->preload()
                             ->helperText('Used for prepaid incoming payments created from Omniful sales orders.'),
+                        Select::make('order_payment_invoice_type_candidates')
+                            ->label('Incoming Payment Invoice Type Candidates')
+                            ->options($this->getIncomingPaymentInvoiceTypeOptions())
+                            ->multiple()
+                            ->searchable()
+                            ->preload()
+                            ->helperText('Ordered SAP receipt invoice types to try when creating incoming payments.'),
                     ]),
             ])
             ->statePath('data');
@@ -157,6 +164,10 @@ class IntegrationControlSettings extends Page implements HasForms
                 'order_fallback_customer_code_by_source' => $state['order_fallback_customer_code_by_source'] ?? null,
                 'order_fallback_warehouse_code' => $state['order_fallback_warehouse_code'] ?? null,
                 'order_payment_transfer_account' => $state['order_payment_transfer_account'] ?? null,
+                'order_payment_invoice_type_candidates' => array_values(array_map(
+                    'intval',
+                    array_filter((array) ($state['order_payment_invoice_type_candidates'] ?? []), fn ($value) => is_numeric($value))
+                )),
             ]
         );
 
@@ -271,6 +282,36 @@ class IntegrationControlSettings extends Page implements HasForms
                 ], fn ($value) => is_string($value) && trim($value) !== ''))),
             ])
             ->all();
+    }
+
+    private function getIncomingPaymentInvoiceTypeOptions(): array
+    {
+        return [
+            '13' => 'it_Invoice (13)',
+            '14' => 'it_CredItnote (14)',
+            '15' => 'it_TaxInvoice (15)',
+            '16' => 'it_Return (16)',
+            '18' => 'it_PurchaseInvoice (18)',
+            '19' => 'it_PurchaseCreditNote (19)',
+            '20' => 'it_PurchaseDeliveryNote (20)',
+            '21' => 'it_PurchaseReturn (21)',
+            '24' => 'it_Receipt (24)',
+            '25' => 'it_Deposit (25)',
+            '30' => 'it_JournalEntry (30)',
+            '46' => 'it_PaymentAdvice (46)',
+            '57' => 'it_ChequesForPayment (57)',
+            '58' => 'it_StockReconciliations (58)',
+            '59' => 'it_GeneralReceiptToStock (59)',
+            '60' => 'it_GeneralReleaseFromStock (60)',
+            '67' => 'it_TransferBetweenWarehouses (67)',
+            '68' => 'it_WorkInstructions (68)',
+            '76' => 'it_DeferredDeposit (76)',
+            '132' => 'it_CorrectionInvoice (132)',
+            '163' => 'it_APCorrectionInvoice (163)',
+            '165' => 'it_ARCorrectionInvoice (165)',
+            '203' => 'it_DownPayment (203)',
+            '204' => 'it_PurchaseDownPayment (204)',
+        ];
     }
 
     protected function getHeaderActions(): array

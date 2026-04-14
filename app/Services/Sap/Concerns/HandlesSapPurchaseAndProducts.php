@@ -178,10 +178,10 @@ trait HandlesSapPurchaseAndProducts
         }
 
         $invoiceTypeCandidates = $this->normalizeInvoiceTypeCandidates(
-            $data['invoice_type_candidates'] ?? config('omniful.order_payment.invoice_type_candidates', [17, 13])
+            $data['invoice_type_candidates'] ?? config('omniful.order_payment.invoice_type_candidates', [13])
         );
         if ($invoiceTypeCandidates === []) {
-            $invoiceTypeCandidates = [17, 13];
+            $invoiceTypeCandidates = [13];
         }
 
         $salesDoc = $this->getSalesOrder($invoiceDocEntry);
