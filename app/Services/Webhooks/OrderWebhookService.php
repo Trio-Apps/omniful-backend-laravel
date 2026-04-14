@@ -100,6 +100,16 @@ class OrderWebhookService
             $order->save();
         }
 
+        if (
+            empty($order->sap_doc_entry)
+            && (
+                ($deliveryEligibility['eligible'] ?? false)
+                || ($creditEligibility['eligible'] ?? false)
+            )
+        ) {
+            $invoiceResult = $this->ensureSapOrderExistsForFollowUpAction($order, $data, $externalId);
+        }
+
         if (($invoiceEligibility['eligible'] ?? false) || !empty($order->sap_doc_entry)) {
             $this->createIncomingPaymentIfEligible($order, $data, $invoiceResult);
             $this->createCardFeeJournalIfEligible($order, $data);
@@ -114,6 +124,31 @@ class OrderWebhookService
             $this->createCreditNoteIfEligible($order, $data);
         }
         $this->syncSalesOrderMetadata($order, $eventName, $primaryStatus !== '' ? $primaryStatus : $deliveryStatus);
+    }
+
+    private function ensureSapOrderExistsForFollowUpAction(OmnifulOrder $order, array $data, string $externalId): ?array
+    {
+        if (!empty($order->sap_doc_entry)) {
+            return null;
+        }
+
+        $client = app(SapServiceLayerClient::class);
+        $invoiceResult = $client->createArReserveInvoiceFromOmnifulOrder($data, $externalId);
+        if (($invoiceResult['ignored'] ?? false) === true) {
+            $order->sap_status = 'ignored';
+            $order->sap_error = (string) ($invoiceResult['reason'] ?? 'Ignored: no order lines found');
+            $order->save();
+
+            return $invoiceResult;
+        }
+
+        $order->sap_status = 'created';
+        $order->sap_doc_entry = (string) ($invoiceResult['DocEntry'] ?? '');
+        $order->sap_doc_num = (string) ($invoiceResult['DocNum'] ?? '');
+        $order->sap_error = null;
+        $order->save();
+
+        return $invoiceResult;
     }
 
     /**
