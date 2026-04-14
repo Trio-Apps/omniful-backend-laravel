@@ -123,6 +123,7 @@ class OrderWebhookService
         if (($creditEligibility['eligible'] ?? false)) {
             $this->createCreditNoteIfEligible($order, $data);
         }
+        $this->refreshOverallSapStatus($order);
         $this->syncSalesOrderMetadata($order, $eventName, $primaryStatus !== '' ? $primaryStatus : $deliveryStatus);
     }
 
@@ -149,6 +150,28 @@ class OrderWebhookService
         $order->save();
 
         return $invoiceResult;
+    }
+
+    private function refreshOverallSapStatus(OmnifulOrder $order): void
+    {
+        $hasSapDocument = trim((string) ($order->sap_doc_entry ?? '')) !== ''
+            || trim((string) ($order->sap_doc_num ?? '')) !== '';
+        $hasFollowUpDocument = trim((string) ($order->sap_delivery_doc_entry ?? '')) !== ''
+            || trim((string) ($order->sap_payment_doc_entry ?? '')) !== ''
+            || trim((string) ($order->sap_credit_note_doc_entry ?? '')) !== ''
+            || trim((string) ($order->sap_cogs_journal_entry ?? '')) !== ''
+            || trim((string) ($order->sap_cancel_cogs_journal_entry ?? '')) !== '';
+
+        if (!$hasSapDocument && !$hasFollowUpDocument) {
+            return;
+        }
+
+        $current = trim((string) ($order->sap_status ?? ''));
+        if (in_array($current, ['', 'ignored', 'pending', 'retrying', 'failed'], true)) {
+            $order->sap_status = 'created';
+            $order->sap_error = null;
+            $order->save();
+        }
     }
 
     /**
