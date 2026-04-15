@@ -26,6 +26,7 @@ class AppServiceProvider extends ServiceProvider
         $this->registerFilamentCoreAliases();
         $this->registerFilamentAuthAliases();
         $this->registerFilamentPageAliases();
+        $this->registerFilamentWidgetAliases();
     }
 
     private function registerFilamentCoreAliases(): void
@@ -55,14 +56,28 @@ class AppServiceProvider extends ServiceProvider
 
     private function registerFilamentPageAliases(): void
     {
-        foreach (File::allFiles(app_path('Filament/Pages')) as $file) {
+        $this->registerLivewireAliasesForPath(app_path('Filament/Pages'), 'App\\Filament\\Pages\\');
+    }
+
+    private function registerFilamentWidgetAliases(): void
+    {
+        $this->registerLivewireAliasesForPath(app_path('Filament/Widgets'), 'App\\Filament\\Widgets\\');
+    }
+
+    private function registerLivewireAliasesForPath(string $path, string $namespacePrefix): void
+    {
+        if (!is_dir($path)) {
+            return;
+        }
+
+        foreach (File::allFiles($path) as $file) {
             $relativePath = str_replace(
                 ['/', '.php'],
                 ['\\', ''],
                 $file->getRelativePathname()
             );
 
-            $class = 'App\\Filament\\Pages\\' . $relativePath;
+            $class = $namespacePrefix . $relativePath;
 
             if (!class_exists($class) || !is_subclass_of($class, LivewireComponent::class)) {
                 continue;
