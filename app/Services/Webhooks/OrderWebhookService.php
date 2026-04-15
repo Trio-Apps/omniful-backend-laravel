@@ -2,6 +2,7 @@
 
 namespace App\Services\Webhooks;
 
+use App\Exceptions\SapRequestException;
 use App\Models\IntegrationSetting;
 use App\Models\OmnifulOrder;
 use App\Models\OmnifulOrderEvent;
@@ -85,7 +86,18 @@ class OrderWebhookService
         $client = app(SapServiceLayerClient::class);
         $invoiceResult = null;
         if (($invoiceEligibility['eligible'] ?? false) && empty($order->sap_doc_entry)) {
-            $invoiceResult = $client->createArReserveInvoiceFromOmnifulOrder($data, $externalId);
+            try {
+                $invoiceResult = $client->createArReserveInvoiceFromOmnifulOrder($data, $externalId);
+            } catch (SapRequestException $e) {
+                $order->sap_order_response = [
+                    'ignored' => false,
+                    'request_body' => $e->requestBody,
+                    'error_response_body' => $e->responseBody,
+                    'status_code' => $e->statusCode,
+                ];
+                $order->save();
+                throw $e;
+            }
             if (($invoiceResult['ignored'] ?? false) === true) {
                 $order->sap_status = 'ignored';
                 $order->sap_error = (string) ($invoiceResult['reason'] ?? 'Ignored: no order lines found');
@@ -136,7 +148,18 @@ class OrderWebhookService
         }
 
         $client = app(SapServiceLayerClient::class);
-        $invoiceResult = $client->createArReserveInvoiceFromOmnifulOrder($data, $externalId);
+        try {
+            $invoiceResult = $client->createArReserveInvoiceFromOmnifulOrder($data, $externalId);
+        } catch (SapRequestException $e) {
+            $order->sap_order_response = [
+                'ignored' => false,
+                'request_body' => $e->requestBody,
+                'error_response_body' => $e->responseBody,
+                'status_code' => $e->statusCode,
+            ];
+            $order->save();
+            throw $e;
+        }
         if (($invoiceResult['ignored'] ?? false) === true) {
             $order->sap_status = 'ignored';
             $order->sap_error = (string) ($invoiceResult['reason'] ?? 'Ignored: no order lines found');
@@ -274,16 +297,29 @@ class OrderWebhookService
         }
 
         $client = app(SapServiceLayerClient::class);
-        $result = $client->createIncomingPaymentForInvoice([
-            'invoice_doc_entry' => $invoiceDocEntry,
-            'card_code' => data_get($invoiceResult ?? [], 'CardCode') ?? data_get($data, 'customer.code'),
-            'sum_applied' => $this->resolveIncomingPaymentAmount($data, $invoiceResult),
-            'transfer_date' => data_get($data, 'order_created_at') ?? data_get($data, 'created_at'),
-            'reference' => (string) ($order->external_id ?? ''),
-            'payment_method' => $this->resolvePaymentMethod($data),
-            'transfer_account' => $this->resolveIncomingPaymentTransferAccount(),
-            'invoice_type_candidates' => $this->resolveIncomingPaymentInvoiceTypeCandidates(),
-        ]);
+        try {
+            $result = $client->createIncomingPaymentForInvoice([
+                'invoice_doc_entry' => $invoiceDocEntry,
+                'card_code' => data_get($invoiceResult ?? [], 'CardCode') ?? data_get($data, 'customer.code'),
+                'sum_applied' => $this->resolveIncomingPaymentAmount($data, $invoiceResult),
+                'transfer_date' => data_get($data, 'order_created_at') ?? data_get($data, 'created_at'),
+                'reference' => (string) ($order->external_id ?? ''),
+                'payment_method' => $this->resolvePaymentMethod($data),
+                'transfer_account' => $this->resolveIncomingPaymentTransferAccount(),
+                'invoice_type_candidates' => $this->resolveIncomingPaymentInvoiceTypeCandidates(),
+            ]);
+        } catch (SapRequestException $e) {
+            $order->sap_payment_status = 'failed';
+            $order->sap_payment_error = $e->getMessage();
+            $order->sap_payment_response = [
+                'ignored' => false,
+                'request_body' => $e->requestBody,
+                'error_response_body' => $e->responseBody,
+                'status_code' => $e->statusCode,
+            ];
+            $order->save();
+            throw $e;
+        }
 
         if (($result['ignored'] ?? false) === true) {
             $order->sap_payment_status = 'ignored';
@@ -444,14 +480,27 @@ class OrderWebhookService
         }
 
         $client = app(SapServiceLayerClient::class);
-        $result = $client->createCardFeeJournalEntryForOrder([
-            'amount' => $feeAmount,
-            'posting_date' => data_get($data, 'order_created_at') ?? data_get($data, 'created_at'),
-            'reference' => (string) ($order->external_id ?? ''),
-            'memo' => 'Card fee from Omniful order ' . (string) ($order->external_id ?? ''),
-            'expense_account' => config('omniful.order_payment.card_fee_expense_account'),
-            'offset_account' => config('omniful.order_payment.card_fee_offset_account'),
-        ]);
+        try {
+            $result = $client->createCardFeeJournalEntryForOrder([
+                'amount' => $feeAmount,
+                'posting_date' => data_get($data, 'order_created_at') ?? data_get($data, 'created_at'),
+                'reference' => (string) ($order->external_id ?? ''),
+                'memo' => 'Card fee from Omniful order ' . (string) ($order->external_id ?? ''),
+                'expense_account' => config('omniful.order_payment.card_fee_expense_account'),
+                'offset_account' => config('omniful.order_payment.card_fee_offset_account'),
+            ]);
+        } catch (SapRequestException $e) {
+            $order->sap_card_fee_status = 'failed';
+            $order->sap_card_fee_error = $e->getMessage();
+            $order->sap_card_fee_response = [
+                'ignored' => false,
+                'request_body' => $e->requestBody,
+                'error_response_body' => $e->responseBody,
+                'status_code' => $e->statusCode,
+            ];
+            $order->save();
+            throw $e;
+        }
 
         if (($result['ignored'] ?? false) === true) {
             $order->sap_card_fee_status = 'ignored';
@@ -528,12 +577,25 @@ class OrderWebhookService
         }
 
         $client = app(SapServiceLayerClient::class);
-        $result = $client->createDeliveryFromReserveOrder([
-            'order_doc_entry' => $invoiceDocEntry,
-            'hub_code' => data_get($data, 'hub_code'),
-            'external_id' => (string) ($order->external_id ?? ''),
-            'order_items' => (array) data_get($data, 'order_items', []),
-        ]);
+        try {
+            $result = $client->createDeliveryFromReserveOrder([
+                'order_doc_entry' => $invoiceDocEntry,
+                'hub_code' => data_get($data, 'hub_code'),
+                'external_id' => (string) ($order->external_id ?? ''),
+                'order_items' => (array) data_get($data, 'order_items', []),
+            ]);
+        } catch (SapRequestException $e) {
+            $order->sap_delivery_status = 'failed';
+            $order->sap_delivery_error = $e->getMessage();
+            $order->sap_delivery_response = [
+                'ignored' => false,
+                'request_body' => $e->requestBody,
+                'error_response_body' => $e->responseBody,
+                'status_code' => $e->statusCode,
+            ];
+            $order->save();
+            throw $e;
+        }
 
         if (($result['ignored'] ?? false) === true) {
             $order->sap_delivery_status = 'ignored';
@@ -578,11 +640,24 @@ class OrderWebhookService
         $creditReference = $externalId !== '' ? ($externalId . '-cancel') : 'order-cancel';
 
         $client = app(SapServiceLayerClient::class);
-        $result = $client->createArCreditMemoFromReturnOrder($data, [
-            'external_id' => $creditReference,
-            'base_delivery_doc_entry' => (int) ($order->sap_delivery_doc_entry ?? 0),
-            'base_order_doc_entry' => (int) ($order->sap_doc_entry ?? 0),
-        ]);
+        try {
+            $result = $client->createArCreditMemoFromReturnOrder($data, [
+                'external_id' => $creditReference,
+                'base_delivery_doc_entry' => (int) ($order->sap_delivery_doc_entry ?? 0),
+                'base_order_doc_entry' => (int) ($order->sap_doc_entry ?? 0),
+            ]);
+        } catch (SapRequestException $e) {
+            $order->sap_credit_note_status = 'failed';
+            $order->sap_credit_note_error = $e->getMessage();
+            $order->sap_credit_note_response = [
+                'ignored' => false,
+                'request_body' => $e->requestBody,
+                'error_response_body' => $e->responseBody,
+                'status_code' => $e->statusCode,
+            ];
+            $order->save();
+            throw $e;
+        }
 
         if (($result['ignored'] ?? false) === true) {
             $order->sap_credit_note_status = 'ignored';
@@ -622,13 +697,26 @@ class OrderWebhookService
         }
 
         $client = app(SapServiceLayerClient::class);
-        $result = $client->createCogsJournalEntryForDelivery([
-            'delivery_doc_entry' => $deliveryDocEntry,
-            'reference' => (string) ($order->external_id ?? ''),
-            'memo' => 'COGS journal from Omniful order ' . (string) ($order->external_id ?? ''),
-            'expense_account' => config('omniful.order_accounting.cogs_expense_account'),
-            'offset_account' => config('omniful.order_accounting.inventory_offset_account'),
-        ]);
+        try {
+            $result = $client->createCogsJournalEntryForDelivery([
+                'delivery_doc_entry' => $deliveryDocEntry,
+                'reference' => (string) ($order->external_id ?? ''),
+                'memo' => 'COGS journal from Omniful order ' . (string) ($order->external_id ?? ''),
+                'expense_account' => config('omniful.order_accounting.cogs_expense_account'),
+                'offset_account' => config('omniful.order_accounting.inventory_offset_account'),
+            ]);
+        } catch (SapRequestException $e) {
+            $order->sap_cogs_status = 'failed';
+            $order->sap_cogs_error = $e->getMessage();
+            $order->sap_cogs_response = [
+                'ignored' => false,
+                'request_body' => $e->requestBody,
+                'error_response_body' => $e->responseBody,
+                'status_code' => $e->statusCode,
+            ];
+            $order->save();
+            throw $e;
+        }
 
         if (($result['ignored'] ?? false) === true) {
             $order->sap_cogs_status = 'ignored';
@@ -666,13 +754,26 @@ class OrderWebhookService
         }
 
         $client = app(SapServiceLayerClient::class);
-        $result = $client->createCogsReversalJournalForCreditMemo([
-            'credit_memo_doc_entry' => $creditMemoDocEntry,
-            'reference' => (string) ($order->external_id ?? ''),
-            'memo' => 'COGS reversal from canceled Omniful order ' . (string) ($order->external_id ?? ''),
-            'expense_account' => config('omniful.order_accounting.cogs_expense_account'),
-            'offset_account' => config('omniful.order_accounting.inventory_offset_account'),
-        ]);
+        try {
+            $result = $client->createCogsReversalJournalForCreditMemo([
+                'credit_memo_doc_entry' => $creditMemoDocEntry,
+                'reference' => (string) ($order->external_id ?? ''),
+                'memo' => 'COGS reversal from canceled Omniful order ' . (string) ($order->external_id ?? ''),
+                'expense_account' => config('omniful.order_accounting.cogs_expense_account'),
+                'offset_account' => config('omniful.order_accounting.inventory_offset_account'),
+            ]);
+        } catch (SapRequestException $e) {
+            $order->sap_cancel_cogs_status = 'failed';
+            $order->sap_cancel_cogs_error = $e->getMessage();
+            $order->sap_cancel_cogs_response = [
+                'ignored' => false,
+                'request_body' => $e->requestBody,
+                'error_response_body' => $e->responseBody,
+                'status_code' => $e->statusCode,
+            ];
+            $order->save();
+            throw $e;
+        }
 
         if (($result['ignored'] ?? false) === true) {
             $order->sap_cancel_cogs_status = 'ignored';

@@ -2,6 +2,7 @@
 
 namespace App\Services\Sap\Concerns;
 
+use App\Exceptions\SapRequestException;
 use App\Models\IntegrationSetting;
 use App\Models\SapBankAccount;
 use App\Models\SapCostCenterSetting;
@@ -128,7 +129,12 @@ trait HandlesSapPurchaseAndProducts
         }
 
         if (!$response->successful()) {
-            throw new \RuntimeException('SAP AR reserve invoice create failed: ' . $response->status() . ' ' . $response->body());
+            throw new SapRequestException(
+                'SAP AR reserve invoice create failed: ' . $response->status() . ' ' . $response->body(),
+                $body,
+                (string) $response->body(),
+                $response->status(),
+            );
         }
 
         $payload = $response->json() ?? [];
@@ -217,7 +223,12 @@ trait HandlesSapPurchaseAndProducts
 
         $response = $this->post('/IncomingPayments', $body);
         if (!$response->successful()) {
-            throw new \RuntimeException('SAP incoming payment create failed: ' . $response->status() . ' ' . $response->body());
+            throw new SapRequestException(
+                'SAP incoming payment create failed: ' . $response->status() . ' ' . $response->body(),
+                $body,
+                (string) $response->body(),
+                $response->status(),
+            );
         }
 
         $payload = $response->json() ?? [];
@@ -279,7 +290,12 @@ trait HandlesSapPurchaseAndProducts
 
         $response = $this->post('/JournalEntries', $body);
         if (!$response->successful()) {
-            throw new \RuntimeException('SAP card-fee journal create failed: ' . $response->status() . ' ' . $response->body());
+            throw new SapRequestException(
+                'SAP card-fee journal create failed: ' . $response->status() . ' ' . $response->body(),
+                $body,
+                (string) $response->body(),
+                $response->status(),
+            );
         }
 
         $payload = $response->json() ?? [];
@@ -375,7 +391,12 @@ trait HandlesSapPurchaseAndProducts
 
         $response = $this->post('/DeliveryNotes', $body);
         if (!$response->successful()) {
-            throw new \RuntimeException('SAP delivery create failed: ' . $response->status() . ' ' . $response->body());
+            throw new SapRequestException(
+                'SAP delivery create failed: ' . $response->status() . ' ' . $response->body(),
+                $body,
+                (string) $response->body(),
+                $response->status(),
+            );
         }
 
         $payload = $response->json() ?? [];
@@ -597,7 +618,12 @@ trait HandlesSapPurchaseAndProducts
 
         $response = $this->post('/JournalEntries', $body);
         if (!$response->successful()) {
-            throw new \RuntimeException('SAP COGS journal create failed: ' . $response->status() . ' ' . $response->body());
+            throw new SapRequestException(
+                'SAP COGS journal create failed: ' . $response->status() . ' ' . $response->body(),
+                $body,
+                (string) $response->body(),
+                $response->status(),
+            );
         }
 
         $payload = $response->json() ?? [];
@@ -697,7 +723,12 @@ trait HandlesSapPurchaseAndProducts
 
         $response = $this->post('/CreditNotes', $body);
         if (!$response->successful()) {
-            throw new \RuntimeException('SAP AR credit memo create failed: ' . $response->status() . ' ' . $response->body());
+            throw new SapRequestException(
+                'SAP AR credit memo create failed: ' . $response->status() . ' ' . $response->body(),
+                $body,
+                (string) $response->body(),
+                $response->status(),
+            );
         }
 
         $payload = $response->json() ?? [];
@@ -763,7 +794,12 @@ trait HandlesSapPurchaseAndProducts
 
         $response = $this->post('/JournalEntries', $body);
         if (!$response->successful()) {
-            throw new \RuntimeException('SAP COGS reversal journal create failed: ' . $response->status() . ' ' . $response->body());
+            throw new SapRequestException(
+                'SAP COGS reversal journal create failed: ' . $response->status() . ' ' . $response->body(),
+                $body,
+                (string) $response->body(),
+                $response->status(),
+            );
         }
 
         $payload = $response->json() ?? [];
