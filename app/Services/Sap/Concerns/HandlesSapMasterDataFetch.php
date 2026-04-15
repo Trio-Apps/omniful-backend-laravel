@@ -564,13 +564,12 @@ trait HandlesSapMasterDataFetch
     public function fetchCostCenters(): array
     {
         return $this->fetchAllWithFallback([
-            // Some SAP tenants expose description fields as FactorDescription instead of FactorName,
-            // and filtering active rows in the query has proven to omit valid D1 rules like CEN011.
-            "/DistributionRules?\$select=FactorCode,FactorDescription,FactorName,InWhichDimension,CostCentreTypeCode,CostCenterTypeCode,CentreCode,CentreName,Active&\$top=200",
-            "/DistributionRules?\$select=FactorCode,FactorDescription,InWhichDimension,CostCentreTypeCode,CostCenterTypeCode,CentreCode,CentreName,Active&\$top=200",
-            "/DistributionRules?\$select=FactorCode,InWhichDimension,CostCentreTypeCode,CostCenterTypeCode,CentreCode,CentreName,Active&\$top=200",
-            "/DistributionRules?\$top=200",
             "/DistributionRules",
+            // Some SAP tenants expose description fields as FactorDescription instead of FactorName.
+            // Keep narrower fallbacks only for tenants that reject the unbounded collection endpoint.
+            "/DistributionRules?\$select=FactorCode,FactorDescription,FactorName,InWhichDimension,CostCentreTypeCode,CostCenterTypeCode,CentreCode,CentreName,Active",
+            "/DistributionRules?\$select=FactorCode,FactorDescription,InWhichDimension,CostCentreTypeCode,CostCenterTypeCode,CentreCode,CentreName,Active",
+            "/DistributionRules?\$select=FactorCode,InWhichDimension,CostCentreTypeCode,CostCenterTypeCode,CentreCode,CentreName,Active",
         ]);
     }
 
