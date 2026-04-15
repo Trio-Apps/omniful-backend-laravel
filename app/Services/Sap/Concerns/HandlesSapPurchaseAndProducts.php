@@ -2521,9 +2521,9 @@ trait HandlesSapPurchaseAndProducts
 
     private function resolveOrderCustomerCode(array $data, string $externalId): string
     {
-        $explicitCustomerCode = trim((string) data_get($data, 'customer.code', ''));
-        if ($explicitCustomerCode !== '') {
-            return $explicitCustomerCode;
+        $mappedCustomerCode = $this->resolveMappedOrderCustomerCode($data);
+        if ($mappedCustomerCode !== null) {
+            return $mappedCustomerCode;
         }
 
         $configuredCustomerCode = $this->resolveConfiguredSourceCustomerCode($data);
@@ -2531,7 +2531,74 @@ trait HandlesSapPurchaseAndProducts
             return $configuredCustomerCode;
         }
 
+        $explicitCustomerCode = trim((string) data_get($data, 'customer.code', ''));
+        if ($explicitCustomerCode !== '') {
+            return $explicitCustomerCode;
+        }
+
         return $this->buildCustomerCode($data, $externalId);
+    }
+
+    private function resolveMappedOrderCustomerCode(array $data): ?string
+    {
+        $localCustomerCode = trim((string) (
+            $this->getIntegrationSettingValue('order_local_customer_code')
+            ?? config('omniful.order_customer_mapping.local_customer_code', 'C00046')
+        ));
+        $foreignCustomerCode = trim((string) (
+            $this->getIntegrationSettingValue('order_foreign_customer_code')
+            ?? config('omniful.order_customer_mapping.foreign_customer_code', 'C00047')
+        ));
+
+        if ($localCustomerCode === '' || $foreignCustomerCode === '') {
+            return null;
+        }
+
+        return $this->isLocalOrderCustomer($data) ? $localCustomerCode : $foreignCustomerCode;
+    }
+
+    private function isLocalOrderCustomer(array $data): bool
+    {
+        $countryCandidates = [
+            data_get($data, 'customer.country'),
+            data_get($data, 'customer.country_code'),
+            data_get($data, 'billing_address.country'),
+            data_get($data, 'billing_address.country_code'),
+            data_get($data, 'shipping_address.country'),
+            data_get($data, 'shipping_address.country_code'),
+        ];
+
+        $localCountryTokens = array_map(
+            fn ($value) => strtoupper(trim((string) $value)),
+            (array) config('omniful.order_customer_mapping.local_country_tokens', ['SA', 'SAU', 'KSA', 'SAUDI ARABIA'])
+        );
+
+        foreach ($countryCandidates as $candidate) {
+            $normalized = strtoupper(trim((string) ($candidate ?? '')));
+            if ($normalized !== '' && in_array($normalized, $localCountryTokens, true)) {
+                return true;
+            }
+        }
+
+        $phoneCandidates = [
+            data_get($data, 'customer.mobile'),
+            data_get($data, 'customer.phone'),
+            data_get($data, 'billing_address.phone'),
+            data_get($data, 'shipping_address.phone'),
+        ];
+
+        foreach ($phoneCandidates as $candidate) {
+            $digits = preg_replace('/\D+/', '', (string) ($candidate ?? '')) ?? '';
+            if ($digits === '') {
+                continue;
+            }
+
+            if (str_starts_with($digits, '966') || str_starts_with($digits, '05') || (str_starts_with($digits, '5') && strlen($digits) === 9)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function resolveConfiguredSourceCustomerCode(array $data): ?string

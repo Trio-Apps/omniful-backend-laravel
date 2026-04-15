@@ -219,6 +219,14 @@ return [
         })(),
         'warehouse_code' => env('OMNIFUL_ORDER_FALLBACK_WAREHOUSE_CODE', ''),
     ],
+    'order_customer_mapping' => [
+        'local_customer_code' => env('OMNIFUL_LOCAL_CUSTOMER_CODE', 'C00046'),
+        'foreign_customer_code' => env('OMNIFUL_FOREIGN_CUSTOMER_CODE', 'C00047'),
+        'local_country_tokens' => array_values(array_filter(array_map(
+            fn ($value) => strtoupper(trim((string) $value)),
+            explode(',', (string) env('OMNIFUL_LOCAL_COUNTRY_TOKENS', 'SA,SAU,KSA,SAUDI ARABIA'))
+        ))),
+    ],
     'sap_cost_centers' => [
         'costing_code' => env('SAP_COSTING_CODE', ''),
         'costing_code2' => env('SAP_COSTING_CODE2', ''),
