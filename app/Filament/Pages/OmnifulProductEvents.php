@@ -122,6 +122,13 @@ class OmnifulProductEvents extends Page implements HasTable
                 ->label('Retry SAP')
                 ->icon('heroicon-o-arrow-path')
                 ->color('warning')
+                ->visible(function ($record): bool {
+                    if ((bool) $record->sap_error) {
+                        return true;
+                    }
+
+                    return in_array((string) $record->sap_status, ['failed', 'retrying', 'pending', 'ignored'], true);
+                })
                 ->action(function ($record) {
                     $result = app(WebhookRetryService::class)->retryProductEvent($record);
                     Notification::make()
