@@ -122,6 +122,7 @@ return [
         'return_order' => [
             'strict' => true,
             'allowed_statuses' => [
+                'initiated',
                 'created',
                 'pending',
                 'approved',
