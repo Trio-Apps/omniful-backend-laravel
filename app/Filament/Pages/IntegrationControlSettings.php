@@ -3,11 +3,12 @@
 namespace App\Filament\Pages;
 
 use App\Models\IntegrationSetting;
+use App\Models\SapSyncEvent;
 use App\Models\SapBankAccount;
 use App\Models\SapCostCenter;
 use App\Models\SapCostCenterSetting;
+use App\Jobs\RunSapCostCenterBackgroundSync;
 use App\Services\IntegrationDirectionService;
-use App\Services\MasterData\SapCostCenterSyncService;
 use App\Services\SapServiceLayerClient;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Select;
@@ -205,21 +206,25 @@ class IntegrationControlSettings extends Page implements HasForms
         @ini_set('max_execution_time', '0');
         @set_time_limit(0);
         try {
-            $result = app(SapCostCenterSyncService::class)->syncFromSap($client);
+            $event = SapSyncEvent::create([
+                'event_key' => 'sap.cost_centers.sync',
+                'source_type' => 'sap_catalog',
+                'source_id' => 'cost_centers',
+                'sap_action' => 'sync_cost_centers',
+                'sap_status' => 'pending',
+                'sap_error' => null,
+                'payload' => [
+                    'queued_at' => now()->toDateTimeString(),
+                ],
+            ]);
 
             Notification::make()
-                ->title('SAP cost centers synced')
-                ->body(
-                    'Distribution Rules: ' . (int) ($result['distribution_rules'] ?? 0)
-                    . ' | Projects: ' . (int) ($result['projects'] ?? 0)
-                )
+                ->title('SAP cost center sync queued')
+                ->body('The sync is running in background.')
                 ->success()
                 ->send();
 
-            $this->form->fill(array_merge(
-                IntegrationSetting::first()?->toArray() ?? [],
-                SapCostCenterSetting::first()?->toArray() ?? []
-            ));
+            RunSapCostCenterBackgroundSync::dispatch($event->id);
         } catch (\Throwable $e) {
             Notification::make()
                 ->title('SAP cost center sync failed')
@@ -232,7 +237,7 @@ class IntegrationControlSettings extends Page implements HasForms
     private function getDistributionRuleOptions(int $dimension): array
     {
         $exact = SapCostCenter::query()
-            ->where('source', 'distribution_rule')
+            ->whereIn('source', ['distribution_rule', 'profit_center'])
             ->where('dimension', $dimension)
             ->where('is_active', true)
             ->orderBy('code')
@@ -249,7 +254,7 @@ class IntegrationControlSettings extends Page implements HasForms
         // Some SAP setups don't expose dimension field consistently via Service Layer.
         // In that case, show uncategorized active rules instead of empty selects.
         return SapCostCenter::query()
-            ->where('source', 'distribution_rule')
+            ->whereIn('source', ['distribution_rule', 'profit_center'])
             ->whereNull('dimension')
             ->where('is_active', true)
             ->orderBy('code')

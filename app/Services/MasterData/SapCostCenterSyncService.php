@@ -11,6 +11,7 @@ class SapCostCenterSyncService
     public function syncFromSap(SapServiceLayerClient $client): array
     {
         $distributionRules = (array) $client->fetchCostCenters();
+        $profitCenters = (array) $client->fetchProfitCentersCatalog();
         $projects = (array) $client->fetchProjects();
         $now = now();
 
@@ -73,6 +74,41 @@ class SapCostCenterSyncService
             ];
         }
 
+        foreach ($profitCenters as $row) {
+            $code = trim((string) (
+                $row['CenterCode']
+                ?? $row['Code']
+                ?? $row['ProfitCenterCode']
+                ?? $row['OcrCode']
+                ?? ''
+            ));
+            if ($code === '') {
+                continue;
+            }
+
+            $upsertRows[] = [
+                'source' => 'profit_center',
+                'dimension' => $this->parseDimension(
+                    $row['InWhichDimension']
+                    ?? $row['DimCode']
+                    ?? $row['Dimension']
+                    ?? null
+                ),
+                'code' => $code,
+                'name' => trim((string) (
+                    $row['CenterName']
+                    ?? $row['Name']
+                    ?? $row['ProfitCenterName']
+                    ?? $row['OcrName']
+                    ?? $code
+                )),
+                'is_active' => $this->parseActive($row['Active'] ?? null, true),
+                'synced_at' => $now,
+                'updated_at' => $now,
+                'created_at' => $now,
+            ];
+        }
+
         if ($upsertRows !== []) {
             SapCostCenter::upsert(
                 $upsertRows,
@@ -88,6 +124,7 @@ class SapCostCenterSyncService
 
         return [
             'distribution_rules' => count(array_filter($upsertRows, fn ($r) => $r['source'] === 'distribution_rule')),
+            'profit_centers' => count(array_filter($upsertRows, fn ($r) => $r['source'] === 'profit_center')),
             'projects' => count(array_filter($upsertRows, fn ($r) => $r['source'] === 'project')),
             'total' => count($upsertRows),
             'synced_at' => $now->toDateTimeString(),
