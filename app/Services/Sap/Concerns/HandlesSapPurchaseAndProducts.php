@@ -2131,7 +2131,10 @@ trait HandlesSapPurchaseAndProducts
      */
     private function extractBundleComponents(array $data): array
     {
+        $defaultWarehouse = data_get($data, 'hub_code') ?? data_get($data, 'warehouse') ?? null;
+
         $sources = [
+            data_get($data, 'child_skus', []),
             data_get($data, 'bundle_items', []),
             data_get($data, 'bundle_components', []),
             data_get($data, 'components', []),
@@ -2158,7 +2161,7 @@ trait HandlesSapPurchaseAndProducts
                 $components[] = [
                     'item_code' => (string) $itemCode,
                     'quantity' => $qty,
-                    'warehouse' => data_get($row, 'hub_code') ?? data_get($row, 'warehouse') ?? null,
+                    'warehouse' => data_get($row, 'hub_code') ?? data_get($row, 'warehouse') ?? $defaultWarehouse,
                 ];
             }
 
