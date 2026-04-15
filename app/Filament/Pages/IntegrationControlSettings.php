@@ -206,17 +206,19 @@ class IntegrationControlSettings extends Page implements HasForms
         @ini_set('max_execution_time', '0');
         @set_time_limit(0);
         try {
-            $event = SapSyncEvent::create([
-                'event_key' => 'sap.cost_centers.sync',
-                'source_type' => 'sap_catalog',
-                'source_id' => null,
-                'sap_action' => 'sync_cost_centers',
-                'sap_status' => 'pending',
-                'sap_error' => null,
-                'payload' => [
-                    'queued_at' => now()->toDateTimeString(),
-                ],
-            ]);
+            $event = SapSyncEvent::query()->updateOrCreate(
+                ['event_key' => 'sap.cost_centers.sync'],
+                [
+                    'source_type' => 'sap_catalog',
+                    'source_id' => null,
+                    'sap_action' => 'sync_cost_centers',
+                    'sap_status' => 'pending',
+                    'sap_error' => null,
+                    'payload' => [
+                        'queued_at' => now()->toDateTimeString(),
+                    ],
+                ]
+            );
 
             Notification::make()
                 ->title('SAP cost center sync queued')
