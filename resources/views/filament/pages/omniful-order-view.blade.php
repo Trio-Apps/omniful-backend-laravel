@@ -60,7 +60,7 @@
                 </div>
                 <div class="po-card">
                     <div class="po-label">SAP Status</div>
-                    <div class="po-value">{{ $record->sap_status ?: '-' }}</div>
+                    <div class="po-value">{{ $overviewState['sap_status'] ?? ($record->sap_status ?: '-') }}</div>
                 </div>
                 <div class="po-card">
                     <div class="po-label">SAP DocNum</div>
@@ -76,7 +76,7 @@
                 </div>
                 <div class="po-card" id="sap-error">
                     <div class="po-label">SAP Error</div>
-                    <div class="po-value po-break">{{ $record->sap_error ?: '-' }}</div>
+                    <div class="po-value po-break">{{ array_key_exists('sap_error', $overviewState) ? ($overviewState['sap_error'] ?: '-') : ($record->sap_error ?: '-') }}</div>
                 </div>
                 <div class="po-card">
                     <div class="po-label">Cancel COGS</div>

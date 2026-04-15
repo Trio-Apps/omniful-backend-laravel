@@ -39,6 +39,8 @@ class OmnifulOrderView extends Page
 
     public array $visibleSapResponses = [];
 
+    public array $overviewState = [];
+
     public function mount(int|string|null $record = null): void
     {
         $recordId = $record ?? request()->query('record');
@@ -65,6 +67,7 @@ class OmnifulOrderView extends Page
         $this->visibleFlowSteps = $this->filterFlowArtifacts($this->flowSteps, $this->flowSummary['active_keys'] ?? []);
         $this->visibleDebugPayloads = $this->filterFlowArtifacts($this->debugPayloads, $this->flowSummary['active_keys'] ?? []);
         $this->visibleSapResponses = $this->filterFlowArtifacts($this->sapResponses, $this->flowSummary['active_keys'] ?? []);
+        $this->overviewState = $this->buildOverviewState();
     }
 
     public function getTitle(): string
@@ -536,5 +539,35 @@ class OmnifulOrderView extends Page
             'credit note',
             'cancel cogs',
         ]);
+    }
+
+    private function buildOverviewState(): array
+    {
+        $status = trim((string) ($this->record->sap_status ?: ''));
+        $error = trim((string) ($this->record->sap_error ?: ''));
+        $steps = $this->visibleFlowSteps !== [] ? $this->visibleFlowSteps : $this->flowSteps;
+
+        if (($this->flowSummary['overall_label'] ?? null) === 'Completed') {
+            return [
+                'sap_status' => 'created',
+                'sap_error' => null,
+            ];
+        }
+
+        $issueStep = collect($steps)->first(function (array $step) {
+            return in_array((string) ($step['status'] ?? ''), ['failed', 'blocked', 'ignored', 'retrying', 'running', 'pending'], true);
+        });
+
+        if ($issueStep) {
+            return [
+                'sap_status' => (string) ($issueStep['status'] ?: ($status !== '' ? $status : 'failed')),
+                'sap_error' => $issueStep['error'] ?? ($error !== '' ? $error : null),
+            ];
+        }
+
+        return [
+            'sap_status' => $status !== '' ? $status : '-',
+            'sap_error' => $error !== '' ? $error : null,
+        ];
     }
 }
