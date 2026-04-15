@@ -564,12 +564,13 @@ trait HandlesSapMasterDataFetch
     public function fetchCostCenters(): array
     {
         return $this->fetchAllWithFallback([
-            "/DistributionRules?\$select=FactorCode,FactorName,InWhichDimension,CostCentreTypeCode,CostCenterTypeCode,CentreCode,CentreName,Active&\$filter=Active%20eq%20'tYES'&\$top=200",
-            "/DistributionRules?\$select=FactorCode,InWhichDimension,CostCentreTypeCode,CostCenterTypeCode,CentreCode,CentreName,Active&\$filter=Active%20eq%20'tYES'&\$top=200",
-            "/DistributionRules?\$select=FactorCode,FactorName,InWhichDimension,CostCentreTypeCode,CostCenterTypeCode,CentreCode,CentreName,Active&\$top=200",
+            // Some SAP tenants expose description fields as FactorDescription instead of FactorName,
+            // and filtering active rows in the query has proven to omit valid D1 rules like CEN011.
+            "/DistributionRules?\$select=FactorCode,FactorDescription,FactorName,InWhichDimension,CostCentreTypeCode,CostCenterTypeCode,CentreCode,CentreName,Active&\$top=200",
+            "/DistributionRules?\$select=FactorCode,FactorDescription,InWhichDimension,CostCentreTypeCode,CostCenterTypeCode,CentreCode,CentreName,Active&\$top=200",
             "/DistributionRules?\$select=FactorCode,InWhichDimension,CostCentreTypeCode,CostCenterTypeCode,CentreCode,CentreName,Active&\$top=200",
-            "/DistributionRules?\$select=FactorCode,InWhichDimension,CostCentreTypeCode,CostCenterTypeCode,CentreCode,CentreName&\$top=200",
             "/DistributionRules?\$top=200",
+            "/DistributionRules",
         ]);
     }
 

@@ -42,7 +42,9 @@ class SapCostCenterSyncService
                 'dimension' => $dimension,
                 'code' => $code,
                 'name' => trim((string) (
-                    $row['FactorName']
+                    $row['FactorDescription']
+                    ?? $row['FactorDesc']
+                    ?? $row['FactorName']
                     ?? $row['OcrName']
                     ?? $row['Name']
                     ?? $row['CentreName']
