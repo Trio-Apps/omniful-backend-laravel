@@ -31,7 +31,28 @@ class OmnifulOrderMonitor extends Page implements HasTable
 
     protected function getTableQuery(): Builder
     {
-        return OmnifulOrder::query()->orderByDesc('last_event_at');
+        $query = OmnifulOrder::query()->orderByDesc('last_event_at');
+
+        $sapStatusFilter = data_get($this, 'tableFilters.sap_status.values');
+        if (!is_array($sapStatusFilter)) {
+            $sapStatusFilter = (array) (data_get($this, 'tableFilters.sap_status.value')
+                ?? data_get($this, 'tableFilters.sap_status')
+                ?? []);
+        }
+
+        $normalizedStatuses = array_values(array_filter(array_map(
+            fn ($value) => strtolower(trim((string) $value)),
+            $sapStatusFilter
+        ), fn ($value) => $value !== ''));
+
+        if (!in_array('ignored', $normalizedStatuses, true)) {
+            $query->where(function (Builder $query) {
+                $query->whereNull('sap_status')
+                    ->orWhere('sap_status', '!=', 'ignored');
+            });
+        }
+
+        return $query;
     }
 
     protected function getTableColumns(): array

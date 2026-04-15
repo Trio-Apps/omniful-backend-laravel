@@ -44,6 +44,12 @@ class ProcessOmnifulOrderEvent implements ShouldQueue
         }
 
         try {
+            $classification = $service->classifyEventForProcessing($event);
+            if (!($classification['queue'] ?? false)) {
+                $service->applyNoOpEventOutcome($event);
+                return;
+            }
+
             OmnifulOrder::where('external_id', $externalId)->update([
                 'sap_status' => 'running',
                 'sap_error' => null,

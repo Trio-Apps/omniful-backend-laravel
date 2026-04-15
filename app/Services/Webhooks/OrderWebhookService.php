@@ -11,6 +11,124 @@ use Illuminate\Support\Facades\Log;
 
 class OrderWebhookService
 {
+    /**
+     * @return array{queue:bool,action:string,reason:?string,event_name:string,status:string}
+     */
+    public function classifyEventForProcessing(OmnifulOrderEvent $event): array
+    {
+        $payload = (array) ($event->payload ?? []);
+        $data = (array) data_get($payload, 'data', []);
+        $eventName = (string) data_get($payload, 'event_name', '');
+        $primaryStatus = $this->extractStatusValue($data, [
+            'status_code',
+            'status',
+            'order_status',
+            'order.status',
+        ]);
+        $deliveryStatus = $this->extractStatusValue($data, [
+            'status_code',
+            'status',
+            'order_status',
+            'shipment.delivery_status',
+            'shipment.status',
+            'shipment.shipping_partner_status',
+            'delivery_status',
+            'shipment_status',
+        ]);
+        $creditStatus = $this->extractStatusValue($data, [
+            'cancel_status',
+            'cancellation_status',
+            'status_code',
+            'status',
+            'order_status',
+            'shipment.delivery_status',
+            'shipment.status',
+            'shipment.shipping_partner_status',
+        ]);
+        $paymentSignals = $this->extractPaymentSignals($data);
+
+        $mapper = app(WebhookStatusMapper::class);
+        $invoiceEligibility = $mapper->resolveOrderInvoiceEligibility($eventName, $primaryStatus, $paymentSignals);
+        $deliveryEligibility = $mapper->resolveOrderDeliveryEligibility($eventName, $deliveryStatus);
+        $creditEligibility = $mapper->resolveOrderCreditEligibility($eventName, $creditStatus);
+
+        if (
+            ($invoiceEligibility['eligible'] ?? false)
+            || ($deliveryEligibility['eligible'] ?? false)
+            || ($creditEligibility['eligible'] ?? false)
+        ) {
+            return [
+                'queue' => true,
+                'action' => 'sap',
+                'reason' => null,
+                'event_name' => $eventName,
+                'status' => $primaryStatus !== '' ? $primaryStatus : $deliveryStatus,
+            ];
+        }
+
+        $order = OmnifulOrder::where('external_id', (string) ($event->external_id ?? ''))->first();
+        if ($order && !empty($order->sap_doc_entry)) {
+            return [
+                'queue' => false,
+                'action' => 'metadata_sync',
+                'reason' => null,
+                'event_name' => $eventName,
+                'status' => $primaryStatus !== '' ? $primaryStatus : $deliveryStatus,
+            ];
+        }
+
+        return [
+            'queue' => false,
+            'action' => 'ignored',
+            'reason' => (string) (
+                $invoiceEligibility['reason']
+                ?? $deliveryEligibility['reason']
+                ?? 'Ignored: order is not eligible for SAP action'
+            ),
+            'event_name' => $eventName,
+            'status' => $primaryStatus !== '' ? $primaryStatus : $deliveryStatus,
+        ];
+    }
+
+    /**
+     * @return array{action:string,message:string}
+     */
+    public function applyNoOpEventOutcome(OmnifulOrderEvent $event): array
+    {
+        $classification = $this->classifyEventForProcessing($event);
+        $order = OmnifulOrder::where('external_id', (string) ($event->external_id ?? ''))->first();
+        if (!$order) {
+            return [
+                'action' => $classification['action'],
+                'message' => (string) ($classification['reason'] ?? 'No order found'),
+            ];
+        }
+
+        if ($classification['action'] === 'metadata_sync') {
+            $this->syncSalesOrderMetadata($order, $classification['event_name'], $classification['status']);
+
+            if (in_array((string) ($order->sap_status ?? ''), ['pending', 'running', 'retrying'], true) && !empty($order->sap_doc_entry)) {
+                $order->sap_status = 'created';
+                $order->sap_error = null;
+                $order->save();
+            }
+
+            return [
+                'action' => 'metadata_sync',
+                'message' => 'Order event did not require SAP action; metadata synced only',
+            ];
+        }
+
+        $order->sap_status = 'ignored';
+        $order->sap_error = (string) ($classification['reason'] ?? 'Ignored: order is not eligible for SAP action');
+        $order->save();
+
+        return [
+            'action' => 'ignored',
+            'message' => (string) ($classification['reason'] ?? 'Ignored: order is not eligible for SAP action'),
+        ];
+    }
+
     public function process(OmnifulOrderEvent $event): void
     {
         $externalId = (string) ($event->external_id ?? '');

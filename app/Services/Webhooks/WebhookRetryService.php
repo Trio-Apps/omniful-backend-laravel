@@ -20,6 +20,14 @@ class WebhookRetryService
      */
     public function retryOrderEvent(OmnifulOrderEvent $event): array
     {
+        $service = app(OrderWebhookService::class);
+        $classification = $service->classifyEventForProcessing($event);
+        if (!($classification['queue'] ?? false)) {
+            $result = $service->applyNoOpEventOutcome($event);
+
+            return ['ok' => true, 'message' => $result['message']];
+        }
+
         $order = OmnifulOrder::where('external_id', $event->external_id)->first();
         if ($order) {
             $order->sap_status = 'retrying';

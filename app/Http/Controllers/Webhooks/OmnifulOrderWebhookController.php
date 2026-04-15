@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Webhooks;
 use App\Jobs\ProcessOmnifulOrderEvent;
 use App\Models\OmnifulOrder;
 use App\Models\OmnifulOrderEvent;
+use App\Services\Webhooks\OrderWebhookService;
 use Illuminate\Http\Request;
 
 class OmnifulOrderWebhookController extends OmnifulWebhookBase
@@ -30,6 +31,19 @@ class OmnifulOrderWebhookController extends OmnifulWebhookBase
                     'sap_status' => 'pending',
                     'sap_error' => null,
                 ]);
+        }
+
+        $service = app(OrderWebhookService::class);
+        $classification = $service->classifyEventForProcessing($event);
+        if (!($classification['queue'] ?? false)) {
+            $result = $service->applyNoOpEventOutcome($event);
+
+            return response()->json([
+                'status' => 'ok',
+                'id' => $event->id,
+                'ignored' => ($result['action'] ?? '') === 'ignored',
+                'message' => $result['message'] ?? 'No SAP action required',
+            ]);
         }
 
         ProcessOmnifulOrderEvent::dispatch($event->id);
