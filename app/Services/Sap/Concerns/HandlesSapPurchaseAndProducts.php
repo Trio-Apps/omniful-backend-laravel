@@ -87,6 +87,7 @@ trait HandlesSapPurchaseAndProducts
             return [
                 'ignored' => true,
                 'reason' => 'No order lines found for AR reserve invoice',
+                'request_body' => null,
             ];
         }
         $lines = $this->applyDefaultCostCentersToLines($lines);
@@ -139,6 +140,7 @@ trait HandlesSapPurchaseAndProducts
         }
 
         $payload['ignored'] = false;
+        $payload['request_body'] = $body;
 
         return $payload;
     }
@@ -167,6 +169,7 @@ trait HandlesSapPurchaseAndProducts
             return [
                 'ignored' => true,
                 'reason' => 'Missing incoming payment transfer account',
+                'request_body' => null,
             ];
         }
 
@@ -181,6 +184,7 @@ trait HandlesSapPurchaseAndProducts
             return [
                 'ignored' => true,
                 'reason' => 'Incoming payment skipped: non-positive amount',
+                'request_body' => null,
             ];
         }
 
@@ -218,6 +222,7 @@ trait HandlesSapPurchaseAndProducts
 
         $payload = $response->json() ?? [];
         $payload['ignored'] = false;
+        $payload['request_body'] = $body;
 
         return $payload;
     }
@@ -229,6 +234,7 @@ trait HandlesSapPurchaseAndProducts
             return [
                 'ignored' => true,
                 'reason' => 'Card fee amount is not positive',
+                'request_body' => null,
             ];
         }
 
@@ -238,6 +244,7 @@ trait HandlesSapPurchaseAndProducts
             return [
                 'ignored' => true,
                 'reason' => 'Missing card fee journal accounts',
+                'request_body' => null,
             ];
         }
 
@@ -277,6 +284,7 @@ trait HandlesSapPurchaseAndProducts
 
         $payload = $response->json() ?? [];
         $payload['ignored'] = false;
+        $payload['request_body'] = $body;
 
         return $payload;
     }
@@ -347,6 +355,7 @@ trait HandlesSapPurchaseAndProducts
             return [
                 'ignored' => true,
                 'reason' => 'No open quantity found for delivery',
+                'request_body' => null,
             ];
         }
         $lines = $this->applyDefaultCostCentersToLines($lines);
@@ -371,6 +380,7 @@ trait HandlesSapPurchaseAndProducts
 
         $payload = $response->json() ?? [];
         $payload['ignored'] = false;
+        $payload['request_body'] = $body;
 
         return $payload;
     }
@@ -552,6 +562,7 @@ trait HandlesSapPurchaseAndProducts
             return [
                 'ignored' => true,
                 'reason' => 'COGS amount is not available from delivery lines',
+                'request_body' => null,
             ];
         }
 
@@ -591,6 +602,7 @@ trait HandlesSapPurchaseAndProducts
 
         $payload = $response->json() ?? [];
         $payload['ignored'] = false;
+        $payload['request_body'] = $body;
 
         return $payload;
     }
@@ -609,6 +621,7 @@ trait HandlesSapPurchaseAndProducts
             return [
                 'ignored' => true,
                 'reason' => 'No return lines found for AR credit memo',
+                'request_body' => null,
             ];
         }
 
@@ -660,6 +673,7 @@ trait HandlesSapPurchaseAndProducts
             return [
                 'ignored' => true,
                 'reason' => 'No SAP credit memo lines could be built',
+                'request_body' => null,
             ];
         }
         $documentLines = $this->applyDefaultCostCentersToLines($documentLines);
@@ -688,6 +702,7 @@ trait HandlesSapPurchaseAndProducts
 
         $payload = $response->json() ?? [];
         $payload['ignored'] = false;
+        $payload['request_body'] = $body;
         return $payload;
     }
 
@@ -713,6 +728,7 @@ trait HandlesSapPurchaseAndProducts
             return [
                 'ignored' => true,
                 'reason' => 'COGS reversal amount is not available from credit memo lines',
+                'request_body' => null,
             ];
         }
 
@@ -752,6 +768,7 @@ trait HandlesSapPurchaseAndProducts
 
         $payload = $response->json() ?? [];
         $payload['ignored'] = false;
+        $payload['request_body'] = $body;
         return $payload;
     }
 

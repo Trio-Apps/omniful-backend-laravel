@@ -188,7 +188,7 @@ class OmnifulOrderView extends Page
             [
                 'key' => 'order',
                 'title' => 'Order Create Payload',
-                'payload' => [
+                'payload' => $this->resolveDisplayedStepPayload('order', [
                     'external_id' => $this->record->external_id,
                     'event_name' => data_get($this->payload, 'event_name'),
                     'status_code' => data_get($this->data, 'status_code'),
@@ -205,24 +205,24 @@ class OmnifulOrderView extends Page
                         'payment_mode' => data_get($this->data, 'invoice.payment_mode'),
                     ],
                     'items' => $items,
-                ],
+                ]),
             ],
             [
                 'key' => 'payment',
                 'title' => 'Incoming Payment Payload',
-                'payload' => [
+                'payload' => $this->resolveDisplayedStepPayload('payment', [
                     'invoice_doc_entry' => $this->record->sap_doc_entry,
                     'invoice_doc_num' => $this->record->sap_doc_num,
                     'reference' => $this->record->external_id,
                     'payment_method' => data_get($this->data, 'payment_method', data_get($this->data, 'invoice.payment_mode')),
                     'amount' => data_get($this->data, 'invoice.total_paid', data_get($this->data, 'invoice.total')),
                     'transfer_date' => data_get($this->data, 'order_created_at', data_get($this->data, 'created_at')),
-                ],
+                ]),
             ],
             [
                 'key' => 'delivery',
                 'title' => 'Delivery Payload',
-                'payload' => [
+                'payload' => $this->resolveDisplayedStepPayload('delivery', [
                     'order_doc_entry' => $this->record->sap_doc_entry,
                     'external_id' => $this->record->external_id,
                     'hub_code' => data_get($this->data, 'hub_code'),
@@ -232,46 +232,66 @@ class OmnifulOrderView extends Page
                         'shipping_partner_name' => data_get($this->data, 'shipment.shipping_partner_name'),
                     ],
                     'items' => $items,
-                ],
+                ]),
             ],
             [
                 'key' => 'card_fee',
                 'title' => 'Card Fee Journal Payload',
-                'payload' => [
+                'payload' => $this->resolveDisplayedStepPayload('card_fee', [
                     'reference' => $this->record->external_id,
                     'posting_date' => data_get($this->data, 'order_created_at', data_get($this->data, 'created_at')),
                     'payment_method' => data_get($this->data, 'invoice.payment_mode', data_get($this->data, 'payment_method')),
                     'invoice_total' => data_get($this->data, 'invoice.total'),
-                ],
+                ]),
             ],
             [
                 'key' => 'cogs',
                 'title' => 'COGS Journal Payload',
-                'payload' => [
+                'payload' => $this->resolveDisplayedStepPayload('cogs', [
                     'delivery_doc_entry' => $this->record->sap_delivery_doc_entry,
                     'reference' => $this->record->external_id,
-                ],
+                ]),
             ],
             [
                 'key' => 'credit_note',
                 'title' => 'Credit Note Payload',
-                'payload' => [
+                'payload' => $this->resolveDisplayedStepPayload('credit_note', [
                     'external_id' => $this->record->external_id,
                     'base_delivery_doc_entry' => $this->record->sap_delivery_doc_entry,
                     'base_order_doc_entry' => $this->record->sap_doc_entry,
                     'document_date' => data_get($this->data, 'order_created_at', data_get($this->data, 'created_at')),
                     'items' => $items,
-                ],
+                ]),
             ],
             [
                 'key' => 'cancel_cogs',
                 'title' => 'Cancel COGS Reversal Payload',
-                'payload' => [
+                'payload' => $this->resolveDisplayedStepPayload('cancel_cogs', [
                     'credit_memo_doc_entry' => $this->record->sap_credit_note_doc_entry,
                     'reference' => $this->record->external_id,
-                ],
+                ]),
             ],
         ];
+    }
+
+    private function resolveDisplayedStepPayload(string $key, array $fallback): array
+    {
+        $response = match ($key) {
+            'order' => $this->record->sap_order_response,
+            'payment' => $this->record->sap_payment_response,
+            'card_fee' => $this->record->sap_card_fee_response,
+            'delivery' => $this->record->sap_delivery_response,
+            'cogs' => $this->record->sap_cogs_response,
+            'credit_note' => $this->record->sap_credit_note_response,
+            'cancel_cogs' => $this->record->sap_cancel_cogs_response,
+            default => null,
+        };
+
+        if (is_array($response) && is_array($response['request_body'] ?? null)) {
+            return $response['request_body'];
+        }
+
+        return $fallback;
     }
 
     private function buildFlowSummary(array $steps): array
