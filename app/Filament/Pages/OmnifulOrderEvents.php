@@ -19,6 +19,8 @@ class OmnifulOrderEvents extends Page implements HasTable
 {
     use InteractsWithTable;
 
+    protected static bool $shouldRegisterNavigation = false;
+
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-bell';
 
     protected static ?string $navigationLabel = 'Order Events';
