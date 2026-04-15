@@ -51,6 +51,17 @@ class OrderWebhookService
         $invoiceEligibility = $mapper->resolveOrderInvoiceEligibility($eventName, $primaryStatus, $paymentSignals);
         $deliveryEligibility = $mapper->resolveOrderDeliveryEligibility($eventName, $deliveryStatus);
         $creditEligibility = $mapper->resolveOrderCreditEligibility($eventName, $creditStatus);
+        $effectiveStatus = $primaryStatus !== '' ? $primaryStatus : $deliveryStatus;
+
+        if ($this->isNoOpOrderStatus($effectiveStatus)) {
+            return [
+                'queue' => false,
+                'action' => 'ignored',
+                'reason' => 'Ignored: no SAP action required for order status ' . $effectiveStatus,
+                'event_name' => $eventName,
+                'status' => $effectiveStatus,
+            ];
+        }
 
         if (
             ($invoiceEligibility['eligible'] ?? false)
@@ -62,7 +73,7 @@ class OrderWebhookService
                 'action' => 'sap',
                 'reason' => null,
                 'event_name' => $eventName,
-                'status' => $primaryStatus !== '' ? $primaryStatus : $deliveryStatus,
+                'status' => $effectiveStatus,
             ];
         }
 
@@ -73,7 +84,7 @@ class OrderWebhookService
                 'action' => 'metadata_sync',
                 'reason' => null,
                 'event_name' => $eventName,
-                'status' => $primaryStatus !== '' ? $primaryStatus : $deliveryStatus,
+                'status' => $effectiveStatus,
             ];
         }
 
@@ -86,7 +97,7 @@ class OrderWebhookService
                 ?? 'Ignored: order is not eligible for SAP action'
             ),
             'event_name' => $eventName,
-            'status' => $primaryStatus !== '' ? $primaryStatus : $deliveryStatus,
+            'status' => $effectiveStatus,
         ];
     }
 
@@ -371,6 +382,16 @@ class OrderWebhookService
         }
 
         return '';
+    }
+
+    private function isNoOpOrderStatus(string $status): bool
+    {
+        return in_array($this->normalizeStatusValue($status), ['picked', 'packed'], true);
+    }
+
+    private function normalizeStatusValue(string $value): string
+    {
+        return strtolower(trim($value));
     }
 
     private function createIncomingPaymentIfEligible(OmnifulOrder $order, array $data, ?array $invoiceResult): void
