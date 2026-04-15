@@ -209,7 +209,7 @@ class IntegrationControlSettings extends Page implements HasForms
             $event = SapSyncEvent::create([
                 'event_key' => 'sap.cost_centers.sync',
                 'source_type' => 'sap_catalog',
-                'source_id' => 'cost_centers',
+                'source_id' => null,
                 'sap_action' => 'sync_cost_centers',
                 'sap_status' => 'pending',
                 'sap_error' => null,
