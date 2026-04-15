@@ -171,7 +171,7 @@ class OrderWebhookService
         }
 
         $current = trim((string) ($order->sap_status ?? ''));
-        if (in_array($current, ['', 'ignored', 'pending', 'retrying', 'failed'], true)) {
+        if (in_array($current, ['', 'ignored', 'pending', 'retrying', 'failed', 'running'], true)) {
             $order->sap_status = 'created';
             $order->sap_error = null;
             $order->save();
