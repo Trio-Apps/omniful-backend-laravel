@@ -14,6 +14,7 @@ use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 
 class OmnifulOrderMonitor extends Page implements HasTable
 {
@@ -28,6 +29,13 @@ class OmnifulOrderMonitor extends Page implements HasTable
     protected static ?int $navigationSort = 10;
 
     protected string $view = 'filament.pages.omniful-order-monitor';
+
+    public function getQueuedOrdersCount(): int
+    {
+        return (int) DB::table('jobs')
+            ->where('queue', 'omniful-orders')
+            ->count();
+    }
 
     protected function getTableQuery(): Builder
     {
