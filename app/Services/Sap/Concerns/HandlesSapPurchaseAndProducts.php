@@ -30,8 +30,9 @@ trait HandlesSapPurchaseAndProducts
             : $this->resolveSeriesForDocument('13', $docDate);
         $docDate = $seriesInfo['docDate'];
 
+        // Fast path for sales orders: use the resolved mapped customer directly
+        // and let SAP reject the document clearly if master data is missing.
         $customerCode = $this->resolveOrderCustomerCode($data, $externalId);
-        $customerCode = $this->ensureCustomerExists((string) $customerCode, $data, $externalId);
 
         $lines = [];
         $lineIndex = 0;
@@ -46,9 +47,6 @@ trait HandlesSapPurchaseAndProducts
             if (!$itemCode) {
                 continue;
             }
-
-            $this->ensureItemExists((string) $itemCode, (array) $item, $lineIndex);
-            $this->ensureItemCanBeSold((string) $itemCode, $lineIndex);
 
             $qty = (float) (data_get($item, 'quantity') ?? 0);
             if ($qty <= 0) {
@@ -79,7 +77,7 @@ trait HandlesSapPurchaseAndProducts
             ];
 
             if ($hubCode) {
-                $line['WarehouseCode'] = $this->ensureWarehouseExists((string) $hubCode, $lineIndex);
+                $line['WarehouseCode'] = (string) $hubCode;
             }
 
             $lines[] = $line;
