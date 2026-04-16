@@ -1,6 +1,11 @@
 <x-filament::page>
     <style>
-        .oem-grid {
+        .oem-shell {
+            display: grid;
+            gap: 20px;
+        }
+
+        .oem-stats {
             display: grid;
             grid-template-columns: repeat(4, minmax(0, 1fr));
             gap: 16px;
@@ -9,9 +14,9 @@
         .oem-stat {
             border: 1px solid #e5e7eb;
             border-radius: 16px;
-            background: #fff;
+            background: #ffffff;
             padding: 18px 20px;
-            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+            min-height: 118px;
         }
 
         .oem-stat-label {
@@ -27,51 +32,97 @@
             margin-top: 10px;
             font-size: 30px;
             line-height: 1.05;
-            font-weight: 700;
+            font-weight: 800;
             color: #0f172a;
         }
 
         .oem-stat-subtext {
             margin-top: 10px;
             font-size: 13px;
-            line-height: 19px;
+            line-height: 20px;
             color: #475569;
         }
 
-        .oem-list {
-            display: grid;
-            gap: 16px;
-        }
-
-        .oem-case {
+        .oem-panel {
             border: 1px solid #e5e7eb;
             border-radius: 18px;
-            background: #fff;
-            padding: 18px 20px;
-            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+            background: #ffffff;
+            overflow: hidden;
         }
 
-        .oem-case-head {
-            display: grid;
-            grid-template-columns: minmax(0, 1fr) 180px;
-            gap: 20px;
-            align-items: start;
+        .oem-panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            padding: 16px 20px;
+            border-bottom: 1px solid #e5e7eb;
+            background: #fcfcfd;
         }
 
-        .oem-case-stage-list {
+        .oem-panel-title {
+            font-size: 18px;
+            line-height: 24px;
+            font-weight: 700;
+            color: #0f172a;
+        }
+
+        .oem-panel-note {
+            font-size: 13px;
+            color: #64748b;
+        }
+
+        .oem-table-wrap {
+            overflow-x: auto;
+        }
+
+        .oem-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .oem-table th {
+            text-align: left;
+            vertical-align: top;
+            font-size: 11px;
+            line-height: 16px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #64748b;
+            background: #f8fafc;
+            padding: 12px 14px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .oem-table td {
+            vertical-align: top;
+            padding: 14px;
+            border-bottom: 1px solid #eef2f7;
+            font-size: 13px;
+            line-height: 20px;
+            color: #334155;
+        }
+
+        .oem-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .oem-stage-list,
+        .oem-chip-list {
             display: flex;
             flex-wrap: wrap;
             gap: 8px;
-            margin-bottom: 12px;
         }
 
         .oem-chip {
             display: inline-flex;
             align-items: center;
             gap: 6px;
+            padding: 5px 10px;
             border-radius: 999px;
-            padding: 6px 10px;
             font-size: 12px;
+            line-height: 16px;
             font-weight: 600;
             white-space: nowrap;
         }
@@ -92,45 +143,25 @@
             color: #64748b;
         }
 
-        .oem-case-message {
-            font-size: 20px;
-            line-height: 1.45;
+        .oem-message {
+            font-size: 16px;
+            line-height: 24px;
             font-weight: 700;
             color: #0f172a;
             word-break: break-word;
         }
 
-        .oem-case-meta {
-            text-align: right;
-        }
-
-        .oem-case-meta-label {
-            font-size: 11px;
-            line-height: 16px;
-            font-weight: 700;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            color: #64748b;
-        }
-
-        .oem-case-meta-value {
-            margin-top: 10px;
-            font-size: 18px;
-            line-height: 1.1;
-            font-weight: 700;
+        .oem-count {
+            font-size: 22px;
+            line-height: 28px;
+            font-weight: 800;
             color: #0f172a;
         }
 
-        .oem-case-meta-subtext {
-            margin-top: 8px;
+        .oem-latest {
+            margin-top: 4px;
             font-size: 12px;
             color: #64748b;
-        }
-
-        .oem-case-body {
-            margin-top: 16px;
-            display: grid;
-            gap: 14px;
         }
 
         .oem-orders-toggle {
@@ -138,10 +169,11 @@
             font-size: 13px;
             font-weight: 700;
             color: #0f766e;
+            user-select: none;
         }
 
-        .oem-order-list {
-            margin-top: 12px;
+        .oem-orders-box {
+            margin-top: 10px;
             display: grid;
             gap: 8px;
         }
@@ -150,7 +182,7 @@
             display: flex;
             justify-content: space-between;
             gap: 16px;
-            padding: 12px 14px;
+            padding: 10px 12px;
             border: 1px solid #e5e7eb;
             border-radius: 12px;
             background: #fafafa;
@@ -164,83 +196,38 @@
         }
 
         .oem-order-meta {
-            margin-top: 4px;
+            margin-top: 2px;
             font-size: 12px;
             color: #6b7280;
         }
 
         .oem-order-time {
             font-size: 12px;
-            color: #6b7280;
+            color: #64748b;
             white-space: nowrap;
         }
 
-        .oem-table-wrap {
-            overflow-x: auto;
-            border: 1px solid #e5e7eb;
-            border-radius: 16px;
-            background: #fff;
-        }
-
-        .oem-table {
-            width: 100%;
-            border-collapse: separate;
-            border-spacing: 0;
-        }
-
-        .oem-table th {
-            text-align: left;
-            font-size: 11px;
-            line-height: 16px;
-            font-weight: 700;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            color: #64748b;
-            background: #f8fafc;
-            padding: 12px 14px;
-            border-bottom: 1px solid #e5e7eb;
-        }
-
-        .oem-table td {
-            padding: 14px;
-            border-bottom: 1px solid #eef2f7;
-            font-size: 13px;
-            color: #334155;
-            vertical-align: top;
-        }
-
-        .oem-table tr:last-child td {
-            border-bottom: none;
-        }
-
         .oem-empty {
+            padding: 18px 20px;
             font-size: 14px;
             color: #64748b;
         }
 
-        @media (max-width: 1200px) {
-            .oem-grid {
+        @media (max-width: 1280px) {
+            .oem-stats {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
             }
         }
 
         @media (max-width: 768px) {
-            .oem-grid {
+            .oem-stats {
                 grid-template-columns: 1fr;
-            }
-
-            .oem-case-head {
-                grid-template-columns: 1fr;
-            }
-
-            .oem-case-meta {
-                text-align: left;
             }
         }
     </style>
 
-    <div class="space-y-6">
-        <div class="oem-grid">
+    <div class="oem-shell">
+        <div class="oem-stats">
             @foreach ($summaryCards as $card)
                 <div class="oem-stat">
                     <div class="oem-stat-label">{{ $card['label'] }}</div>
@@ -252,73 +239,90 @@
             @endforeach
         </div>
 
-        <x-filament::section>
-            <x-slot name="heading">Repeated Error Cases</x-slot>
+        <section class="oem-panel">
+            <div class="oem-panel-header">
+                <div class="oem-panel-title">Repeated Error Cases</div>
+                <div class="oem-panel-note">Grouped by normalized SAP message</div>
+            </div>
 
             @if ($errorCases === [])
                 <div class="oem-empty">No captured order errors.</div>
             @else
-                <div class="oem-list">
-                    @foreach ($errorCases as $case)
-                        <div class="oem-case">
-                            <div class="oem-case-head">
-                                <div>
-                                    <div class="oem-case-stage-list">
-                                        @foreach ($case['stages'] as $stage)
-                                            <span class="oem-chip oem-chip-stage">{{ $stage }}</span>
-                                        @endforeach
-                                    </div>
-
-                                    <div class="oem-case-message">{{ $case['message'] }}</div>
-                                </div>
-
-                                <div class="oem-case-meta">
-                                    <div class="oem-case-meta-label">Affected Orders</div>
-                                    <div class="oem-case-meta-value">{{ number_format($case['count']) }}</div>
-                                    <div class="oem-case-meta-subtext">Latest: {{ $case['latest_at'] }}</div>
-                                </div>
-                            </div>
-
-                            <div class="oem-case-body">
-                                @if ($case['top_items'] !== [])
-                                    <div class="oem-case-stage-list">
-                                        @foreach ($case['top_items'] as $item)
-                                            <span class="oem-chip oem-chip-sku">
-                                                {{ $item['sku'] }}
-                                                <span class="oem-chip-muted">{{ $item['count'] }}</span>
-                                            </span>
-                                        @endforeach
-                                    </div>
-                                @endif
-
-                                <details>
-                                    <summary class="oem-orders-toggle">View affected orders</summary>
-
-                                    <div class="oem-order-list">
-                                        @foreach ($case['orders'] as $order)
-                                            <a href="{{ $order['url'] }}" class="oem-order-row">
-                                                <div>
-                                                    <div class="oem-order-id">{{ $order['external_id'] }}</div>
-                                                    <div class="oem-order-meta">
-                                                        Omniful: {{ $order['omniful_status'] ?: '-' }}
-                                                        |
-                                                        SAP: {{ $order['sap_status'] ?: '-' }}
-                                                    </div>
-                                                </div>
-                                                <div class="oem-order-time">{{ $order['last_event_at'] ?: '-' }}</div>
-                                            </a>
-                                        @endforeach
-                                    </div>
-                                </details>
-                            </div>
-                        </div>
-                    @endforeach
+                <div class="oem-table-wrap">
+                    <table class="oem-table">
+                        <thead>
+                            <tr>
+                                <th style="width: 190px;">Stages</th>
+                                <th>Error Message</th>
+                                <th style="width: 260px;">Top SKUs</th>
+                                <th style="width: 150px;">Affected Orders</th>
+                                <th style="width: 180px;">Orders</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach ($errorCases as $case)
+                                <tr>
+                                    <td>
+                                        <div class="oem-stage-list">
+                                            @foreach ($case['stages'] as $stage)
+                                                <span class="oem-chip oem-chip-stage">{{ $stage }}</span>
+                                            @endforeach
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <div class="oem-message">{{ $case['message'] }}</div>
+                                    </td>
+                                    <td>
+                                        @if ($case['top_items'] === [])
+                                            <span class="oem-latest">No repeated SKUs</span>
+                                        @else
+                                            <div class="oem-chip-list">
+                                                @foreach ($case['top_items'] as $item)
+                                                    <span class="oem-chip oem-chip-sku">
+                                                        {{ $item['sku'] }}
+                                                        <span class="oem-chip-muted">{{ $item['count'] }}</span>
+                                                    </span>
+                                                @endforeach
+                                            </div>
+                                        @endif
+                                    </td>
+                                    <td>
+                                        <div class="oem-count">{{ number_format($case['count']) }}</div>
+                                        <div class="oem-latest">Latest: {{ $case['latest_at'] }}</div>
+                                    </td>
+                                    <td>
+                                        <details>
+                                            <summary class="oem-orders-toggle">View orders</summary>
+                                            <div class="oem-orders-box">
+                                                @foreach ($case['orders'] as $order)
+                                                    <a href="{{ $order['url'] }}" class="oem-order-row">
+                                                        <div>
+                                                            <div class="oem-order-id">{{ $order['external_id'] }}</div>
+                                                            <div class="oem-order-meta">
+                                                                Omniful: {{ $order['omniful_status'] ?: '-' }}
+                                                                |
+                                                                SAP: {{ $order['sap_status'] ?: '-' }}
+                                                            </div>
+                                                        </div>
+                                                        <div class="oem-order-time">{{ $order['last_event_at'] ?: '-' }}</div>
+                                                    </a>
+                                                @endforeach
+                                            </div>
+                                        </details>
+                                    </td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
                 </div>
             @endif
-        </x-filament::section>
+        </section>
 
-        <x-filament::section>
-            <x-slot name="heading">Frequent Error Items</x-slot>
+        <section class="oem-panel">
+            <div class="oem-panel-header">
+                <div class="oem-panel-title">Frequent Error Items</div>
+                <div class="oem-panel-note">Top SKUs appearing on errored orders</div>
+            </div>
 
             @if ($topErrorItems === [])
                 <div class="oem-empty">No repeated item patterns on errored orders.</div>
@@ -327,22 +331,26 @@
                     <table class="oem-table">
                         <thead>
                             <tr>
-                                <th>SKU</th>
-                                <th>Affected Orders</th>
+                                <th style="width: 180px;">SKU</th>
+                                <th style="width: 160px;">Affected Orders</th>
                                 <th>Top Error Cases</th>
                             </tr>
                         </thead>
                         <tbody>
                             @foreach ($topErrorItems as $item)
                                 <tr>
-                                    <td style="font-weight: 700; color: #0f172a;">{{ $item['sku'] }}</td>
-                                    <td>{{ number_format($item['count']) }}</td>
+                                    <td>
+                                        <div class="oem-order-id">{{ $item['sku'] }}</div>
+                                    </td>
+                                    <td>
+                                        <div class="oem-count">{{ number_format($item['count']) }}</div>
+                                    </td>
                                     <td>
                                         <div style="display:grid;gap:8px;">
                                             @foreach ($item['top_cases'] as $case)
-                                                <div style="display:flex;justify-content:space-between;gap:12px;">
-                                                    <div style="color:#334155;">{{ $errorCaseLabels[$case['fingerprint']] ?? $case['fingerprint'] }}</div>
-                                                    <div style="color:#64748b;white-space:nowrap;">{{ $case['count'] }}</div>
+                                                <div style="display:grid;grid-template-columns:minmax(0,1fr) 44px;gap:12px;align-items:start;">
+                                                    <div>{{ $errorCaseLabels[$case['fingerprint']] ?? $case['fingerprint'] }}</div>
+                                                    <div style="text-align:right;color:#64748b;">{{ $case['count'] }}</div>
                                                 </div>
                                             @endforeach
                                         </div>
@@ -353,6 +361,6 @@
                     </table>
                 </div>
             @endif
-        </x-filament::section>
+        </section>
     </div>
 </x-filament::page>

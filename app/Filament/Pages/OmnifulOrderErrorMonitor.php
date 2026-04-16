@@ -9,6 +9,8 @@ use Illuminate\Support\Str;
 
 class OmnifulOrderErrorMonitor extends Page
 {
+    protected ?string $maxContentWidth = 'full';
+
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-exclamation-triangle';
 
     protected static ?string $navigationLabel = 'Order Errors';
@@ -273,6 +275,16 @@ class OmnifulOrderErrorMonitor extends Page
 
     private function normalizeErrorMessage(string $raw): array
     {
+        if (preg_match('/cURL error\s+(\d+):/i', $raw, $curlMatches) === 1) {
+            $curlCode = $curlMatches[1];
+
+            if ($curlCode === '28') {
+                return ['message' => '[cURL 28] SAP Service Layer timeout'];
+            }
+
+            return ['message' => '[cURL ' . $curlCode . '] SAP Service Layer request failed'];
+        }
+
         $message = null;
         $code = null;
 
