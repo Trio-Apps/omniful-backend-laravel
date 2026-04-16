@@ -172,6 +172,22 @@
             user-select: none;
         }
 
+        .oem-action {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            min-height: 40px;
+            border: 1px solid #d1d5db;
+            border-radius: 12px;
+            padding: 10px 12px;
+            font-size: 13px;
+            font-weight: 700;
+            color: #334155;
+            text-decoration: none;
+            background: #ffffff;
+        }
+
         .oem-orders-box {
             margin-top: 10px;
             display: grid;
@@ -256,7 +272,7 @@
                                 <th>Error Message</th>
                                 <th style="width: 260px;">Top SKUs</th>
                                 <th style="width: 150px;">Affected Orders</th>
-                                <th style="width: 180px;">Orders</th>
+                                <th style="width: 150px;">Actions</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -291,24 +307,12 @@
                                         <div class="oem-latest">Latest: {{ $case['latest_at'] }}</div>
                                     </td>
                                     <td>
-                                        <details>
-                                            <summary class="oem-orders-toggle">View orders</summary>
-                                            <div class="oem-orders-box">
-                                                @foreach ($case['orders'] as $order)
-                                                    <a href="{{ $order['url'] }}" class="oem-order-row">
-                                                        <div>
-                                                            <div class="oem-order-id">{{ $order['external_id'] }}</div>
-                                                            <div class="oem-order-meta">
-                                                                Omniful: {{ $order['omniful_status'] ?: '-' }}
-                                                                |
-                                                                SAP: {{ $order['sap_status'] ?: '-' }}
-                                                            </div>
-                                                        </div>
-                                                        <div class="oem-order-time">{{ $order['last_event_at'] ?: '-' }}</div>
-                                                    </a>
-                                                @endforeach
-                                            </div>
-                                        </details>
+                                        <a
+                                            href="{{ \App\Filament\Pages\OmnifulOrderErrorCaseView::getUrl(['fingerprint' => $case['fingerprint']]) }}"
+                                            class="oem-action"
+                                        >
+                                            Open Case
+                                        </a>
                                     </td>
                                 </tr>
                             @endforeach
