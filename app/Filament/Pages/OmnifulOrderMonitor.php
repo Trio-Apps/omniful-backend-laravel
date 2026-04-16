@@ -125,6 +125,10 @@ class OmnifulOrderMonitor extends Page implements HasTable
             TextColumn::make('last_event_type')
                 ->label('Last Event')
                 ->toggleable(),
+            TextColumn::make('created_at')
+                ->label('Created At')
+                ->dateTime()
+                ->sortable(),
             TextColumn::make('last_event_at')
                 ->label('Last Event At')
                 ->dateTime()

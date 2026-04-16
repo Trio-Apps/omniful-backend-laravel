@@ -33,13 +33,21 @@
         .po-accordion summary { list-style: none; cursor: pointer; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; font-weight: 700; color: #0f172a; background: #f8fafc; }
         .po-accordion summary::-webkit-details-marker { display: none; }
         .po-accordion summary::after { content: '+'; font-size: 18px; line-height: 1; color: #64748b; }
-        .po-accordion[open] summary::after { content: '−'; }
+        .po-accordion[open] summary::after { content: '-'; }
         .po-accordion__body { padding: 16px; border-top: 1px solid #e5e7eb; }
+        .po-main-accordion { border: 1px solid #e5e7eb; border-radius: 14px; background: #ffffff; overflow: hidden; }
+        .po-main-accordion + .po-main-accordion { margin-top: 22px; }
+        .po-main-accordion summary { list-style: none; cursor: pointer; padding: 18px 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 14px; font-weight: 800; color: #111827; background: #ffffff; }
+        .po-main-accordion summary::-webkit-details-marker { display: none; }
+        .po-main-accordion summary::after { content: '+'; font-size: 20px; line-height: 1; color: #64748b; }
+        .po-main-accordion[open] summary::after { content: '-'; }
+        .po-main-accordion__body { border-top: 1px solid #e5e7eb; background: #ffffff; }
     </style>
 
     <div class="space-y-6">
-        <x-filament::section class="po-section-gap">
-            <x-slot name="heading">Overview</x-slot>
+        <details class="po-main-accordion" open>
+            <summary>Overview</summary>
+            <div class="po-main-accordion__body">
             <div class="po-grid po-grid-3 po-section-pad">
                 <div class="po-card">
                     <div class="po-label">Event</div>
@@ -94,11 +102,15 @@
                     <div class="po-value po-break">{{ $record->sap_credit_note_error ?: ($record->sap_cancel_cogs_error ?: '-') }}</div>
                 </div>
             </div>
-        </x-filament::section>
+            </div>
+        </details>
 
-        <div class="po-grid po-grid-2">
-            <x-filament::section class="po-section-gap">
-                <x-slot name="heading">Customer</x-slot>
+        <details class="po-main-accordion">
+            <summary>Contacts & Addresses</summary>
+            <div class="po-main-accordion__body">
+        <div class="po-grid po-grid-2 po-section-pad">
+            <div class="po-card">
+                <div class="po-label" style="margin-bottom: 12px;">Customer</div>
                 <div class="po-grid po-grid-2 po-section-pad">
                     <div class="po-kv">
                         <div class="po-label">Name</div>
@@ -117,10 +129,10 @@
                         <div class="po-value po-break">{{ data_get($data, 'payment_method', '-') }}</div>
                     </div>
                 </div>
-            </x-filament::section>
+            </div>
 
-            <x-filament::section class="po-section-gap">
-                <x-slot name="heading">Seller</x-slot>
+            <div class="po-card">
+                <div class="po-label" style="margin-bottom: 12px;">Seller</div>
                 <div class="po-grid po-grid-2 po-section-pad">
                     <div class="po-kv">
                         <div class="po-label">Name</div>
@@ -139,12 +151,10 @@
                         <div class="po-value po-break">{{ data_get($data, 'seller.phone', '-') }}</div>
                     </div>
                 </div>
-            </x-filament::section>
-        </div>
+            </div>
 
-        <div class="po-grid po-grid-2">
-            <x-filament::section class="po-section-gap">
-                <x-slot name="heading">Billing Address</x-slot>
+            <div class="po-card">
+                <div class="po-label" style="margin-bottom: 12px;">Billing Address</div>
                 <div class="po-grid po-grid-2 po-section-pad">
                     <div class="po-kv">
                         <div class="po-label">Name</div>
@@ -163,10 +173,10 @@
                         <div class="po-value po-break">{{ data_get($data, 'billing_address.country', '-') }}</div>
                     </div>
                 </div>
-            </x-filament::section>
+            </div>
 
-            <x-filament::section class="po-section-gap">
-                <x-slot name="heading">Shipping Address</x-slot>
+            <div class="po-card">
+                <div class="po-label" style="margin-bottom: 12px;">Shipping Address</div>
                 <div class="po-grid po-grid-2 po-section-pad">
                     <div class="po-kv">
                         <div class="po-label">Name</div>
@@ -185,11 +195,14 @@
                         <div class="po-value po-break">{{ data_get($data, 'shipping_address.country', '-') }}</div>
                     </div>
                 </div>
-            </x-filament::section>
+            </div>
         </div>
+            </div>
+        </details>
 
-        <x-filament::section class="po-section-gap">
-            <x-slot name="heading">Items</x-slot>
+        <details class="po-main-accordion">
+            <summary>Items</summary>
+            <div class="po-main-accordion__body">
             <div class="po-table-wrap po-section-pad">
                 <table class="po-table">
                     <colgroup>
@@ -222,10 +235,12 @@
                     </tbody>
                 </table>
             </div>
-        </x-filament::section>
+            </div>
+        </details>
 
-        <x-filament::section class="po-section-gap">
-            <x-slot name="heading">Process Steps</x-slot>
+        <details class="po-main-accordion" open>
+            <summary>Process Steps</summary>
+            <div class="po-main-accordion__body">
             <div class="po-section-pad space-y-6">
                 <div class="po-progress">
                     <div class="po-progress__meta">
@@ -264,10 +279,12 @@
                 @endforeach
                 </div>
             </div>
-        </x-filament::section>
+            </div>
+        </details>
 
-        <x-filament::section class="po-section-gap">
-            <x-slot name="heading">Omniful Payload</x-slot>
+        <details class="po-main-accordion">
+            <summary>Omniful Payload</summary>
+            <div class="po-main-accordion__body">
             <div class="po-section-pad">
                 <div class="po-card">
                     <div class="po-label">Latest Stored Omniful Payload</div>
@@ -302,10 +319,12 @@
                     </details>
                 </div>
             </div>
-        </x-filament::section>
+            </div>
+        </details>
 
-        <x-filament::section class="po-section-gap">
-            <x-slot name="heading">Step Payload Debug</x-slot>
+        <details class="po-main-accordion">
+            <summary>Step Payload Debug</summary>
+            <div class="po-main-accordion__body">
             <div class="space-y-6 po-section-pad">
                 @foreach ($visibleDebugPayloads as $debugPayload)
                     <div class="po-card">
@@ -320,10 +339,12 @@
                     </div>
                 @endforeach
             </div>
-        </x-filament::section>
+            </div>
+        </details>
 
-        <x-filament::section class="po-section-gap">
-            <x-slot name="heading">SAP Responses</x-slot>
+        <details class="po-main-accordion">
+            <summary>SAP Responses</summary>
+            <div class="po-main-accordion__body">
             <div class="space-y-6 po-section-pad">
                 @foreach ($visibleSapResponses as $sapResponse)
                     <div class="po-card">
@@ -348,6 +369,7 @@
                     </div>
                 @endforeach
             </div>
-        </x-filament::section>
+            </div>
+        </details>
     </div>
 </x-filament::page>
