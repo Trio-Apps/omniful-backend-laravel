@@ -99,7 +99,6 @@ trait HandlesSapPurchaseAndProducts
             'DocDueDate' => $docDate,
             'TaxDate' => $taxDate,
             'DocumentLines' => $lines,
-            'NumAtCard' => $externalId,
             'Comments' => $comments,
             // SAP B1 AR Reserve Invoice via Invoices with ReserveInvoice = tYES
             'ReserveInvoice' => 'tYES',
@@ -688,10 +687,6 @@ trait HandlesSapPurchaseAndProducts
             'Comments' => 'AR Credit Memo from Omniful return ' . ($externalId !== '' ? $externalId : 'event'),
         ];
 
-        if ($externalId !== '') {
-            $body['NumAtCard'] = $externalId;
-        }
-
         $response = $this->post('/CreditNotes', $body);
         if (!$response->successful()) {
             throw new SapRequestException(
@@ -848,10 +843,6 @@ trait HandlesSapPurchaseAndProducts
 
         if ($currency) {
             $body['DocCurrency'] = $currency;
-        }
-
-        if ($displayId) {
-            $body['NumAtCard'] = $displayId;
         }
 
         $response = $this->post('/PurchaseOrders', $body);
