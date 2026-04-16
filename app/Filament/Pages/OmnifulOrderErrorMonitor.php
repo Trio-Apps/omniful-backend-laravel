@@ -92,7 +92,7 @@ class OmnifulOrderErrorMonitor extends Page
                 if (!isset($groups[$fingerprint])) {
                     $groups[$fingerprint] = [
                         'fingerprint' => $fingerprint,
-                        'stage' => $errorEntry['stage'],
+                        'stages' => [],
                         'message' => $errorEntry['message'],
                         'count' => 0,
                         'latest_at' => null,
@@ -102,6 +102,7 @@ class OmnifulOrderErrorMonitor extends Page
                 }
 
                 $groups[$fingerprint]['count']++;
+                $groups[$fingerprint]['stages'][$errorEntry['stage']] = true;
                 $groups[$fingerprint]['orders'][] = [
                     'id' => $order->id,
                     'external_id' => $order->external_id,
@@ -129,6 +130,7 @@ class OmnifulOrderErrorMonitor extends Page
         return collect($groups)
             ->map(function (array $group) {
                 uasort($group['items'], fn (int $a, int $b) => $b <=> $a);
+                $group['stages'] = array_values(array_keys($group['stages']));
                 $group['top_items'] = collect($group['items'])
                     ->take(5)
                     ->map(fn (int $count, string $sku) => ['sku' => $sku, 'count' => $count])
@@ -248,7 +250,7 @@ class OmnifulOrderErrorMonitor extends Page
                 'field' => $field,
                 'stage' => $stage,
                 'message' => $parsed['message'],
-                'fingerprint' => Str::lower($stage . '|' . $parsed['message']),
+                'fingerprint' => Str::lower($parsed['message']),
             ];
         }
 

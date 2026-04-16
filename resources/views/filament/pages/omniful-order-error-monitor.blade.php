@@ -1,12 +1,12 @@
 <x-filament::page>
     <div class="space-y-6">
-        <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;">
+        <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px;margin-bottom:8px;">
             @foreach ($summaryCards as $card)
-                <div style="border:1px solid #e5e7eb;border-radius:16px;background:#ffffff;padding:18px 20px;box-shadow:0 1px 2px rgba(0,0,0,0.04);">
+                <div style="border:1px solid #e5e7eb;border-radius:18px;background:#ffffff;padding:20px 22px;box-shadow:0 1px 2px rgba(0,0,0,0.04);min-height:132px;">
                     <div style="font-size:12px;line-height:16px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b7280;">{{ $card['label'] }}</div>
-                    <div style="margin-top:8px;font-size:28px;line-height:1.1;font-weight:700;color:#111827;">{{ $card['value'] }}</div>
+                    <div style="margin-top:12px;font-size:28px;line-height:1.1;font-weight:700;color:#111827;">{{ $card['value'] }}</div>
                     @if (!empty($card['subtext']))
-                        <div style="margin-top:8px;font-size:13px;line-height:18px;color:#4b5563;">{{ $card['subtext'] }}</div>
+                        <div style="margin-top:12px;font-size:13px;line-height:20px;color:#4b5563;">{{ $card['subtext'] }}</div>
                     @endif
                 </div>
             @endforeach
@@ -18,25 +18,32 @@
             @if ($errorCases === [])
                 <div class="text-sm text-gray-600">No captured order errors.</div>
             @else
-                <div class="space-y-4">
+                <div class="space-y-5">
                     @foreach ($errorCases as $case)
-                        <div style="border:1px solid #e5e7eb;border-radius:16px;background:#ffffff;padding:18px 20px;">
-                            <div style="display:flex;justify-content:space-between;gap:16px;align-items:flex-start;">
-                                <div style="min-width:0;">
-                                    <div style="font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b7280;">{{ $case['stage'] }}</div>
-                                    <div style="margin-top:8px;font-size:16px;font-weight:700;color:#111827;word-break:break-word;">{{ $case['message'] }}</div>
+                        <div style="border:1px solid #e5e7eb;border-radius:18px;background:#ffffff;padding:22px 22px 20px;">
+                            <div style="display:flex;justify-content:space-between;gap:24px;align-items:flex-start;">
+                                <div style="min-width:0;flex:1;">
+                                    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+                                        @foreach ($case['stages'] as $stage)
+                                            <span style="display:inline-flex;align-items:center;border:1px solid #d1d5db;background:#f9fafb;color:#475569;border-radius:999px;padding:5px 10px;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;">
+                                                {{ $stage }}
+                                            </span>
+                                        @endforeach
+                                    </div>
+
+                                    <div style="font-size:20px;line-height:1.5;font-weight:700;color:#111827;word-break:break-word;">{{ $case['message'] }}</div>
                                 </div>
                                 <div style="text-align:right;flex-shrink:0;">
                                     <div style="font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b7280;">Affected Orders</div>
-                                    <div style="margin-top:8px;font-size:28px;line-height:1;font-weight:700;color:#111827;">{{ number_format($case['count']) }}</div>
-                                    <div style="margin-top:8px;font-size:12px;color:#6b7280;">Latest: {{ $case['latest_at'] }}</div>
+                                    <div style="margin-top:10px;font-size:28px;line-height:1;font-weight:700;color:#111827;">{{ number_format($case['count']) }}</div>
+                                    <div style="margin-top:12px;font-size:12px;color:#6b7280;">Latest: {{ $case['latest_at'] }}</div>
                                 </div>
                             </div>
 
                             @if ($case['top_items'] !== [])
-                                <div style="margin-top:14px;display:flex;flex-wrap:wrap;gap:8px;">
+                                <div style="margin-top:18px;display:flex;flex-wrap:wrap;gap:10px;">
                                     @foreach ($case['top_items'] as $item)
-                                        <span style="display:inline-flex;align-items:center;gap:6px;border:1px solid #dbeafe;background:#eff6ff;color:#1d4ed8;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:600;">
+                                        <span style="display:inline-flex;align-items:center;gap:6px;border:1px solid #dbeafe;background:#eff6ff;color:#1d4ed8;border-radius:999px;padding:7px 12px;font-size:12px;font-weight:600;">
                                             {{ $item['sku'] }}
                                             <span style="color:#64748b;">{{ $item['count'] }}</span>
                                         </span>
@@ -44,9 +51,9 @@
                                 </div>
                             @endif
 
-                            <details style="margin-top:14px;">
+                            <details style="margin-top:18px;">
                                 <summary style="cursor:pointer;font-size:13px;font-weight:700;color:#0f766e;">View affected orders</summary>
-                                <div style="margin-top:12px;display:grid;gap:10px;">
+                                <div style="margin-top:14px;display:grid;gap:10px;">
                                     @foreach ($case['orders'] as $order)
                                         <a href="{{ $order['url'] }}" style="display:flex;justify-content:space-between;gap:16px;border:1px solid #e5e7eb;border-radius:12px;padding:12px 14px;text-decoration:none;background:#fafafa;">
                                             <div>
