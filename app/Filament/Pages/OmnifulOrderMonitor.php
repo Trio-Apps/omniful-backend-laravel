@@ -4,6 +4,7 @@ namespace App\Filament\Pages;
 
 use App\Models\OmnifulOrder;
 use App\Filament\Pages\OmnifulOrderView;
+use App\Filament\Pages\OmnifulOrderErrorMonitor;
 use App\Services\Webhooks\WebhookRetryService;
 use Filament\Actions\Action;
 use Filament\Notifications\Notification;
@@ -119,16 +120,6 @@ class OmnifulOrderMonitor extends Page implements HasTable
                     default => 'gray',
                 })
                 ->toggleable(isToggledHiddenByDefault: true),
-            TextColumn::make('sap_credit_note_status')
-                ->label('Credit Note')
-                ->badge()
-                ->color(fn ($state) => match ($state) {
-                    'created', 'updated', 'logged' => 'success',
-                    'failed' => 'danger',
-                    'ignored', 'blocked', 'pending', 'retrying' => 'warning',
-                    default => 'gray',
-                })
-                ->toggleable(),
             TextColumn::make('last_event_type')
                 ->label('Last Event')
                 ->toggleable(),
@@ -211,6 +202,11 @@ class OmnifulOrderMonitor extends Page implements HasTable
     protected function getHeaderActions(): array
     {
         return [
+            Action::make('errorMonitoring')
+                ->label('Error Monitoring')
+                ->icon('heroicon-o-exclamation-triangle')
+                ->color('gray')
+                ->url(OmnifulOrderErrorMonitor::getUrl()),
             Action::make('retryFailedOrders')
                 ->label('Retry Failed Orders')
                 ->icon('heroicon-o-arrow-path')
