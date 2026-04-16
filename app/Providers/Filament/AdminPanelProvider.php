@@ -41,9 +41,9 @@ class AdminPanelProvider extends PanelProvider
             ])
             ->navigationGroups([
                 'Master Data',
-                'SAP Catalog',
                 'Monitoring',
                 'Settings',
+                'SAP Catalog',
             ])
             ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\Filament\Widgets')
             ->widgets([
