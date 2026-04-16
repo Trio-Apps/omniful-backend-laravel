@@ -260,6 +260,19 @@
         </x-filament::section>
 
         <x-filament::section class="po-section-gap">
+            <x-slot name="heading">Omniful Payload</x-slot>
+            <div class="po-section-pad">
+                <div class="po-card">
+                    <div class="po-label">Latest Stored Omniful Payload</div>
+                    <div class="po-value" style="margin-bottom: 12px;">
+                        <span class="po-badge po-badge--gray">{{ data_get($payload, 'event_name', $record->last_event_type ?: 'event') }}</span>
+                    </div>
+                    <pre class="po-debug">{{ json_encode($payload ?: ['message' => 'No Omniful payload stored yet'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) }}</pre>
+                </div>
+            </div>
+        </x-filament::section>
+
+        <x-filament::section class="po-section-gap">
             <x-slot name="heading">Step Payload Debug</x-slot>
             <div class="space-y-6 po-section-pad">
                 @foreach ($visibleDebugPayloads as $debugPayload)
