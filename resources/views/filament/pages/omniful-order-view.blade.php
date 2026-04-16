@@ -28,6 +28,13 @@
         .po-progress__bar { width: 100%; height: 10px; background: #e5e7eb; border-radius: 999px; overflow: hidden; margin-top: 10px; }
         .po-progress__fill { height: 100%; background: linear-gradient(90deg, #0f766e, #14b8a6); border-radius: 999px; }
         .po-progress__meta { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+        .po-accordion { border: 1px solid #e5e7eb; border-radius: 10px; background: #ffffff; overflow: hidden; }
+        .po-accordion + .po-accordion { margin-top: 14px; }
+        .po-accordion summary { list-style: none; cursor: pointer; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; font-weight: 700; color: #0f172a; background: #f8fafc; }
+        .po-accordion summary::-webkit-details-marker { display: none; }
+        .po-accordion summary::after { content: '+'; font-size: 18px; line-height: 1; color: #64748b; }
+        .po-accordion[open] summary::after { content: '−'; }
+        .po-accordion__body { padding: 16px; border-top: 1px solid #e5e7eb; }
     </style>
 
     <div class="space-y-6">
@@ -267,7 +274,32 @@
                     <div class="po-value" style="margin-bottom: 12px;">
                         <span class="po-badge po-badge--gray">{{ data_get($payload, 'event_name', $record->last_event_type ?: 'event') }}</span>
                     </div>
-                    <pre class="po-debug">{{ json_encode($payload ?: ['message' => 'No Omniful payload stored yet'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) }}</pre>
+                    @php
+                        $payloadRoot = $payload;
+                        $payloadData = data_get($payload, 'data');
+                        $payloadItems = data_get($payload, 'data.order_items', data_get($payload, 'data.items', []));
+                    @endphp
+
+                    <details class="po-accordion" open>
+                        <summary>Root Payload</summary>
+                        <div class="po-accordion__body">
+                            <pre class="po-debug">{{ json_encode($payloadRoot ?: ['message' => 'No Omniful payload stored yet'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) }}</pre>
+                        </div>
+                    </details>
+
+                    <details class="po-accordion">
+                        <summary>Data Section</summary>
+                        <div class="po-accordion__body">
+                            <pre class="po-debug">{{ json_encode($payloadData ?: ['message' => 'No data section found'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) }}</pre>
+                        </div>
+                    </details>
+
+                    <details class="po-accordion">
+                        <summary>Items Section</summary>
+                        <div class="po-accordion__body">
+                            <pre class="po-debug">{{ json_encode($payloadItems ?: ['message' => 'No items found'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) }}</pre>
+                        </div>
+                    </details>
                 </div>
             </div>
         </x-filament::section>
