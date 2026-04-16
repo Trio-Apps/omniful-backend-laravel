@@ -25,12 +25,6 @@ trait HandlesSapPurchaseAndProducts
         ]);
         $currency = data_get($data, 'invoice.currency') ?? data_get($data, 'currency');
         $hubCode = $this->resolveOrderWarehouseCode(data_get($data, 'hub_code'));
-        $preferredSeries = $this->getPreferredSeriesId('13');
-        $seriesInfo = $preferredSeries !== null
-            ? ['series' => $preferredSeries, 'docDate' => $docDate, 'indicator' => 'preferred']
-            : $this->resolveSeriesForDocument('13', $docDate);
-        $docDate = $seriesInfo['docDate'];
-
         // Fast path for sales orders: use the resolved mapped customer directly
         // and let SAP reject the document clearly if master data is missing.
         $customerCode = $this->resolveOrderCustomerCode($data, $externalId);
@@ -111,19 +105,12 @@ trait HandlesSapPurchaseAndProducts
             'ReserveInvoice' => 'tYES',
         ];
 
-        if ($seriesInfo['series']) {
-            $body['Series'] = $seriesInfo['series'];
-        }
-
         if ($currency) {
             $body['DocCurrency'] = $currency;
         }
 
         $usedReserveInvoiceFallback = false;
         $response = $this->postArOrderWithReserveFallback($body, $usedReserveInvoiceFallback);
-        if (!$response->successful() && $this->isSapSeriesPeriodMismatchError((string) $response->body())) {
-            $response = $this->retryArOrderWithDynamicSeries($body, $docDate, $usedReserveInvoiceFallback);
-        }
         if (!$response->successful() && $this->isSapUomCodeRequiredError((string) $response->body())) {
             $response = $this->retryArOrderWithResolvedUom($body, $usedReserveInvoiceFallback);
         }
@@ -322,12 +309,6 @@ trait HandlesSapPurchaseAndProducts
             'order_created_at',
             'created_at',
         ]);
-        $series = null;
-        try {
-            $series = $this->getDefaultSeries('15');
-        } catch (\Throwable $e) {
-            $series = null;
-        }
         $taxDate = $this->resolveOrderTaxDate($data, $docDate, [
             'delivery_date',
             'shipment.delivery_date',
@@ -384,10 +365,6 @@ trait HandlesSapPurchaseAndProducts
             'Comments' => 'Delivery from Omniful order ' . $externalId,
             'DocumentLines' => $lines,
         ];
-
-        if ($series) {
-            $body['Series'] = $series;
-        }
 
         $response = $this->post('/DeliveryNotes', $body);
         if (!$response->successful()) {
@@ -656,8 +633,6 @@ trait HandlesSapPurchaseAndProducts
             'updated_at',
             'created_at',
         ]);
-        $seriesInfo = $this->resolveSeriesForDocument('14', $docDate);
-        $docDate = $seriesInfo['docDate'];
         $taxDate = $this->resolveOrderTaxDate($data, $docDate, [
             'document_date',
             'updated_at',
@@ -712,10 +687,6 @@ trait HandlesSapPurchaseAndProducts
             'DocumentLines' => $documentLines,
             'Comments' => 'AR Credit Memo from Omniful return ' . ($externalId !== '' ? $externalId : 'event'),
         ];
-
-        if ($seriesInfo['series']) {
-            $body['Series'] = $seriesInfo['series'];
-        }
 
         if ($externalId !== '') {
             $body['NumAtCard'] = $externalId;
@@ -814,11 +785,6 @@ trait HandlesSapPurchaseAndProducts
             'document_date',
             'created_at',
         ]);
-        $preferredSeries = $this->getPreferredSeriesId('22');
-        $seriesInfo = $preferredSeries !== null
-            ? ['series' => $preferredSeries, 'docDate' => $docDate, 'indicator' => 'preferred']
-            : $this->resolveSeriesForDocument('22', $docDate);
-        $docDate = $seriesInfo['docDate'];
         $dueDate = $docDate;
         $taxDate = $this->resolveOrderTaxDate($data, $docDate, [
             'document_date',
@@ -827,8 +793,6 @@ trait HandlesSapPurchaseAndProducts
         $currency = data_get($data, 'currency');
         $hubCode = data_get($data, 'hub_code');
         $displayId = data_get($data, 'display_id');
-        $series = $seriesInfo['series'];
-        $seriesIndicator = $seriesInfo['indicator'];
 
         $supplierCode = $this->resolvePurchaseOrderSupplierCode($data);
         $supplierCode = $this->ensureSupplierExists($supplierCode, $data);
@@ -868,9 +832,6 @@ trait HandlesSapPurchaseAndProducts
         $lines = $this->applyDefaultCostCentersToLines($lines);
 
         $comments = $displayId ? ('Omniful PO ' . $displayId) : 'Omniful PO';
-        if ($seriesIndicator && $seriesIndicator !== substr($docDate, 0, 4)) {
-            $comments .= ' | Series period ' . $seriesIndicator . ', DocDate ' . $docDate;
-        }
         if ($currency && !$this->isValidCurrency($currency)) {
             $comments .= ' | Currency ' . $currency . ' not found in SAP; using local currency';
             $currency = null;
@@ -885,10 +846,6 @@ trait HandlesSapPurchaseAndProducts
             'Comments' => $comments,
         ];
 
-        if ($series) {
-            $body['Series'] = $series;
-        }
-
         if ($currency) {
             $body['DocCurrency'] = $currency;
         }
@@ -902,19 +859,12 @@ trait HandlesSapPurchaseAndProducts
             $this->ensureSupplierIsActive($supplierCode, $data);
             $response = $this->post('/PurchaseOrders', $body);
         }
-        if (!$response->successful() && $this->isSapSeriesPeriodMismatchError($response->body())) {
-            $response = $this->retryPurchaseOrderWithDynamicSeries($body, $docDate);
-        }
         if (!$response->successful() && $this->isSapUomCodeRequiredError($response->body())) {
             $response = $this->retryPurchaseOrderWithResolvedUom($body);
         }
 
         if (!$response->successful()) {
             throw new \RuntimeException('SAP PO create failed: ' . $response->status() . ' ' . $response->body());
-        }
-
-        if (isset($body['Series']) && is_numeric($body['Series'])) {
-            $this->rememberPreferredSeriesId('22', (int) $body['Series']);
         }
 
         return $response->json() ?? [];

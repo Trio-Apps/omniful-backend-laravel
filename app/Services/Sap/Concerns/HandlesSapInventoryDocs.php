@@ -180,8 +180,6 @@ trait HandlesSapInventoryDocs
         }
 
         $docDate = now()->format('Y-m-d');
-        $seriesInfo = $this->resolveSeriesForDocument('59', $docDate);
-        $docDate = $seriesInfo['docDate'];
 
         $body = [
             'DocDate' => $docDate,
@@ -190,15 +188,7 @@ trait HandlesSapInventoryDocs
             'DocumentLines' => $lines,
         ];
 
-        if ($seriesInfo['series']) {
-            $body['Series'] = $seriesInfo['series'];
-        }
-
         $response = $this->post('/InventoryGenEntries', $body);
-        if (!$response->successful() && $this->shouldRetryWithoutSeries($response->body())) {
-            unset($body['Series']);
-            $response = $this->post('/InventoryGenEntries', $body);
-        }
 
         if (!$response->successful()) {
             throw new \RuntimeException(
@@ -221,8 +211,6 @@ trait HandlesSapInventoryDocs
         }
 
         $docDate = now()->format('Y-m-d');
-        $seriesInfo = $this->resolveSeriesForDocument('60', $docDate);
-        $docDate = $seriesInfo['docDate'];
 
         $body = [
             'DocDate' => $docDate,
@@ -231,15 +219,7 @@ trait HandlesSapInventoryDocs
             'DocumentLines' => $lines,
         ];
 
-        if ($seriesInfo['series']) {
-            $body['Series'] = $seriesInfo['series'];
-        }
-
         $response = $this->post('/InventoryGenExits', $body);
-        if (!$response->successful() && $this->shouldRetryWithoutSeries($response->body())) {
-            unset($body['Series']);
-            $response = $this->post('/InventoryGenExits', $body);
-        }
 
         if (!$response->successful()) {
             throw new \RuntimeException(
@@ -302,8 +282,6 @@ trait HandlesSapInventoryDocs
         }
 
         $docDate = now()->format('Y-m-d');
-        $seriesInfo = $this->resolveSeriesForDocument('67', $docDate);
-        $docDate = $seriesInfo['docDate'];
 
         $body = [
             'DocDate' => $docDate,
@@ -312,10 +290,6 @@ trait HandlesSapInventoryDocs
             'Comments' => $remarks !== '' ? $remarks : 'Stock transfer from Omniful',
             'StockTransferLines' => $lines,
         ];
-
-        if ($seriesInfo['series']) {
-            $body['Series'] = $seriesInfo['series'];
-        }
 
         $response = $this->post('/StockTransfers', $body);
         if (!$response->successful()) {
