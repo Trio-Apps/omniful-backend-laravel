@@ -14,8 +14,6 @@ use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Support\Facades\DB;
-
 class OmnifulOrderMonitor extends Page implements HasTable
 {
     use InteractsWithTable;
@@ -32,8 +30,15 @@ class OmnifulOrderMonitor extends Page implements HasTable
 
     public function getQueuedOrdersCount(): int
     {
-        return (int) DB::table('jobs')
-            ->where('queue', 'omniful-orders')
+        return (int) OmnifulOrder::query()
+            ->whereIn('sap_status', ['pending', 'running', 'retrying'])
+            ->count();
+    }
+
+    public function getFailedOrdersCount(): int
+    {
+        return (int) OmnifulOrder::query()
+            ->where('sap_status', 'failed')
             ->count();
     }
 
@@ -192,6 +197,46 @@ class OmnifulOrderMonitor extends Page implements HasTable
                 ->modalContent(fn ($record) => view('filament.pages.sap-sync-error', [
                     'error' => $record->sap_error,
                 ])),
+        ];
+    }
+
+    protected function getHeaderActions(): array
+    {
+        return [
+            Action::make('retryFailedOrders')
+                ->label('Retry Failed Orders')
+                ->icon('heroicon-o-arrow-path')
+                ->color('warning')
+                ->visible(fn () => $this->getFailedOrdersCount() > 0)
+                ->requiresConfirmation()
+                ->modalHeading('Retry Failed Orders')
+                ->modalDescription(fn () => 'This will queue retry for ' . number_format($this->getFailedOrdersCount()) . ' failed order(s).')
+                ->modalSubmitActionLabel('Retry Failed Orders')
+                ->action(function () {
+                    $retryService = app(WebhookRetryService::class);
+                    $queued = 0;
+                    $failed = 0;
+
+                    OmnifulOrder::query()
+                        ->where('sap_status', 'failed')
+                        ->orderBy('id')
+                        ->chunkById(100, function ($orders) use ($retryService, &$queued, &$failed) {
+                            foreach ($orders as $order) {
+                                $result = $retryService->retryLatestOrderEventForOrder($order);
+                                if ($result['ok']) {
+                                    $queued++;
+                                } else {
+                                    $failed++;
+                                }
+                            }
+                        });
+
+                    Notification::make()
+                        ->title('Failed order retry finished')
+                        ->body('Queued: ' . number_format($queued) . ($failed > 0 ? ' | Skipped: ' . number_format($failed) : ''))
+                        ->success()
+                        ->send();
+                }),
         ];
     }
 }
