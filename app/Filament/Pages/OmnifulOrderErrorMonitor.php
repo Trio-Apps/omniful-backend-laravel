@@ -4,12 +4,13 @@ namespace App\Filament\Pages;
 
 use App\Models\OmnifulOrder;
 use Filament\Pages\Page;
+use Filament\Support\Enums\Width;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 
 class OmnifulOrderErrorMonitor extends Page
 {
-    protected ?string $maxContentWidth = 'full';
+    protected Width | string | null $maxContentWidth = 'full';
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-exclamation-triangle';
 
