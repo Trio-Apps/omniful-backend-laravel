@@ -82,6 +82,10 @@ class OmnifulOrderErrorMonitor extends Page
             $seenFingerprints = [];
 
             foreach ($this->extractOrderErrors($order) as $errorEntry) {
+                if ($this->shouldIgnoreErrorEntry($errorEntry)) {
+                    continue;
+                }
+
                 $fingerprint = $errorEntry['fingerprint'];
                 if (isset($seenFingerprints[$fingerprint])) {
                     continue;
@@ -153,6 +157,7 @@ class OmnifulOrderErrorMonitor extends Page
 
         foreach ($orders as $order) {
             $caseFingerprints = collect($this->extractOrderErrors($order))
+                ->reject(fn (array $entry) => $this->shouldIgnoreErrorEntry($entry))
                 ->pluck('fingerprint')
                 ->unique()
                 ->values()
@@ -285,6 +290,20 @@ class OmnifulOrderErrorMonitor extends Page
         }
 
         return ['message' => $message];
+    }
+
+    private function shouldIgnoreErrorEntry(array $entry): bool
+    {
+        $message = Str::lower((string) ($entry['message'] ?? ''));
+
+        if ($message === '') {
+            return true;
+        }
+
+        return str_contains($message, 'ignored:')
+            || str_contains($message, 'no sap action required')
+            || str_contains($message, 'unmapped order event/status/payment')
+            || str_contains($message, 'sto packed event is not part of ar reserve invoice flow');
     }
 
     private function extractOrderSkus(array $payload): array
