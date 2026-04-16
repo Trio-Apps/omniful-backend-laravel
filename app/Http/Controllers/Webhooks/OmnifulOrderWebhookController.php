@@ -25,14 +25,6 @@ class OmnifulOrderWebhookController extends OmnifulWebhookBase
             return response()->json(['status' => 'ok', 'id' => $event->id, 'duplicate' => true]);
         }
 
-        if (!empty($event->external_id)) {
-            OmnifulOrder::where('external_id', $event->external_id)
-                ->update([
-                    'sap_status' => 'pending',
-                    'sap_error' => null,
-                ]);
-        }
-
         $service = app(OrderWebhookService::class);
         $classification = $service->classifyEventForProcessing($event);
         if (!($classification['queue'] ?? false)) {
@@ -44,6 +36,25 @@ class OmnifulOrderWebhookController extends OmnifulWebhookBase
                 'ignored' => ($result['action'] ?? '') === 'ignored',
                 'message' => $result['message'] ?? 'No SAP action required',
             ]);
+        }
+
+        if (!empty($event->external_id)) {
+            OmnifulOrder::where('external_id', $event->external_id)
+                ->where(function ($query) {
+                    $query
+                        ->where(function ($docEntryQuery) {
+                            $docEntryQuery->whereNull('sap_doc_entry')
+                                ->orWhere('sap_doc_entry', '');
+                        })
+                        ->where(function ($docNumQuery) {
+                            $docNumQuery->whereNull('sap_doc_num')
+                                ->orWhere('sap_doc_num', '');
+                        });
+                })
+                ->update([
+                    'sap_status' => 'pending',
+                    'sap_error' => null,
+                ]);
         }
 
         ProcessOmnifulOrderEvent::dispatch($event->id);
