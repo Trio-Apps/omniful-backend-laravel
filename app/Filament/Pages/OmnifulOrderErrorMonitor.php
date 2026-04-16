@@ -15,7 +15,7 @@ class OmnifulOrderErrorMonitor extends Page
 
     protected static string | \UnitEnum | null $navigationGroup = 'Monitoring';
 
-    protected static ?int $navigationSort = 11;
+    protected static ?int $navigationSort = 99;
 
     protected string $view = 'filament.pages.omniful-order-error-monitor';
 
