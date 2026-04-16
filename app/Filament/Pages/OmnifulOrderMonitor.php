@@ -14,6 +14,7 @@ use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 class OmnifulOrderMonitor extends Page implements HasTable
 {
     use InteractsWithTable;
@@ -32,6 +33,13 @@ class OmnifulOrderMonitor extends Page implements HasTable
     {
         return (int) OmnifulOrder::query()
             ->whereIn('sap_status', ['pending', 'running', 'retrying'])
+            ->count();
+    }
+
+    public function getQueuedTransactionsCount(): int
+    {
+        return (int) DB::table('jobs')
+            ->where('queue', 'omniful-orders')
             ->count();
     }
 
