@@ -342,7 +342,7 @@
             </div>
         </details>
 
-        <details class="po-main-accordion" open>
+        <details class="po-main-accordion">
             <summary>SAP Responses</summary>
             <div class="po-main-accordion__body">
             <div class="space-y-6 po-section-pad">
