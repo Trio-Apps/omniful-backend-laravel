@@ -105,7 +105,7 @@
             </div>
         </details>
 
-        <details class="po-main-accordion">
+        <details class="po-main-accordion" open>
             <summary>Contacts & Addresses</summary>
             <div class="po-main-accordion__body">
         <div class="po-grid po-grid-2 po-section-pad">
@@ -200,7 +200,7 @@
             </div>
         </details>
 
-        <details class="po-main-accordion">
+        <details class="po-main-accordion" open>
             <summary>Items</summary>
             <div class="po-main-accordion__body">
             <div class="po-table-wrap po-section-pad">
@@ -342,7 +342,7 @@
             </div>
         </details>
 
-        <details class="po-main-accordion">
+        <details class="po-main-accordion" open>
             <summary>SAP Responses</summary>
             <div class="po-main-accordion__body">
             <div class="space-y-6 po-section-pad">

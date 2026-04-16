@@ -51,11 +51,19 @@ class OmnifulOrderMonitor extends Page implements HasTable
             ->count();
     }
 
+    protected function getDefaultTableSortColumn(): ?string
+    {
+        return 'created_at';
+    }
+
+    protected function getDefaultTableSortDirection(): ?string
+    {
+        return 'desc';
+    }
+
     protected function getTableQuery(): Builder
     {
-        $query = OmnifulOrder::query()
-            ->orderByDesc('created_at')
-            ->orderByDesc('id');
+        $query = OmnifulOrder::query();
 
         $sapStatusFilter = data_get($this, 'tableFilters.sap_status.values');
         if (!is_array($sapStatusFilter)) {
