@@ -53,7 +53,9 @@ class OmnifulOrderMonitor extends Page implements HasTable
 
     protected function getTableQuery(): Builder
     {
-        $query = OmnifulOrder::query()->orderByDesc('last_event_at');
+        $query = OmnifulOrder::query()
+            ->orderByDesc('last_event_at')
+            ->orderByDesc('id');
 
         $sapStatusFilter = data_get($this, 'tableFilters.sap_status.values');
         if (!is_array($sapStatusFilter)) {
