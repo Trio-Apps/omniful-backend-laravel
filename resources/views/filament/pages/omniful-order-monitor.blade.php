@@ -1,13 +1,13 @@
 <x-filament::page>
-    <div class="mb-4 grid gap-4 md:grid-cols-2">
-        <div class="rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm dark:border-white/10 dark:bg-gray-900">
-            <div class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">In Queue Orders</div>
-            <div class="mt-1 text-2xl font-semibold text-gray-900 dark:text-white">{{ number_format($this->getQueuedOrdersCount()) }}</div>
+    <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-bottom:16px;">
+        <div style="border:1px solid #e5e7eb;border-radius:16px;background:#ffffff;padding:18px 20px;box-shadow:0 1px 2px rgba(0,0,0,0.04);">
+            <div style="font-size:12px;line-height:16px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b7280;">In Queue Orders</div>
+            <div style="margin-top:8px;font-size:32px;line-height:1;font-weight:700;color:#111827;">{{ number_format($this->getQueuedOrdersCount()) }}</div>
         </div>
 
-        <div class="rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm dark:border-white/10 dark:bg-gray-900">
-            <div class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Failed Orders</div>
-            <div class="mt-1 text-2xl font-semibold text-gray-900 dark:text-white">{{ number_format($this->getFailedOrdersCount()) }}</div>
+        <div style="border:1px solid #e5e7eb;border-radius:16px;background:#ffffff;padding:18px 20px;box-shadow:0 1px 2px rgba(0,0,0,0.04);">
+            <div style="font-size:12px;line-height:16px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b7280;">Failed Orders</div>
+            <div style="margin-top:8px;font-size:32px;line-height:1;font-weight:700;color:#111827;">{{ number_format($this->getFailedOrdersCount()) }}</div>
         </div>
     </div>
 
