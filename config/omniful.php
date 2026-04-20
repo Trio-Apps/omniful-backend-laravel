@@ -160,6 +160,14 @@ return [
     'order_payment' => [
         'enabled' => (bool) env('OMNIFUL_ORDER_PAYMENT_ENABLED', true),
         'transfer_account' => env('OMNIFUL_INCOMING_PAYMENT_TRANSFER_ACCOUNT', ''),
+        'method_transfer_accounts' => [
+            'visa' => 'CC',
+            'master' => 'CC',
+            'mastercard' => 'CC',
+            'tamara' => 'CC',
+            'tabby' => 'CC',
+            'tab' => 'CC',
+        ],
         'invoice_type_candidates' => array_values(array_filter(array_map(
             fn ($v) => is_numeric(trim((string) $v)) ? (int) trim((string) $v) : null,
             explode(',', (string) env('OMNIFUL_INCOMING_PAYMENT_INVOICE_TYPES', '17,13'))
@@ -180,8 +188,16 @@ return [
         'status_udf_field' => env('OMNIFUL_ORDER_STATUS_UDF_FIELD', ''),
         'event_udf_field' => env('OMNIFUL_ORDER_EVENT_UDF_FIELD', ''),
         'updated_at_udf_field' => env('OMNIFUL_ORDER_UPDATED_AT_UDF_FIELD', ''),
-        'order_number_udf_field' => env('OMNIFUL_ORDER_NUMBER_UDF_FIELD', 'U_omo'),
-        'channel_udf_field' => env('OMNIFUL_ORDER_CHANNEL_UDF_FIELD', 'U_omChannel'),
+        'order_number_udf_field' => 'U_omo',
+        'channel_udf_field' => 'U_omChannel',
+    ],
+    'order_tax' => [
+        'ksa_taxable_code' => 'SOV',
+        'ksa_zero_tax_code' => 'EOV',
+        'foreign_code' => 'EOV',
+    ],
+    'order_freight' => [
+        'expense_code' => 1,
     ],
     'order_fallback' => [
         'customer_code' => env('OMNIFUL_FALLBACK_CUSTOMER_CODE', ''),

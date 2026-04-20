@@ -71,6 +71,11 @@ trait HandlesSapPurchaseAndProducts
                 'UnitPrice' => $this->roundSapAmount((float) ($unitPrice ?? 0)),
             ];
 
+            $taxCode = $this->resolveSapTaxCodeForOrderLine($data, (array) $item);
+            if ($taxCode !== '') {
+                $line['VatGroup'] = $taxCode;
+            }
+
             if ($hubCode) {
                 $line['WarehouseCode'] = (string) $hubCode;
             }
@@ -111,6 +116,7 @@ trait HandlesSapPurchaseAndProducts
         }
 
         $body = $this->appendOmnifulDocumentUdfs($body, $data, $externalId);
+        $body = $this->appendFreightToMarketingDocument($body, $data);
 
         $usedReserveInvoiceFallback = false;
         $response = $this->postArOrderWithReserveFallback($body, $usedReserveInvoiceFallback);
@@ -659,11 +665,11 @@ trait HandlesSapPurchaseAndProducts
             if ($cardCode === '') {
                 $cardCode = (string) ($order['CardCode'] ?? '');
             }
-            $documentLines = $this->buildDirectCreditLines($items, $hubCode);
+            $documentLines = $this->buildDirectCreditLines($items, $hubCode, $data);
         }
 
         if ($documentLines === []) {
-            $documentLines = $this->buildDirectCreditLines($items, $hubCode);
+            $documentLines = $this->buildDirectCreditLines($items, $hubCode, $data);
         }
 
         if ($cardCode === '') {
@@ -829,6 +835,11 @@ trait HandlesSapPurchaseAndProducts
                 'Quantity' => $this->roundSapQuantity($quantity),
                 'UnitPrice' => $this->roundSapAmount($this->resolvePurchaseOrderLineUnitPrice((array) $item)),
             ];
+
+            $taxCode = $this->resolveSapTaxCodeForOrderLine($data, (array) $item);
+            if ($taxCode !== '') {
+                $line['VatGroup'] = $taxCode;
+            }
 
             if ($hubCode) {
                 $line['WarehouseCode'] = $this->ensureWarehouseExists($hubCode, $lineIndex);
@@ -1325,6 +1336,11 @@ trait HandlesSapPurchaseAndProducts
                 'Quantity' => $this->roundSapQuantity($quantity),
                 'UnitPrice' => $this->roundSapAmount($this->resolvePurchaseOrderLineUnitPrice((array) $item)),
             ];
+
+            $taxCode = $this->resolveSapTaxCodeForOrderLine($data, (array) $item);
+            if ($taxCode !== '') {
+                $line['VatGroup'] = $taxCode;
+            }
 
             $lineWarehouse = trim((string) (
                 data_get($item, 'warehouse_code')
@@ -2744,6 +2760,79 @@ trait HandlesSapPurchaseAndProducts
         return $body;
     }
 
+    private function appendFreightToMarketingDocument(array $body, array $data): array
+    {
+        $freightAmount = $this->extractOrderFreightAmount($data);
+        $expenseCode = (int) config('omniful.order_freight.expense_code', 0);
+
+        if ($freightAmount <= 0 || $expenseCode <= 0) {
+            return $body;
+        }
+
+        $body['DocumentAdditionalExpenses'] = [[
+            'ExpenseCode' => $expenseCode,
+            'LineTotal' => $this->roundSapAmount($freightAmount),
+        ]];
+
+        return $body;
+    }
+
+    private function extractOrderFreightAmount(array $data): float
+    {
+        $candidates = [
+            data_get($data, 'invoice.shipping_price'),
+            data_get($data, 'invoice.shipping_fee'),
+            data_get($data, 'invoice.delivery_fee'),
+            data_get($data, 'invoice.freight'),
+            data_get($data, 'shipping_price'),
+            data_get($data, 'shipping_fee'),
+            data_get($data, 'delivery_fee'),
+            data_get($data, 'shipment_fee'),
+            data_get($data, 'freight_amount'),
+            data_get($data, 'additional_charges.shipping_price'),
+            data_get($data, 'additional_charges.delivery_fee'),
+        ];
+
+        foreach ($candidates as $candidate) {
+            if (is_numeric($candidate) && (float) $candidate > 0) {
+                return $this->roundSapAmount((float) $candidate);
+            }
+        }
+
+        return 0.0;
+    }
+
+    private function resolveSapTaxCodeForOrderLine(array $data, array $item): string
+    {
+        $taxPercent = $this->extractOrderLineTaxPercent($item);
+
+        if ($this->isLocalOrderCustomer($data)) {
+            return trim((string) config(
+                $taxPercent > 0 ? 'omniful.order_tax.ksa_taxable_code' : 'omniful.order_tax.ksa_zero_tax_code',
+                $taxPercent > 0 ? 'SOV' : 'EOV'
+            ));
+        }
+
+        return trim((string) config('omniful.order_tax.foreign_code', 'EOV'));
+    }
+
+    private function extractOrderLineTaxPercent(array $item): float
+    {
+        $candidates = [
+            data_get($item, 'tax_percent'),
+            data_get($item, 'vat_percent'),
+            data_get($item, 'tax_percentage'),
+        ];
+
+        foreach ($candidates as $candidate) {
+            if (is_numeric($candidate)) {
+                return (float) $candidate;
+            }
+        }
+
+        return 0.0;
+    }
+
     private function roundSapAmount(float $value): float
     {
         return round($value, 2);
@@ -3753,7 +3842,7 @@ trait HandlesSapPurchaseAndProducts
      * @param array<int,array{item_code:string,quantity:float,unit_price:float}> $items
      * @return array<int,array<string,mixed>>
      */
-    private function buildDirectCreditLines(array $items, string $hubCode): array
+    private function buildDirectCreditLines(array $items, string $hubCode, array $data = []): array
     {
         $lines = [];
         $lineIndex = 0;
@@ -3775,6 +3864,14 @@ trait HandlesSapPurchaseAndProducts
                 'Quantity' => $this->roundSapQuantity($qty),
                 'UnitPrice' => $this->roundSapAmount((float) $item['unit_price']),
             ];
+
+            $taxCode = $this->resolveSapTaxCodeForOrderLine($data, [
+                'sku_code' => $itemCode,
+                'tax_percent' => data_get($item, 'tax_percent'),
+            ]);
+            if ($taxCode !== '') {
+                $line['VatGroup'] = $taxCode;
+            }
 
             if ($hubCode !== '') {
                 $line['WarehouseCode'] = $this->ensureWarehouseExists($hubCode, $lineIndex);

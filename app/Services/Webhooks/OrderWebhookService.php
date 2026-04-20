@@ -437,14 +437,15 @@ class OrderWebhookService
 
         $client = app(SapServiceLayerClient::class);
         try {
+            $paymentMethod = $this->resolvePaymentMethod($data);
             $result = $client->createIncomingPaymentForInvoice([
                 'invoice_doc_entry' => $invoiceDocEntry,
                 'card_code' => data_get($invoiceResult ?? [], 'CardCode') ?? data_get($data, 'customer.code'),
                 'sum_applied' => $this->resolveIncomingPaymentAmount($data, $invoiceResult),
                 'transfer_date' => data_get($data, 'order_created_at') ?? data_get($data, 'created_at'),
                 'reference' => (string) ($order->external_id ?? ''),
-                'payment_method' => $this->resolvePaymentMethod($data),
-                'transfer_account' => $this->resolveIncomingPaymentTransferAccount(),
+                'payment_method' => $paymentMethod,
+                'transfer_account' => $this->resolveIncomingPaymentTransferAccount($paymentMethod),
                 'invoice_type_candidates' => $this->resolveIncomingPaymentInvoiceTypeCandidates(),
             ]);
         } catch (SapRequestException $e) {
@@ -510,8 +511,14 @@ class OrderWebhookService
         return 0.0;
     }
 
-    private function resolveIncomingPaymentTransferAccount(): string
+    private function resolveIncomingPaymentTransferAccount(string $paymentMethod = ''): string
     {
+        $normalizedMethod = strtolower(str_replace([' ', '-', '_'], '', trim($paymentMethod)));
+        $mappedAccount = trim((string) config('omniful.order_payment.method_transfer_accounts.' . $normalizedMethod, ''));
+        if ($mappedAccount !== '') {
+            return $mappedAccount;
+        }
+
         $settings = IntegrationSetting::query()->first();
         $configured = trim((string) ($settings?->order_payment_transfer_account ?? ''));
         if ($configured !== '') {
