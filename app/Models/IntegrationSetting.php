@@ -39,6 +39,11 @@ class IntegrationSetting extends Model
         'order_payment_enabled',
         'order_payment_transfer_account',
         'order_payment_invoice_type_candidates',
+        'order_payment_method_map',
+        'order_tax_code_ksa_taxable',
+        'order_tax_code_ksa_zero',
+        'order_tax_code_foreign',
+        'order_freight_expense_code',
     ];
 
     protected $casts = [
@@ -68,5 +73,10 @@ class IntegrationSetting extends Model
         'order_payment_enabled' => 'boolean',
         'order_payment_transfer_account' => 'string',
         'order_payment_invoice_type_candidates' => 'array',
+        'order_payment_method_map' => 'string',
+        'order_tax_code_ksa_taxable' => 'string',
+        'order_tax_code_ksa_zero' => 'string',
+        'order_tax_code_foreign' => 'string',
+        'order_freight_expense_code' => 'string',
     ];
 }

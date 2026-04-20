@@ -2763,7 +2763,10 @@ trait HandlesSapPurchaseAndProducts
     private function appendFreightToMarketingDocument(array $body, array $data): array
     {
         $freightAmount = $this->extractOrderFreightAmount($data);
-        $expenseCode = (int) config('omniful.order_freight.expense_code', 0);
+        $expenseCode = (int) (
+            $this->getIntegrationSettingValue('order_freight_expense_code')
+            ?? config('omniful.order_freight.expense_code', 0)
+        );
 
         if ($freightAmount <= 0 || $expenseCode <= 0) {
             return $body;
@@ -2807,13 +2810,19 @@ trait HandlesSapPurchaseAndProducts
         $taxPercent = $this->extractOrderLineTaxPercent($item);
 
         if ($this->isLocalOrderCustomer($data)) {
-            return trim((string) config(
-                $taxPercent > 0 ? 'omniful.order_tax.ksa_taxable_code' : 'omniful.order_tax.ksa_zero_tax_code',
-                $taxPercent > 0 ? 'SOV' : 'EOV'
+            return trim((string) (
+                $this->getIntegrationSettingValue($taxPercent > 0 ? 'order_tax_code_ksa_taxable' : 'order_tax_code_ksa_zero')
+                ?? config(
+                    $taxPercent > 0 ? 'omniful.order_tax.ksa_taxable_code' : 'omniful.order_tax.ksa_zero_tax_code',
+                    $taxPercent > 0 ? 'SOV' : 'EOV'
+                )
             ));
         }
 
-        return trim((string) config('omniful.order_tax.foreign_code', 'EOV'));
+        return trim((string) (
+            $this->getIntegrationSettingValue('order_tax_code_foreign')
+            ?? config('omniful.order_tax.foreign_code', 'EOV')
+        ));
     }
 
     private function extractOrderLineTaxPercent(array $item): float

@@ -149,6 +149,28 @@ class IntegrationControlSettings extends Page implements HasForms
                             ->searchable()
                             ->preload()
                             ->helperText('Ordered SAP receipt invoice types to try when creating incoming payments.'),
+                        Textarea::make('order_payment_method_map')
+                            ->label('Payment Method Mapping')
+                            ->rows(5)
+                            ->placeholder("tamara:CC\ntabby:CC\nvisa:CC\nmaster:CC")
+                            ->helperText('Format: omniful_method:sap_transfer_account, one pair per line or comma-separated.'),
+                    ]),
+                Section::make('Order Tax & Freight')
+                    ->description('Static sales document mapping defaults used when Omniful payloads are processed into SAP')
+                    ->schema([
+                        TextInput::make('order_tax_code_ksa_taxable')
+                            ->label('KSA Taxable Tax Code')
+                            ->placeholder('SOV'),
+                        TextInput::make('order_tax_code_ksa_zero')
+                            ->label('KSA Zero-Tax Code')
+                            ->placeholder('EOV'),
+                        TextInput::make('order_tax_code_foreign')
+                            ->label('Foreign Tax Code')
+                            ->placeholder('EOV'),
+                        TextInput::make('order_freight_expense_code')
+                            ->label('Freight Expense Code')
+                            ->placeholder('1')
+                            ->helperText('Used when shipping or delivery fee exists in Omniful payload.'),
                     ]),
             ])
             ->statePath('data');
@@ -174,6 +196,11 @@ class IntegrationControlSettings extends Page implements HasForms
                     'intval',
                     array_filter((array) ($state['order_payment_invoice_type_candidates'] ?? []), fn ($value) => is_numeric($value))
                 )),
+                'order_payment_method_map' => $state['order_payment_method_map'] ?? null,
+                'order_tax_code_ksa_taxable' => $state['order_tax_code_ksa_taxable'] ?? null,
+                'order_tax_code_ksa_zero' => $state['order_tax_code_ksa_zero'] ?? null,
+                'order_tax_code_foreign' => $state['order_tax_code_foreign'] ?? null,
+                'order_freight_expense_code' => $state['order_freight_expense_code'] ?? null,
             ]
         );
 

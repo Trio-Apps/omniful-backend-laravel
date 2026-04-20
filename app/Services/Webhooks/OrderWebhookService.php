@@ -514,7 +514,8 @@ class OrderWebhookService
     private function resolveIncomingPaymentTransferAccount(string $paymentMethod = ''): string
     {
         $normalizedMethod = strtolower(str_replace([' ', '-', '_'], '', trim($paymentMethod)));
-        $mappedAccount = trim((string) config('omniful.order_payment.method_transfer_accounts.' . $normalizedMethod, ''));
+        $settingsMap = $this->parseSimpleMapping((string) (IntegrationSetting::query()->first()?->order_payment_method_map ?? ''));
+        $mappedAccount = trim((string) ($settingsMap[$normalizedMethod] ?? config('omniful.order_payment.method_transfer_accounts.' . $normalizedMethod, '')));
         if ($mappedAccount !== '') {
             return $mappedAccount;
         }
@@ -526,6 +527,48 @@ class OrderWebhookService
         }
 
         return trim((string) config('omniful.order_payment.transfer_account', ''));
+    }
+
+    /**
+     * @return array<string,string>
+     */
+    private function parseSimpleMapping(string $raw): array
+    {
+        $raw = trim($raw);
+        if ($raw === '') {
+            return [];
+        }
+
+        $decoded = json_decode($raw, true);
+        if (is_array($decoded)) {
+            $map = [];
+            foreach ($decoded as $key => $value) {
+                $normalizedKey = strtolower(str_replace([' ', '-', '_'], '', trim((string) $key)));
+                $normalizedValue = trim((string) $value);
+                if ($normalizedKey !== '' && $normalizedValue !== '') {
+                    $map[$normalizedKey] = $normalizedValue;
+                }
+            }
+
+            return $map;
+        }
+
+        $pairs = preg_split('/[\r\n,]+/', $raw) ?: [];
+        $map = [];
+        foreach ($pairs as $pair) {
+            $pair = trim((string) $pair);
+            if ($pair === '' || !str_contains($pair, ':')) {
+                continue;
+            }
+
+            [$key, $value] = array_map('trim', explode(':', $pair, 2));
+            $normalizedKey = strtolower(str_replace([' ', '-', '_'], '', $key));
+            if ($normalizedKey !== '' && $value !== '') {
+                $map[$normalizedKey] = $value;
+            }
+        }
+
+        return $map;
     }
 
     private function isIncomingPaymentEnabled(): bool
