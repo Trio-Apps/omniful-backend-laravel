@@ -2767,15 +2767,24 @@ trait HandlesSapPurchaseAndProducts
             $this->getIntegrationSettingValue('order_freight_expense_code')
             ?? config('omniful.order_freight.expense_code', 0)
         );
+        $freightTaxCode = $this->resolveSapTaxCodeForOrderLine($data, [
+            'tax_percent' => $this->extractOrderFreightTaxPercent($data),
+        ]);
 
         if ($freightAmount <= 0 || $expenseCode <= 0) {
             return $body;
         }
 
-        $body['DocumentAdditionalExpenses'] = [[
+        $expenseLine = [
             'ExpenseCode' => $expenseCode,
             'LineTotal' => $this->roundSapAmount($freightAmount),
-        ]];
+        ];
+
+        if ($freightTaxCode !== '') {
+            $expenseLine['TaxCode'] = $freightTaxCode;
+        }
+
+        $body['DocumentAdditionalExpenses'] = [$expenseLine];
 
         return $body;
     }
@@ -2799,6 +2808,34 @@ trait HandlesSapPurchaseAndProducts
         foreach ($candidates as $candidate) {
             if (is_numeric($candidate) && (float) $candidate > 0) {
                 return $this->roundSapAmount((float) $candidate);
+            }
+        }
+
+        return 0.0;
+    }
+
+    private function extractOrderFreightTaxPercent(array $data): float
+    {
+        $candidates = [
+            data_get($data, 'invoice.shipping_tax_percent'),
+            data_get($data, 'invoice.delivery_tax_percent'),
+            data_get($data, 'shipping_tax_percent'),
+            data_get($data, 'delivery_tax_percent'),
+            data_get($data, 'invoice.shipping_tax'),
+            data_get($data, 'shipping_tax'),
+        ];
+
+        foreach ($candidates as $candidate) {
+            if (is_numeric($candidate)) {
+                return (float) $candidate;
+            }
+        }
+
+        $lineItems = (array) data_get($data, 'items', data_get($data, 'order_items', []));
+        foreach ($lineItems as $item) {
+            $taxPercent = $this->extractOrderLineTaxPercent((array) $item);
+            if ($taxPercent > 0) {
+                return $taxPercent;
             }
         }
 
