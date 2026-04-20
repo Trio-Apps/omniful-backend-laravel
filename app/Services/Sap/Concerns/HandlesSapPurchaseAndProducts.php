@@ -271,7 +271,7 @@ trait HandlesSapPurchaseAndProducts
                 'AccountCode' => $offsetAccount,
                 'Credit' => $this->roundSapAmount($amount),
             ],
-        ]);
+        ], $this->resolveOrderWarehouseCode(data_get($data, 'hub_code')));
 
         $body = [
             'ReferenceDate' => $referenceDate,
@@ -593,7 +593,7 @@ trait HandlesSapPurchaseAndProducts
                 'AccountCode' => $offsetAccount,
                 'Credit' => $this->roundSapAmount($amount),
             ],
-        ]);
+        ], $this->resolveWarehouseCodeFromDocumentLines($delivery));
 
         $body = [
             'ReferenceDate' => $referenceDate,
@@ -767,7 +767,7 @@ trait HandlesSapPurchaseAndProducts
                 'AccountCode' => $expenseAccount,
                 'Credit' => $this->roundSapAmount($amount),
             ],
-        ]);
+        ], $this->resolveWarehouseCodeFromDocumentLines($creditMemo));
 
         $body = [
             'ReferenceDate' => $referenceDate,
@@ -4552,15 +4552,15 @@ trait HandlesSapPurchaseAndProducts
             || str_contains($body, '1470000315');
     }
 
-    private function applyDefaultCostCentersToLines(array $lines): array
+    private function applyDefaultCostCentersToLines(array $lines, ?string $fallbackWarehouseCode = null): array
     {
-        $fields = $this->getDefaultCostCenterFields();
-        if ($fields === []) {
-            return $lines;
-        }
-
         foreach ($lines as $idx => $line) {
             if (!is_array($line)) {
+                continue;
+            }
+            $warehouseCode = trim((string) ($line['WarehouseCode'] ?? $fallbackWarehouseCode ?? ''));
+            $fields = $this->getDefaultCostCenterFields($warehouseCode !== '' ? $warehouseCode : null);
+            if ($fields === []) {
                 continue;
             }
             foreach ($fields as $key => $value) {
@@ -4574,19 +4574,31 @@ trait HandlesSapPurchaseAndProducts
         return $lines;
     }
 
-    private function applyDefaultCostCentersToJournalLines(array $lines): array
+    private function applyDefaultCostCentersToJournalLines(array $lines, ?string $warehouseCode = null): array
     {
-        return $this->applyDefaultCostCentersToLines($lines);
+        return $this->applyDefaultCostCentersToLines($lines, $warehouseCode);
     }
 
-    private function getDefaultCostCenterFields(): array
+    private function getDefaultCostCenterFields(?string $warehouseCode = null): array
     {
-        static $cached = null;
-        if (is_array($cached)) {
-            return $cached;
+        static $cached = [];
+        $cacheKey = $warehouseCode ?: '__global__';
+        if (array_key_exists($cacheKey, $cached)) {
+            return $cached[$cacheKey];
         }
 
-        $setting = SapCostCenterSetting::query()->first();
+        $setting = null;
+        if ($warehouseCode !== null && trim($warehouseCode) !== '') {
+            $setting = SapCostCenterSetting::query()
+                ->where('warehouse_code', trim($warehouseCode))
+                ->first();
+        }
+
+        if (!$setting) {
+            $setting = SapCostCenterSetting::query()
+                ->whereNull('warehouse_code')
+                ->first();
+        }
 
         $raw = [
             'CostingCode' => (string) ($setting->costing_code ?? config('omniful.sap_cost_centers.costing_code', '')),
@@ -4605,8 +4617,20 @@ trait HandlesSapPurchaseAndProducts
             }
         }
 
-        $cached = $fields;
-        return $cached;
+        $cached[$cacheKey] = $fields;
+        return $fields;
+    }
+
+    private function resolveWarehouseCodeFromDocumentLines(array $document): ?string
+    {
+        foreach ((array) ($document['DocumentLines'] ?? []) as $line) {
+            $warehouseCode = trim((string) ($line['WarehouseCode'] ?? ''));
+            if ($warehouseCode !== '') {
+                return $warehouseCode;
+            }
+        }
+
+        return null;
     }
 
 }

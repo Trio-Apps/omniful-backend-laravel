@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 class SapCostCenterSetting extends Model
 {
     protected $fillable = [
+        'warehouse_code',
         'costing_code',
         'costing_code2',
         'costing_code3',
@@ -22,4 +23,3 @@ class SapCostCenterSetting extends Model
         'last_synced_at' => 'datetime',
     ];
 }
-

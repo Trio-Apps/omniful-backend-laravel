@@ -274,7 +274,7 @@ trait HandlesSapInventoryDocs
             ];
         }
         $applyToStockTransfer = (bool) (
-            SapCostCenterSetting::query()->value('apply_to_stock_transfer')
+            SapCostCenterSetting::query()->whereNull('warehouse_code')->value('apply_to_stock_transfer')
             ?? config('omniful.sap_cost_centers.apply_to_stock_transfer', false)
         );
         if ($applyToStockTransfer) {
