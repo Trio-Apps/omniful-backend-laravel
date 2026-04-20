@@ -30,6 +30,7 @@ trait HandlesSapPurchaseAndProducts
         $customerCode = $this->resolveOrderCustomerCode($data, $externalId);
 
         $lines = [];
+        $lineTaxPercents = [];
         $lineIndex = 0;
         $items = data_get($data, 'order_items', data_get($data, 'items', []));
         foreach ((array) $items as $item) {
@@ -81,6 +82,7 @@ trait HandlesSapPurchaseAndProducts
             }
 
             $lines[] = $line;
+            $lineTaxPercents[] = $this->extractOrderLineTaxPercent((array) $item);
         }
 
         if ($lines === []) {
@@ -90,6 +92,7 @@ trait HandlesSapPurchaseAndProducts
                 'request_body' => null,
             ];
         }
+        $lines = $this->rebalanceOrderLinesForInvoiceTotals($lines, $data, $lineTaxPercents);
         $lines = $this->normalizeSapDocumentLines(
             $this->applyDefaultCostCentersToLines($lines)
         );
@@ -2762,7 +2765,7 @@ trait HandlesSapPurchaseAndProducts
 
     private function appendFreightToMarketingDocument(array $body, array $data): array
     {
-        $freightAmount = $this->extractOrderFreightAmount($data);
+        $freightAmount = $this->extractOrderFreightNetAmount($data);
         $expenseCode = (int) (
             $this->getIntegrationSettingValue('order_freight_expense_code')
             ?? config('omniful.order_freight.expense_code', 0)
@@ -2789,7 +2792,25 @@ trait HandlesSapPurchaseAndProducts
         return $body;
     }
 
-    private function extractOrderFreightAmount(array $data): float
+    private function extractOrderFreightNetAmount(array $data): float
+    {
+        $grossAmount = $this->extractOrderFreightGrossAmount($data);
+        if ($grossAmount <= 0) {
+            return 0.0;
+        }
+
+        $taxPercent = $this->extractOrderFreightTaxPercent($data);
+        $taxInclusive = filter_var(data_get($data, 'invoice.shipping_tax_inclusive', false), FILTER_VALIDATE_BOOL)
+            || filter_var(data_get($data, 'shipping_tax_inclusive', false), FILTER_VALIDATE_BOOL);
+
+        if ($taxInclusive && $taxPercent > 0) {
+            return $this->roundSapAmount($grossAmount / (1 + ($taxPercent / 100)));
+        }
+
+        return $this->roundSapAmount($grossAmount);
+    }
+
+    private function extractOrderFreightGrossAmount(array $data): float
     {
         $candidates = [
             data_get($data, 'invoice.shipping_price'),
@@ -2807,11 +2828,33 @@ trait HandlesSapPurchaseAndProducts
 
         foreach ($candidates as $candidate) {
             if (is_numeric($candidate) && (float) $candidate > 0) {
-                return $this->roundSapAmount((float) $candidate);
+                $discount = $this->extractOrderFreightDiscountAmount($data);
+
+                return $this->roundSapAmount(max(((float) $candidate) - $discount, 0));
             }
         }
 
         return 0.0;
+    }
+
+    private function extractOrderFreightDiscountAmount(array $data): float
+    {
+        $charges = (array) data_get($data, 'invoice.additional_charges', data_get($data, 'additional_charges', []));
+        $discount = 0.0;
+
+        foreach ($charges as $charge) {
+            $type = strtolower(trim((string) data_get($charge, 'type', '')));
+            if (!in_array($type, ['shipment_fee', 'shipping_fee', 'delivery_fee', 'freight'], true)) {
+                continue;
+            }
+
+            $discountAmount = data_get($charge, 'discount_amount');
+            if (is_numeric($discountAmount) && (float) $discountAmount > 0) {
+                $discount += (float) $discountAmount;
+            }
+        }
+
+        return $this->roundSapAmount($discount);
     }
 
     private function extractOrderFreightTaxPercent(array $data): float
@@ -2915,6 +2958,129 @@ trait HandlesSapPurchaseAndProducts
         unset($line);
 
         return $lines;
+    }
+
+    /**
+     * @param array<int,array<string,mixed>> $lines
+     * @return array<int,array<string,mixed>>
+     */
+    private function rebalanceOrderLinesForInvoiceTotals(array $lines, array $data, array $lineTaxPercents = []): array
+    {
+        $targetSubtotal = $this->resolveTargetOrderMerchandiseSubtotal($data, $lines, $lineTaxPercents);
+        if ($targetSubtotal === null) {
+            return $lines;
+        }
+
+        $currentTotals = [];
+        $currentSubtotal = 0.0;
+        foreach ($lines as $index => $line) {
+            $qty = (float) ($line['Quantity'] ?? 0);
+            $lineTotal = $this->extractSapLineMerchandiseTotal($line);
+            if ($qty <= 0 || $lineTotal <= 0) {
+                continue;
+            }
+
+            $currentTotals[$index] = $lineTotal;
+            $currentSubtotal += $lineTotal;
+        }
+
+        if ($currentSubtotal <= 0 || abs($currentSubtotal - $targetSubtotal) < 0.01) {
+            return $lines;
+        }
+
+        $allocated = 0.0;
+        $indexes = array_keys($currentTotals);
+        $lastIndex = array_key_last($indexes);
+
+        foreach ($indexes as $position => $index) {
+            $baseLineTotal = $currentTotals[$index];
+            $qty = (float) ($lines[$index]['Quantity'] ?? 0);
+            if ($qty <= 0) {
+                continue;
+            }
+
+            if ($position === $lastIndex) {
+                $lineTotal = $this->roundSapAmount($targetSubtotal - $allocated);
+            } else {
+                $lineTotal = $this->roundSapAmount(($targetSubtotal * $baseLineTotal) / $currentSubtotal);
+                $allocated += $lineTotal;
+            }
+
+            $lines[$index]['LineTotal'] = $lineTotal;
+            unset($lines[$index]['UnitPrice']);
+        }
+
+        return $lines;
+    }
+
+    private function resolveTargetOrderMerchandiseSubtotal(array $data, array $lines, array $lineTaxPercents = []): ?float
+    {
+        $targetGross = $this->resolveTargetOrderMerchandiseGrossTotal($data);
+        if ($targetGross !== null) {
+            $currentNet = 0.0;
+            $currentGross = 0.0;
+
+            foreach ($lines as $index => $line) {
+                $lineTotal = $this->extractSapLineMerchandiseTotal($line);
+                if ($lineTotal <= 0) {
+                    continue;
+                }
+
+                $taxPercent = (float) ($lineTaxPercents[$index] ?? 0);
+                $currentNet += $lineTotal;
+                $currentGross += $lineTotal * (1 + ($taxPercent / 100));
+            }
+
+            if ($currentNet > 0 && $currentGross > 0) {
+                return $this->roundSapAmount($currentNet * ($targetGross / $currentGross));
+            }
+        }
+
+        $subtotal = data_get($data, 'invoice.subtotal');
+        if (!is_numeric($subtotal)) {
+            return null;
+        }
+
+        $target = (float) $subtotal;
+        $discount = data_get($data, 'invoice.discount');
+        $discountInclusive = filter_var(data_get($data, 'invoice.sub_total_discount_inclusive', false), FILTER_VALIDATE_BOOL);
+        $freightDiscount = $this->extractOrderFreightDiscountAmount($data);
+        $merchandiseDiscount = is_numeric($discount) ? max((float) $discount - $freightDiscount, 0) : 0.0;
+
+        if (!$discountInclusive && $merchandiseDiscount > 0) {
+            $target -= $merchandiseDiscount;
+        }
+
+        return $target > 0 ? $this->roundSapAmount($target) : 0.0;
+    }
+
+    private function resolveTargetOrderMerchandiseGrossTotal(array $data): ?float
+    {
+        $invoiceTotal = data_get($data, 'invoice.total', data_get($data, 'total'));
+        if (!is_numeric($invoiceTotal)) {
+            return null;
+        }
+
+        $freightGross = $this->extractOrderFreightGrossAmount($data);
+        $target = (float) $invoiceTotal - $freightGross;
+
+        return $target >= 0 ? $this->roundSapAmount($target) : 0.0;
+    }
+
+    private function extractSapLineMerchandiseTotal(array $line): float
+    {
+        if (isset($line['LineTotal']) && is_numeric($line['LineTotal'])) {
+            return (float) $line['LineTotal'];
+        }
+
+        $qty = (float) ($line['Quantity'] ?? 0);
+        $unitPrice = (float) ($line['UnitPrice'] ?? 0);
+
+        if ($qty <= 0 || $unitPrice <= 0) {
+            return 0.0;
+        }
+
+        return $qty * $unitPrice;
     }
 
     private function resolveOrderWarehouseCode(mixed $hubCode): ?string
