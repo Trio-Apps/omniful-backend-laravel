@@ -2781,7 +2781,7 @@ trait HandlesSapPurchaseAndProducts
         ];
 
         if ($freightTaxCode !== '') {
-            $expenseLine['TaxCode'] = $freightTaxCode;
+            $expenseLine['VatGroup'] = $freightTaxCode;
         }
 
         $body['DocumentAdditionalExpenses'] = [$expenseLine];
