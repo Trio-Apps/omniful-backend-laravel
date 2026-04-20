@@ -180,6 +180,8 @@ return [
         'status_udf_field' => env('OMNIFUL_ORDER_STATUS_UDF_FIELD', ''),
         'event_udf_field' => env('OMNIFUL_ORDER_EVENT_UDF_FIELD', ''),
         'updated_at_udf_field' => env('OMNIFUL_ORDER_UPDATED_AT_UDF_FIELD', ''),
+        'order_number_udf_field' => env('OMNIFUL_ORDER_NUMBER_UDF_FIELD', 'U_omo'),
+        'channel_udf_field' => env('OMNIFUL_ORDER_CHANNEL_UDF_FIELD', 'U_omChannel'),
     ],
     'order_fallback' => [
         'customer_code' => env('OMNIFUL_FALLBACK_CUSTOMER_CODE', ''),

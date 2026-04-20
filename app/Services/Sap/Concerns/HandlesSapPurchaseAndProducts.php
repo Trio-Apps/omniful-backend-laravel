@@ -61,14 +61,14 @@ trait HandlesSapPurchaseAndProducts
             if ($unitPrice === null) {
                 $lineTotal = data_get($item, 'total');
                 if (is_numeric($lineTotal) && $qty > 0) {
-                    $unitPrice = round(((float) $lineTotal) / $qty, 6);
+                    $unitPrice = $this->roundSapAmount(((float) $lineTotal) / $qty);
                 }
             }
 
             $line = [
                 'ItemCode' => (string) $itemCode,
-                'Quantity' => $qty,
-                'UnitPrice' => (float) ($unitPrice ?? 0),
+                'Quantity' => $this->roundSapQuantity($qty),
+                'UnitPrice' => $this->roundSapAmount((float) ($unitPrice ?? 0)),
             ];
 
             if ($hubCode) {
@@ -85,7 +85,9 @@ trait HandlesSapPurchaseAndProducts
                 'request_body' => null,
             ];
         }
-        $lines = $this->applyDefaultCostCentersToLines($lines);
+        $lines = $this->normalizeSapDocumentLines(
+            $this->applyDefaultCostCentersToLines($lines)
+        );
 
         $comments = 'AR Reserve Invoice from Omniful order ' . $externalId;
         if ($currency && !$this->isValidCurrency((string) $currency)) {
@@ -107,6 +109,8 @@ trait HandlesSapPurchaseAndProducts
         if ($currency) {
             $body['DocCurrency'] = $currency;
         }
+
+        $body = $this->appendOmnifulDocumentUdfs($body, $data, $externalId);
 
         $usedReserveInvoiceFallback = false;
         $response = $this->postArOrderWithReserveFallback($body, $usedReserveInvoiceFallback);
@@ -171,7 +175,7 @@ trait HandlesSapPurchaseAndProducts
             throw new \RuntimeException('Missing CardCode for incoming payment');
         }
 
-        $sumApplied = (float) ($data['sum_applied'] ?? ($salesDoc['DocTotal'] ?? 0));
+        $sumApplied = $this->roundSapAmount((float) ($data['sum_applied'] ?? ($salesDoc['DocTotal'] ?? 0)));
         if ($sumApplied <= 0) {
             return [
                 'ignored' => true,
@@ -180,7 +184,7 @@ trait HandlesSapPurchaseAndProducts
             ];
         }
 
-        $transferDate = $this->formatDate((string) ($data['transfer_date'] ?? now()->format('Y-m-d')));
+        $transferDate = $this->formatDate((string) ($data['transfer_date'] ?? ($salesDoc['DocDate'] ?? now()->format('Y-m-d'))));
         $reference = trim((string) ($data['reference'] ?? ''));
         $paymentMethod = trim((string) ($data['payment_method'] ?? ''));
 
@@ -252,11 +256,11 @@ trait HandlesSapPurchaseAndProducts
         $journalLines = $this->applyDefaultCostCentersToJournalLines([
             [
                 'AccountCode' => $expenseAccount,
-                'Debit' => $amount,
+                'Debit' => $this->roundSapAmount($amount),
             ],
             [
                 'AccountCode' => $offsetAccount,
-                'Credit' => $amount,
+                'Credit' => $this->roundSapAmount($amount),
             ],
         ]);
 
@@ -336,8 +340,8 @@ trait HandlesSapPurchaseAndProducts
                     'BaseType' => 13,
                     'BaseEntry' => $orderDocEntry,
                     'BaseLine' => (int) $lineNum,
-                    'Quantity' => $openQty,
-                ];
+                'Quantity' => $this->roundSapQuantity($openQty),
+            ];
 
                 if ($hubCode !== '') {
                     $deliveryLine['WarehouseCode'] = $this->ensureWarehouseExists($hubCode, ((int) $lineNum) + 1);
@@ -354,7 +358,9 @@ trait HandlesSapPurchaseAndProducts
                 'request_body' => null,
             ];
         }
-        $lines = $this->applyDefaultCostCentersToLines($lines);
+        $lines = $this->normalizeSapDocumentLines(
+            $this->applyDefaultCostCentersToLines($lines)
+        );
 
         $body = [
             'CardCode' => (string) ($salesDoc['CardCode'] ?? ''),
@@ -364,6 +370,8 @@ trait HandlesSapPurchaseAndProducts
             'Comments' => 'Delivery from Omniful order ' . $externalId,
             'DocumentLines' => $lines,
         ];
+
+        $body = $this->appendOmnifulDocumentUdfs($body, $data, $externalId);
 
         $response = $this->post('/DeliveryNotes', $body);
         if (!$response->successful()) {
@@ -434,7 +442,7 @@ trait HandlesSapPurchaseAndProducts
                     'BaseType' => 13,
                     'BaseEntry' => $orderDocEntry,
                     'BaseLine' => (int) $salesLine['line_num'],
-                    'Quantity' => $allocQty,
+                    'Quantity' => $this->roundSapQuantity($allocQty),
                 ];
 
                 if ($hubCode !== '') {
@@ -570,11 +578,11 @@ trait HandlesSapPurchaseAndProducts
         $journalLines = $this->applyDefaultCostCentersToJournalLines([
             [
                 'AccountCode' => $expenseAccount,
-                'Debit' => $amount,
+                'Debit' => $this->roundSapAmount($amount),
             ],
             [
                 'AccountCode' => $offsetAccount,
-                'Credit' => $amount,
+                'Credit' => $this->roundSapAmount($amount),
             ],
         ]);
 
@@ -676,7 +684,9 @@ trait HandlesSapPurchaseAndProducts
                 'request_body' => null,
             ];
         }
-        $documentLines = $this->applyDefaultCostCentersToLines($documentLines);
+        $documentLines = $this->normalizeSapDocumentLines(
+            $this->applyDefaultCostCentersToLines($documentLines)
+        );
 
         $body = [
             'CardCode' => $cardCode,
@@ -686,6 +696,12 @@ trait HandlesSapPurchaseAndProducts
             'DocumentLines' => $documentLines,
             'Comments' => 'AR Credit Memo from Omniful return ' . ($externalId !== '' ? $externalId : 'event'),
         ];
+
+        $body = $this->appendOmnifulDocumentUdfs(
+            $body,
+            $data,
+            $this->resolveOmnifulOrderReferenceForSap($data, $externalId)
+        );
 
         $response = $this->post('/CreditNotes', $body);
         if (!$response->successful()) {
@@ -736,11 +752,11 @@ trait HandlesSapPurchaseAndProducts
         $journalLines = $this->applyDefaultCostCentersToJournalLines([
             [
                 'AccountCode' => $offsetAccount,
-                'Debit' => $amount,
+                'Debit' => $this->roundSapAmount($amount),
             ],
             [
                 'AccountCode' => $expenseAccount,
-                'Credit' => $amount,
+                'Credit' => $this->roundSapAmount($amount),
             ],
         ]);
 
@@ -810,8 +826,8 @@ trait HandlesSapPurchaseAndProducts
 
             $line = [
                 'ItemCode' => $itemCode,
-                'Quantity' => $quantity,
-                'UnitPrice' => $this->resolvePurchaseOrderLineUnitPrice((array) $item),
+                'Quantity' => $this->roundSapQuantity($quantity),
+                'UnitPrice' => $this->roundSapAmount($this->resolvePurchaseOrderLineUnitPrice((array) $item)),
             ];
 
             if ($hubCode) {
@@ -824,7 +840,9 @@ trait HandlesSapPurchaseAndProducts
         if ($lines === []) {
             throw new \RuntimeException('No purchase_order_items found for SAP PO');
         }
-        $lines = $this->applyDefaultCostCentersToLines($lines);
+        $lines = $this->normalizeSapDocumentLines(
+            $this->applyDefaultCostCentersToLines($lines)
+        );
 
         $comments = $displayId ? ('Omniful PO ' . $displayId) : 'Omniful PO';
         if ($currency && !$this->isValidCurrency($currency)) {
@@ -938,7 +956,7 @@ trait HandlesSapPurchaseAndProducts
             ];
         }
 
-        $sumApplied = (float) ($data['sum_applied'] ?? 0);
+        $sumApplied = $this->roundSapAmount((float) ($data['sum_applied'] ?? 0));
         if ($sumApplied <= 0) {
             return [
                 'ignored' => true,
@@ -1223,7 +1241,7 @@ trait HandlesSapPurchaseAndProducts
         $total = data_get($item, 'total');
         $quantity = $this->resolvePurchaseOrderLineQuantity($item);
         if (is_numeric($total) && (float) $total > 0 && $quantity > 0) {
-            return round((float) $total / $quantity, 4);
+            return $this->roundSapAmount((float) $total / $quantity);
         }
 
         return 0.0;
@@ -1304,8 +1322,8 @@ trait HandlesSapPurchaseAndProducts
 
             $line = [
                 'ItemCode' => $itemCode,
-                'Quantity' => $quantity,
-                'UnitPrice' => $this->resolvePurchaseOrderLineUnitPrice((array) $item),
+                'Quantity' => $this->roundSapQuantity($quantity),
+                'UnitPrice' => $this->roundSapAmount($this->resolvePurchaseOrderLineUnitPrice((array) $item)),
             ];
 
             $lineWarehouse = trim((string) (
@@ -1353,8 +1371,8 @@ trait HandlesSapPurchaseAndProducts
 
             $line = [
                 'ItemCode' => $itemCode,
-                'Quantity' => $quantity,
-                'UnitPrice' => $this->resolvePurchaseOrderLineUnitPrice((array) $item),
+                'Quantity' => $this->roundSapQuantity($quantity),
+                'UnitPrice' => $this->roundSapAmount($this->resolvePurchaseOrderLineUnitPrice((array) $item)),
             ];
 
             $lineWarehouse = trim((string) (
@@ -2657,6 +2675,113 @@ trait HandlesSapPurchaseAndProducts
         return trim($normalized, '_');
     }
 
+    private function resolveOmnifulOrderReferenceForSap(array $data, string $fallback = ''): string
+    {
+        $candidates = [
+            data_get($data, 'external_id'),
+            data_get($data, 'order_reference_id'),
+            data_get($data, 'display_id'),
+            data_get($data, 'order_id'),
+            data_get($data, 'data.external_id'),
+            data_get($data, 'data.order_reference_id'),
+            $fallback,
+        ];
+
+        foreach ($candidates as $candidate) {
+            $value = trim((string) ($candidate ?? ''));
+            if ($value !== '') {
+                return $value;
+            }
+        }
+
+        return '';
+    }
+
+    private function resolveOmnifulChannelForSap(array $data): string
+    {
+        $candidates = [
+            data_get($data, 'sales_channel.name'),
+            data_get($data, 'sales_channel'),
+            data_get($data, 'channel_name'),
+            data_get($data, 'channel'),
+            data_get($data, 'source_name'),
+            data_get($data, 'source'),
+            data_get($data, 'platform_name'),
+            data_get($data, 'platform'),
+            data_get($data, 'store_name'),
+            data_get($data, 'store.name'),
+        ];
+
+        foreach ($candidates as $candidate) {
+            if (is_array($candidate)) {
+                $candidate = $candidate['name'] ?? $candidate['code'] ?? null;
+            }
+
+            $value = trim((string) ($candidate ?? ''));
+            if ($value !== '') {
+                return mb_substr($value, 0, 100);
+            }
+        }
+
+        return '';
+    }
+
+    private function appendOmnifulDocumentUdfs(array $body, array $data, string $fallbackOrderReference = ''): array
+    {
+        $orderField = trim((string) config('omniful.order_sync.order_number_udf_field', 'U_omo'));
+        $channelField = trim((string) config('omniful.order_sync.channel_udf_field', 'U_omChannel'));
+
+        $orderReference = $this->resolveOmnifulOrderReferenceForSap($data, $fallbackOrderReference);
+        if ($orderField !== '' && $orderReference !== '') {
+            $body[$orderField] = $orderReference;
+        }
+
+        $channel = $this->resolveOmnifulChannelForSap($data);
+        if ($channelField !== '' && $channel !== '') {
+            $body[$channelField] = $channel;
+        }
+
+        return $body;
+    }
+
+    private function roundSapAmount(float $value): float
+    {
+        return round($value, 2);
+    }
+
+    private function roundSapQuantity(float $value): float
+    {
+        return round($value, 2);
+    }
+
+    /**
+     * @param array<int,array<string,mixed>> $lines
+     * @return array<int,array<string,mixed>>
+     */
+    private function normalizeSapDocumentLines(array $lines): array
+    {
+        foreach ($lines as &$line) {
+            if (isset($line['Quantity']) && is_numeric($line['Quantity'])) {
+                $line['Quantity'] = $this->roundSapQuantity((float) $line['Quantity']);
+            }
+
+            if (isset($line['UnitPrice']) && is_numeric($line['UnitPrice'])) {
+                $line['UnitPrice'] = $this->roundSapAmount((float) $line['UnitPrice']);
+            }
+
+            if (isset($line['Price']) && is_numeric($line['Price'])) {
+                $line['Price'] = $this->roundSapAmount((float) $line['Price']);
+            }
+
+            if (isset($line['LineTotal']) && is_numeric($line['LineTotal'])) {
+                $line['LineTotal'] = $this->roundSapAmount((float) $line['LineTotal']);
+            }
+        }
+        unset($line);
+
+        return $lines;
+    }
+
     private function resolveOrderWarehouseCode(mixed $hubCode): ?string
     {
         $resolved = trim((string) ($hubCode ?? ''));
@@ -3430,7 +3555,7 @@ trait HandlesSapPurchaseAndProducts
             $total += $qty * $unitCost;
         }
 
-        return round($total, 6);
+        return $this->roundSapAmount($total);
     }
 
     private function extractCreditMemoCogsAmount(array $creditMemo): float
@@ -3462,7 +3587,7 @@ trait HandlesSapPurchaseAndProducts
             $total += $qty * $unitCost;
         }
 
-        return round($total, 6);
+        return $this->roundSapAmount($total);
     }
 
     /**
@@ -3607,7 +3732,7 @@ trait HandlesSapPurchaseAndProducts
                     'BaseType' => 15,
                     'BaseEntry' => $deliveryDocEntry,
                     'BaseLine' => (int) $deliveryLine['line_num'],
-                    'Quantity' => $applyQty,
+                    'Quantity' => $this->roundSapQuantity($applyQty),
                 ];
 
                 if ($hubCode !== '') {
@@ -3647,8 +3772,8 @@ trait HandlesSapPurchaseAndProducts
 
             $line = [
                 'ItemCode' => $itemCode,
-                'Quantity' => $qty,
-                'UnitPrice' => (float) $item['unit_price'],
+                'Quantity' => $this->roundSapQuantity($qty),
+                'UnitPrice' => $this->roundSapAmount((float) $item['unit_price']),
             ];
 
             if ($hubCode !== '') {
