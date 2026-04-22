@@ -2749,6 +2749,8 @@ trait HandlesSapPurchaseAndProducts
     {
         $orderField = trim((string) config('omniful.order_sync.order_number_udf_field', 'U_omo'));
         $channelField = trim((string) config('omniful.order_sync.channel_udf_field', 'U_omChannel'));
+        $zidField = 'U_ZidId';
+        $sallaField = 'U_SallaOrderId';
 
         $orderReference = $this->resolveOmnifulOrderReferenceForSap($data, $fallbackOrderReference);
         if ($orderField !== '' && $orderReference !== '') {
@@ -2760,7 +2762,49 @@ trait HandlesSapPurchaseAndProducts
             $body[$channelField] = $channel;
         }
 
+        $channelKey = $this->resolveOmnifulChannelKey($data);
+        if ($orderReference !== '') {
+            if ($channelKey === 'zid') {
+                $body[$zidField] = $orderReference;
+            }
+
+            if ($channelKey === 'salla') {
+                $body[$sallaField] = $orderReference;
+            }
+        }
+
         return $body;
+    }
+
+    private function resolveOmnifulChannelKey(array $data): string
+    {
+        $candidates = [
+            data_get($data, 'sales_channel.tag'),
+            data_get($data, 'sales_channel.name'),
+            data_get($data, 'source'),
+            data_get($data, 'source_name'),
+            data_get($data, 'channel'),
+            data_get($data, 'channel_name'),
+            data_get($data, 'platform'),
+            data_get($data, 'platform_name'),
+        ];
+
+        foreach ($candidates as $candidate) {
+            $value = $this->normalizeSourceKey((string) ($candidate ?? ''));
+            if ($value === '') {
+                continue;
+            }
+
+            if (str_contains($value, 'zid')) {
+                return 'zid';
+            }
+
+            if (str_contains($value, 'salla')) {
+                return 'salla';
+            }
+        }
+
+        return '';
     }
 
     private function appendFreightToMarketingDocument(array $body, array $data): array
@@ -2797,6 +2841,11 @@ trait HandlesSapPurchaseAndProducts
         $grossAmount = $this->extractOrderFreightGrossAmount($data);
         if ($grossAmount <= 0) {
             return 0.0;
+        }
+
+        $taxAmount = $this->extractOrderFreightTaxAmount($data);
+        if ($taxAmount > 0) {
+            return $this->roundSapAmount(max($grossAmount - $taxAmount, 0));
         }
 
         $taxPercent = $this->extractOrderFreightTaxPercent($data);
@@ -2857,6 +2906,39 @@ trait HandlesSapPurchaseAndProducts
         return $this->roundSapAmount($discount);
     }
 
+    private function extractOrderFreightTaxAmount(array $data): float
+    {
+        $candidates = [
+            data_get($data, 'invoice.shipping_tax'),
+            data_get($data, 'invoice.delivery_tax'),
+            data_get($data, 'shipping_tax'),
+            data_get($data, 'delivery_tax'),
+        ];
+
+        foreach ($candidates as $candidate) {
+            if (is_numeric($candidate) && (float) $candidate > 0) {
+                return $this->roundSapAmount((float) $candidate);
+            }
+        }
+
+        $charges = (array) data_get($data, 'invoice.additional_charges', data_get($data, 'additional_charges', []));
+        $taxAmount = 0.0;
+
+        foreach ($charges as $charge) {
+            $type = strtolower(trim((string) data_get($charge, 'type', '')));
+            if (!in_array($type, ['shipment_fee', 'shipping_fee', 'delivery_fee', 'freight'], true)) {
+                continue;
+            }
+
+            $candidate = data_get($charge, 'tax_amount');
+            if (is_numeric($candidate) && (float) $candidate > 0) {
+                $taxAmount += (float) $candidate;
+            }
+        }
+
+        return $this->roundSapAmount($taxAmount);
+    }
+
     private function extractOrderFreightTaxPercent(array $data): float
     {
         $candidates = [
@@ -2864,6 +2946,7 @@ trait HandlesSapPurchaseAndProducts
             data_get($data, 'invoice.delivery_tax_percent'),
             data_get($data, 'shipping_tax_percent'),
             data_get($data, 'delivery_tax_percent'),
+            data_get($data, 'invoice.additional_charges.0.tax_percentage'),
             data_get($data, 'invoice.shipping_tax'),
             data_get($data, 'shipping_tax'),
         ];
