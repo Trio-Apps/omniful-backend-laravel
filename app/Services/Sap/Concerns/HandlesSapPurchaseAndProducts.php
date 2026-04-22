@@ -168,13 +168,22 @@ trait HandlesSapPurchaseAndProducts
             $data['transfer_account']
             ?? config('omniful.order_payment.transfer_account', '')
         ));
-        $transferAccount = $this->resolveSapTransferAccountValue($transferAccount);
-        if ($transferAccount === '') {
-            return [
-                'ignored' => true,
-                'reason' => 'Missing incoming payment transfer account',
-                'request_body' => null,
-            ];
+        $paymentMethod = trim((string) ($data['payment_method'] ?? ''));
+        $paymentCreditCard = $this->buildIncomingPaymentCreditCardLine(
+            $paymentMethod,
+            $transferAccount,
+            $data,
+        );
+
+        if ($paymentCreditCard === null) {
+            $transferAccount = $this->resolveSapTransferAccountValue($transferAccount);
+            if ($transferAccount === '') {
+                return [
+                    'ignored' => true,
+                    'reason' => 'Missing incoming payment transfer account',
+                    'request_body' => null,
+                ];
+            }
         }
 
         $salesDoc = $this->getArReserveInvoice($invoiceDocEntry);
@@ -194,7 +203,6 @@ trait HandlesSapPurchaseAndProducts
 
         $transferDate = $this->formatDate((string) ($data['transfer_date'] ?? ($salesDoc['DocDate'] ?? now()->format('Y-m-d'))));
         $reference = trim((string) ($data['reference'] ?? ''));
-        $paymentMethod = trim((string) ($data['payment_method'] ?? ''));
 
         $remarks = 'Incoming payment from Omniful prepaid order';
         if ($reference !== '') {
@@ -207,9 +215,7 @@ trait HandlesSapPurchaseAndProducts
         $body = [
             'CardCode' => $cardCode,
             'DocType' => 'rCustomer',
-            'TransferAccount' => $transferAccount,
-            'TransferDate' => $transferDate,
-            'TransferSum' => $sumApplied,
+            'DocDate' => $transferDate,
             'PaymentInvoices' => [
                 [
                     'DocEntry' => $invoiceDocEntry,
@@ -218,6 +224,14 @@ trait HandlesSapPurchaseAndProducts
             ],
             'Remarks' => $remarks,
         ];
+
+        if ($paymentCreditCard !== null) {
+            $body['PaymentCreditCards'] = [$paymentCreditCard];
+        } else {
+            $body['TransferAccount'] = $transferAccount;
+            $body['TransferDate'] = $transferDate;
+            $body['TransferSum'] = $sumApplied;
+        }
 
         $response = $this->post('/IncomingPayments', $body);
         if (!$response->successful()) {
@@ -234,6 +248,52 @@ trait HandlesSapPurchaseAndProducts
         $payload['request_body'] = $body;
 
         return $payload;
+    }
+
+    private function buildIncomingPaymentCreditCardLine(string $paymentMethod, string $configuredAccount, array $data): ?array
+    {
+        $normalizedMethod = strtolower(str_replace([' ', '-', '_'], '', trim($paymentMethod)));
+        if ($normalizedMethod === '') {
+            return null;
+        }
+
+        $creditCardId = (int) config('omniful.order_payment.method_credit_cards.' . $normalizedMethod, 0);
+        if ($creditCardId <= 0) {
+            return null;
+        }
+
+        $creditAccount = $this->resolveSapTransferAccountValue(trim($configuredAccount));
+        if ($creditAccount === '') {
+            $creditAccount = trim((string) config('omniful.order_payment.method_transfer_accounts.' . $normalizedMethod, ''));
+            $creditAccount = $this->resolveSapTransferAccountValue($creditAccount);
+        }
+
+        if ($creditAccount === '') {
+            return null;
+        }
+
+        $creditSum = $this->roundSapAmount((float) ($data['sum_applied'] ?? 0));
+        if ($creditSum <= 0) {
+            return null;
+        }
+
+        $reference = trim((string) ($data['reference'] ?? '1234'));
+        if ($reference === '') {
+            $reference = '1234';
+        }
+
+        $validUntil = $this->formatDate((string) ($data['transfer_date'] ?? now()->format('Y-m-d')));
+        $validUntil = \Carbon\Carbon::parse($validUntil)->addYears(5)->format('Ymd');
+
+        return [
+            'LineNum' => 0,
+            'CreditCard' => $creditCardId,
+            'CreditAcct' => $creditAccount,
+            'CreditCardNumber' => (string) $creditCardId,
+            'CardValidUntil' => $validUntil,
+            'VoucherNum' => mb_substr($reference, 0, 50),
+            'CreditSum' => $creditSum,
+        ];
     }
 
     public function createCardFeeJournalEntryForOrder(array $data): array

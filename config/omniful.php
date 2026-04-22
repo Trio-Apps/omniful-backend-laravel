@@ -168,6 +168,18 @@ return [
             'tabby' => 'CC',
             'tab' => 'CC',
         ],
+        'method_credit_cards' => [
+            'mada' => 1,
+            'visa' => 2,
+            'master' => 3,
+            'mastercard' => 3,
+            'tabby' => 6,
+            'tamara' => 7,
+            'applepay' => 8,
+            'amex' => 9,
+            'americanexpress' => 9,
+            'zidpay' => 18,
+        ],
         'invoice_type_candidates' => array_values(array_filter(array_map(
             fn ($v) => is_numeric(trim((string) $v)) ? (int) trim((string) $v) : null,
             explode(',', (string) env('OMNIFUL_INCOMING_PAYMENT_INVOICE_TYPES', '17,13'))
