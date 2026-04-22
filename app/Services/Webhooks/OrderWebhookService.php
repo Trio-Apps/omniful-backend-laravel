@@ -605,12 +605,12 @@ class OrderWebhookService
     private function resolvePaymentMethod(array $data): string
     {
         $candidates = [
-            data_get($data, 'payment_method'),
+            data_get($data, 'invoice.payment_mode'),
+            data_get($data, 'invoice.payment_method'),
+            data_get($data, 'payment_mode'),
             data_get($data, 'payment.method'),
             data_get($data, 'payment_type'),
-            data_get($data, 'payment_mode'),
-            data_get($data, 'invoice.payment_method'),
-            data_get($data, 'invoice.payment_mode'),
+            data_get($data, 'payment_method'),
         ];
 
         foreach ($candidates as $value) {
