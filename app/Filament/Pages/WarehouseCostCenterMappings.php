@@ -6,9 +6,7 @@ use App\Models\SapCostCenter;
 use App\Models\SapCostCenterSetting;
 use App\Models\SapWarehouse;
 use Filament\Actions\Action;
-use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\Select;
-use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Forms\Concerns\InteractsWithForms;
 use Filament\Forms\Contracts\HasForms;
@@ -35,39 +33,22 @@ class WarehouseCostCenterMappings extends Page implements HasForms
 
     public function mount(): void
     {
-        $settingsByWarehouse = SapCostCenterSetting::query()
-            ->whereNotNull('warehouse_code')
-            ->get()
-            ->keyBy('warehouse_code');
-
         $global = SapCostCenterSetting::query()
             ->whereNull('warehouse_code')
             ->first();
 
-        $rows = SapWarehouse::query()
+        $firstWarehouseCode = SapWarehouse::query()
             ->orderBy('code')
-            ->get()
-            ->map(function (SapWarehouse $warehouse) use ($settingsByWarehouse, $global) {
-                $setting = $settingsByWarehouse->get($warehouse->code);
-
-                return [
-                    'warehouse_code' => $warehouse->code,
-                    'warehouse_name' => $warehouse->name,
-                    'costing_code' => $setting?->costing_code,
-                    'costing_code2' => $setting?->costing_code2,
-                    'costing_code3' => $setting?->costing_code3,
-                    'costing_code4' => $setting?->costing_code4,
-                    'costing_code5' => $setting?->costing_code5,
-                    'project_code' => $setting?->project_code,
-                ];
-            })
-            ->values()
-            ->all();
+            ->value('code');
 
         $this->form->fill([
             'apply_to_stock_transfer' => (bool) ($global?->apply_to_stock_transfer ?? false),
-            'warehouses' => $rows,
+            'selected_warehouse_code' => $firstWarehouseCode,
         ]);
+
+        if (is_string($firstWarehouseCode) && $firstWarehouseCode !== '') {
+            $this->loadWarehouseFormState($firstWarehouseCode);
+        }
     }
 
     public function form(Schema $schema): Schema
@@ -80,53 +61,48 @@ class WarehouseCostCenterMappings extends Page implements HasForms
                         Toggle::make('apply_to_stock_transfer')
                             ->label('Apply cost centers on Stock Transfer lines')
                             ->default(false),
-                        Repeater::make('warehouses')
-                            ->label('')
-                            ->schema([
-                                TextInput::make('warehouse_code')
-                                    ->label('Warehouse')
-                                    ->readOnly(),
-                                TextInput::make('warehouse_name')
-                                    ->label('Name')
-                                    ->readOnly(),
-                                Select::make('costing_code')
-                                    ->label('D1')
-                                    ->options(fn () => $this->getDistributionRuleOptions(1))
-                                    ->searchable()
-                                    ->preload(),
-                                Select::make('costing_code2')
-                                    ->label('D2')
-                                    ->options(fn () => $this->getDistributionRuleOptions(2))
-                                    ->searchable()
-                                    ->preload(),
-                                Select::make('costing_code3')
-                                    ->label('D3')
-                                    ->options(fn () => $this->getDistributionRuleOptions(3))
-                                    ->searchable()
-                                    ->preload(),
-                                Select::make('costing_code4')
-                                    ->label('D4')
-                                    ->options(fn () => $this->getDistributionRuleOptions(4))
-                                    ->searchable()
-                                    ->preload(),
-                                Select::make('costing_code5')
-                                    ->label('D5')
-                                    ->options(fn () => $this->getDistributionRuleOptions(5))
-                                    ->searchable()
-                                    ->preload(),
-                                Select::make('project_code')
-                                    ->label('Project')
-                                    ->options(fn () => $this->getProjectOptions())
-                                    ->searchable()
-                                    ->preload(),
-                            ])
-                            ->columns(4)
-                            ->addable(false)
-                            ->deletable(false)
-                            ->reorderable(false)
-                            ->collapsible()
-                            ->itemLabel(fn (array $state): ?string => ($state['warehouse_code'] ?? '') !== '' ? (($state['warehouse_code'] ?? '') . ' - ' . ($state['warehouse_name'] ?? '')) : null),
-                    ]),
+                        Select::make('selected_warehouse_code')
+                            ->label('Warehouse')
+                            ->options(fn () => $this->getWarehouseOptions())
+                            ->searchable()
+                            ->preload()
+                            ->live()
+                            ->afterStateUpdated(function ($state): void {
+                                $warehouseCode = trim((string) ($state ?? ''));
+                                $this->loadWarehouseFormState($warehouseCode);
+                            }),
+                        Select::make('costing_code')
+                            ->label('D1')
+                            ->options(fn () => $this->getDistributionRuleOptions(1))
+                            ->searchable()
+                            ->preload(),
+                        Select::make('costing_code2')
+                            ->label('D2')
+                            ->options(fn () => $this->getDistributionRuleOptions(2))
+                            ->searchable()
+                            ->preload(),
+                        Select::make('costing_code3')
+                            ->label('D3')
+                            ->options(fn () => $this->getDistributionRuleOptions(3))
+                            ->searchable()
+                            ->preload(),
+                        Select::make('costing_code4')
+                            ->label('D4')
+                            ->options(fn () => $this->getDistributionRuleOptions(4))
+                            ->searchable()
+                            ->preload(),
+                        Select::make('costing_code5')
+                            ->label('D5')
+                            ->options(fn () => $this->getDistributionRuleOptions(5))
+                            ->searchable()
+                            ->preload(),
+                        Select::make('project_code')
+                            ->label('Project')
+                            ->options(fn () => $this->getProjectOptions())
+                            ->searchable()
+                            ->preload(),
+                    ])
+                    ->columns(3),
             ])
             ->statePath('data');
     }
@@ -142,39 +118,60 @@ class WarehouseCostCenterMappings extends Page implements HasForms
             ]
         );
 
-        $seenWarehouseCodes = [];
-        foreach ((array) ($state['warehouses'] ?? []) as $row) {
-            $warehouseCode = trim((string) ($row['warehouse_code'] ?? ''));
-            if ($warehouseCode === '') {
-                continue;
-            }
-
-            $seenWarehouseCodes[] = $warehouseCode;
-
+        $warehouseCode = trim((string) ($state['selected_warehouse_code'] ?? ''));
+        if ($warehouseCode !== '') {
             SapCostCenterSetting::query()->updateOrCreate(
                 ['warehouse_code' => $warehouseCode],
                 [
-                    'costing_code' => $row['costing_code'] ?? null,
-                    'costing_code2' => $row['costing_code2'] ?? null,
-                    'costing_code3' => $row['costing_code3'] ?? null,
-                    'costing_code4' => $row['costing_code4'] ?? null,
-                    'costing_code5' => $row['costing_code5'] ?? null,
-                    'project_code' => $row['project_code'] ?? null,
+                    'costing_code' => $state['costing_code'] ?? null,
+                    'costing_code2' => $state['costing_code2'] ?? null,
+                    'costing_code3' => $state['costing_code3'] ?? null,
+                    'costing_code4' => $state['costing_code4'] ?? null,
+                    'costing_code5' => $state['costing_code5'] ?? null,
+                    'project_code' => $state['project_code'] ?? null,
                 ]
             );
-        }
-
-        if ($seenWarehouseCodes !== []) {
-            SapCostCenterSetting::query()
-                ->whereNotNull('warehouse_code')
-                ->whereNotIn('warehouse_code', $seenWarehouseCodes)
-                ->delete();
         }
 
         Notification::make()
             ->title('Warehouse cost centers saved')
             ->success()
             ->send();
+    }
+
+    private function loadWarehouseFormState(string $warehouseCode): void
+    {
+        if ($warehouseCode === '') {
+            return;
+        }
+
+        $setting = SapCostCenterSetting::query()
+            ->where('warehouse_code', $warehouseCode)
+            ->first();
+
+        $this->form->fill(array_merge(
+            $this->data,
+            [
+                'selected_warehouse_code' => $warehouseCode,
+                'costing_code' => $setting?->costing_code,
+                'costing_code2' => $setting?->costing_code2,
+                'costing_code3' => $setting?->costing_code3,
+                'costing_code4' => $setting?->costing_code4,
+                'costing_code5' => $setting?->costing_code5,
+                'project_code' => $setting?->project_code,
+            ]
+        ));
+    }
+
+    private function getWarehouseOptions(): array
+    {
+        return SapWarehouse::query()
+            ->orderBy('code')
+            ->get()
+            ->mapWithKeys(fn (SapWarehouse $warehouse) => [
+                $warehouse->code => trim($warehouse->code . ' - ' . ($warehouse->name ?: $warehouse->code)),
+            ])
+            ->all();
     }
 
     private function getDistributionRuleOptions(int $dimension): array
