@@ -166,7 +166,6 @@ trait HandlesSapPurchaseAndProducts
 
         $transferAccount = trim((string) (
             $data['transfer_account']
-            ?? $this->getIntegrationSettingValue('order_payment_transfer_account')
             ?? config('omniful.order_payment.transfer_account', '')
         ));
         $transferAccount = $this->resolveSapTransferAccountValue($transferAccount);
@@ -3173,8 +3172,7 @@ trait HandlesSapPurchaseAndProducts
             return $resolved;
         }
 
-        $fallback = trim((string) ($this->getIntegrationSettingValue('order_fallback_warehouse_code')
-            ?? config('omniful.order_fallback.warehouse_code', '')));
+        $fallback = trim((string) config('omniful.order_fallback.warehouse_code', ''));
         return $fallback !== '' ? $fallback : null;
     }
 
@@ -3720,8 +3718,7 @@ trait HandlesSapPurchaseAndProducts
 
     private function resolveConfiguredFallbackCustomerCode(string $cardName, mixed $email): ?string
     {
-        $fallback = trim((string) ($this->getIntegrationSettingValue('order_fallback_customer_code')
-            ?? config('omniful.order_fallback.customer_code', '')));
+        $fallback = trim((string) config('omniful.order_fallback.customer_code', ''));
         if ($fallback === '') {
             return null;
         }
@@ -3751,13 +3748,8 @@ trait HandlesSapPurchaseAndProducts
 
     private function getOrderFallbackCustomerCodeBySourceMap(): array
     {
-        $raw = $this->getIntegrationSettingValue('order_fallback_customer_code_by_source');
-        if (!is_string($raw) || trim($raw) === '') {
-            $fallback = config('omniful.order_fallback.customer_code_by_source', []);
-            return is_array($fallback) ? $fallback : [];
-        }
-
-        return $this->parseSourceCustomerCodeMap($raw);
+        $fallback = config('omniful.order_fallback.customer_code_by_source', []);
+        return is_array($fallback) ? $fallback : [];
     }
 
     private function parseSourceCustomerCodeMap(string $raw): array

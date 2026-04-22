@@ -82,22 +82,6 @@ class IntegrationControlSettings extends Page implements HasForms
                             ->label('Apply cost centers on Stock Transfer lines')
                             ->default(false),
                     ]),
-                Section::make('Order Flow Fallbacks')
-                    ->description('Fallback values for Omniful to SAP sales flows when payload mapping is incomplete')
-                    ->schema([
-                        TextInput::make('order_fallback_customer_code')
-                            ->label('Fallback Customer Code')
-                            ->placeholder('Example: C00046'),
-                        TextInput::make('order_fallback_warehouse_code')
-                            ->label('Fallback Warehouse Code')
-                            ->placeholder('Example: CEN11'),
-                        Textarea::make('order_fallback_customer_code_by_source')
-                            ->label('Customer Code by Source')
-                            ->rows(4)
-                            ->placeholder("One per line\nsalla:C00046\nsource2:C00047")
-                            ->helperText('Format: source_key:customer_code, one pair per line or comma-separated.'),
-                    ])
-                    ->columns(2),
                 Section::make('Order Payments')
                     ->description('Configure incoming payment defaults using SAP bank accounts pulled from the finance master catalog')
                     ->schema([
@@ -105,19 +89,6 @@ class IntegrationControlSettings extends Page implements HasForms
                             ->label('Enable Incoming Payments')
                             ->default(false)
                             ->helperText('Disable temporarily to stop creating SAP incoming payments from Omniful sales orders.'),
-                        Select::make('order_payment_transfer_account')
-                            ->label('Incoming Payment Transfer Account')
-                            ->options(fn () => $this->getBankAccountOptions())
-                            ->searchable()
-                            ->preload()
-                            ->helperText('Used for prepaid incoming payments created from Omniful sales orders.'),
-                        Select::make('order_payment_invoice_type_candidates')
-                            ->label('Incoming Payment Invoice Type Candidates')
-                            ->options($this->getIncomingPaymentInvoiceTypeOptions())
-                            ->multiple()
-                            ->searchable()
-                            ->preload()
-                            ->helperText('Ordered SAP receipt invoice types to try when creating incoming payments.'),
                         Textarea::make('order_payment_method_map')
                             ->label('Payment Method Mapping')
                             ->rows(5)
@@ -156,15 +127,7 @@ class IntegrationControlSettings extends Page implements HasForms
                 'sync_direction_suppliers' => $state['sync_direction_suppliers'] ?? null,
                 'sync_direction_warehouses' => $state['sync_direction_warehouses'] ?? null,
                 'sync_direction_inventory' => $state['sync_direction_inventory'] ?? null,
-                'order_fallback_customer_code' => $state['order_fallback_customer_code'] ?? null,
-                'order_fallback_customer_code_by_source' => $state['order_fallback_customer_code_by_source'] ?? null,
-                'order_fallback_warehouse_code' => $state['order_fallback_warehouse_code'] ?? null,
                 'order_payment_enabled' => (bool) ($state['order_payment_enabled'] ?? false),
-                'order_payment_transfer_account' => $state['order_payment_transfer_account'] ?? null,
-                'order_payment_invoice_type_candidates' => array_values(array_map(
-                    'intval',
-                    array_filter((array) ($state['order_payment_invoice_type_candidates'] ?? []), fn ($value) => is_numeric($value))
-                )),
                 'order_payment_method_map' => $state['order_payment_method_map'] ?? null,
                 'order_tax_code_ksa_taxable' => $state['order_tax_code_ksa_taxable'] ?? null,
                 'order_tax_code_ksa_zero' => $state['order_tax_code_ksa_zero'] ?? null,
