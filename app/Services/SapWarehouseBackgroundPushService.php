@@ -15,6 +15,17 @@ class SapWarehouseBackgroundPushService
     {
         $activeEvent = $this->activeEvent();
         if ($activeEvent !== null) {
+            if ($this->shouldRequeueStaleEvent($activeEvent)) {
+                $this->markRequeued($activeEvent, $triggeredBy);
+                RunSapWarehouseBackgroundPush::dispatch($activeEvent->id);
+
+                return [
+                    'queued' => true,
+                    'already_running' => false,
+                    'event' => $activeEvent,
+                ];
+            }
+
             return [
                 'queued' => false,
                 'already_running' => true,
@@ -50,5 +61,25 @@ class SapWarehouseBackgroundPushService
             ->where('updated_at', '>=', now()->subHours(6))
             ->latest('id')
             ->first();
+    }
+
+    private function shouldRequeueStaleEvent(SapSyncEvent $event): bool
+    {
+        return (string) $event->sap_status === 'queued'
+            && $event->updated_at !== null
+            && $event->updated_at->lt(now()->subMinutes(5));
+    }
+
+    private function markRequeued(SapSyncEvent $event, ?string $triggeredBy): void
+    {
+        $payload = (array) ($event->payload ?? []);
+        $event->update([
+            'sap_status' => 'queued',
+            'sap_error' => null,
+            'payload' => array_merge($payload, [
+                'requeued_at' => now()->toDateTimeString(),
+                'requeued_by' => $triggeredBy,
+            ]),
+        ]);
     }
 }
