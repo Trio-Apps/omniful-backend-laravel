@@ -223,6 +223,13 @@ trait HandlesSapPurchaseAndProducts
             }
         }
 
+        foreach ($references as $reference) {
+            $invoice = $this->findArInvoiceByPayloadScan((string) $reference);
+            if ($invoice !== null) {
+                return $invoice;
+            }
+        }
+
         return null;
     }
 
@@ -331,6 +338,51 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return $this->normalizeFoundArInvoice($invoice);
+    }
+
+    private function findArInvoiceByPayloadScan(string $reference): ?array
+    {
+        $reference = trim($reference);
+        if ($reference === '') {
+            return null;
+        }
+
+        $response = $this->get('/Invoices?$orderby=DocEntry desc&$top=50');
+        if (!$response->successful()) {
+            Log::warning('SAP existing AR invoice payload scan failed', [
+                'reference' => $reference,
+                'status' => $response->status(),
+                'body' => $response->body(),
+            ]);
+
+            return null;
+        }
+
+        foreach ((array) ($response->json('value') ?? []) as $invoice) {
+            if (!is_array($invoice)) {
+                continue;
+            }
+
+            $encoded = json_encode($invoice, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            if (!is_string($encoded) || !str_contains($encoded, $reference)) {
+                continue;
+            }
+
+            Log::warning('Found duplicate SAP AR invoice by payload scan', [
+                'reference' => $reference,
+                'doc_entry' => $invoice['DocEntry'] ?? null,
+                'doc_num' => $invoice['DocNum'] ?? null,
+                'num_at_card' => $invoice['NumAtCard'] ?? null,
+            ]);
+
+            return $this->normalizeFoundArInvoice($invoice);
+        }
+
+        Log::warning('Duplicate SAP AR invoice lookup exhausted', [
+            'reference' => $reference,
+        ]);
+
+        return null;
     }
 
     private function normalizeFoundArInvoice(array $invoice): array
