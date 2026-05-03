@@ -6,6 +6,18 @@ use Illuminate\Database\Eloquent\Model;
 
 class OmnifulOrder extends Model
 {
+    private const JSON_PAYLOAD_ATTRIBUTES = [
+        'sap_order_response',
+        'sap_payment_response',
+        'sap_card_fee_response',
+        'sap_delivery_response',
+        'sap_cogs_response',
+        'sap_credit_note_response',
+        'sap_cancel_cogs_response',
+        'last_payload',
+        'last_headers',
+    ];
+
     protected $fillable = [
         'external_id',
         'omniful_status',
@@ -62,4 +74,42 @@ class OmnifulOrder extends Model
         'last_payload' => 'array',
         'last_headers' => 'array',
     ];
+
+    public function setAttribute($key, $value)
+    {
+        if (in_array((string) $key, self::JSON_PAYLOAD_ATTRIBUTES, true)) {
+            $value = $this->sanitizeJsonPayload($value);
+        }
+
+        return parent::setAttribute($key, $value);
+    }
+
+    private function sanitizeJsonPayload(mixed $value): mixed
+    {
+        if (is_array($value)) {
+            foreach ($value as $key => $item) {
+                $value[$key] = $this->sanitizeJsonPayload($item);
+            }
+
+            return $value;
+        }
+
+        if (is_object($value)) {
+            foreach (get_object_vars($value) as $key => $item) {
+                $value->{$key} = $this->sanitizeJsonPayload($item);
+            }
+
+            return $value;
+        }
+
+        if (!is_string($value)) {
+            return $value;
+        }
+
+        if (mb_check_encoding($value, 'UTF-8')) {
+            return $value;
+        }
+
+        return mb_convert_encoding($value, 'UTF-8', 'UTF-8, ISO-8859-1, Windows-1252');
+    }
 }
