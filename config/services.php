@@ -44,6 +44,7 @@ return [
         'post_timeout' => (int) env('SAP_POST_TIMEOUT', 120),
         'login_timeout' => (int) env('SAP_LOGIN_TIMEOUT', 30),
         'logout_timeout' => (int) env('SAP_LOGOUT_TIMEOUT', 10),
+        'duplicate_invoice_scan_limit' => (int) env('SAP_DUPLICATE_INVOICE_SCAN_LIMIT', 2000),
     ],
 
 ];

@@ -347,39 +347,60 @@ trait HandlesSapPurchaseAndProducts
             return null;
         }
 
-        $response = $this->get('/Invoices?$orderby=DocEntry desc&$top=50');
-        if (!$response->successful()) {
-            Log::warning('SAP existing AR invoice payload scan failed', [
-                'reference' => $reference,
-                'status' => $response->status(),
-                'body' => $response->body(),
-            ]);
+        $top = 100;
+        $maxRows = max($top, (int) config('services.sap.duplicate_invoice_scan_limit', 2000));
+        $scanned = 0;
 
-            return null;
-        }
+        while ($scanned < $maxRows) {
+            $response = $this->get("/Invoices?\$orderby=DocEntry desc&\$top={$top}&\$skip={$scanned}");
+            if (!$response->successful()) {
+                Log::warning('SAP existing AR invoice payload scan failed', [
+                    'reference' => $reference,
+                    'skip' => $scanned,
+                    'status' => $response->status(),
+                    'body' => $response->body(),
+                ]);
 
-        foreach ((array) ($response->json('value') ?? []) as $invoice) {
-            if (!is_array($invoice)) {
-                continue;
+                return null;
             }
 
-            $encoded = json_encode($invoice, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-            if (!is_string($encoded) || !str_contains($encoded, $reference)) {
-                continue;
+            $rows = (array) ($response->json('value') ?? []);
+            if ($rows === []) {
+                break;
             }
 
-            Log::warning('Found duplicate SAP AR invoice by payload scan', [
-                'reference' => $reference,
-                'doc_entry' => $invoice['DocEntry'] ?? null,
-                'doc_num' => $invoice['DocNum'] ?? null,
-                'num_at_card' => $invoice['NumAtCard'] ?? null,
-            ]);
+            foreach ($rows as $invoice) {
+                if (!is_array($invoice)) {
+                    continue;
+                }
 
-            return $this->normalizeFoundArInvoice($invoice);
+                $encoded = json_encode($invoice, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                if (!is_string($encoded) || !str_contains($encoded, $reference)) {
+                    continue;
+                }
+
+                Log::warning('Found duplicate SAP AR invoice by payload scan', [
+                    'reference' => $reference,
+                    'scanned' => $scanned,
+                    'doc_entry' => $invoice['DocEntry'] ?? null,
+                    'doc_num' => $invoice['DocNum'] ?? null,
+                    'num_at_card' => $invoice['NumAtCard'] ?? null,
+                ]);
+
+                return $this->normalizeFoundArInvoice($invoice);
+            }
+
+            $count = count($rows);
+            $scanned += $count;
+            if ($count < $top) {
+                break;
+            }
         }
 
         Log::warning('Duplicate SAP AR invoice lookup exhausted', [
             'reference' => $reference,
+            'scanned' => $scanned,
+            'limit' => $maxRows,
         ]);
 
         return null;
