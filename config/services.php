@@ -39,4 +39,11 @@ return [
         'read_api_token' => env('INTEGRATION_READ_API_TOKEN'),
     ],
 
+    'sap' => [
+        'http_timeout' => (int) env('SAP_HTTP_TIMEOUT', 60),
+        'post_timeout' => (int) env('SAP_POST_TIMEOUT', 120),
+        'login_timeout' => (int) env('SAP_LOGIN_TIMEOUT', 30),
+        'logout_timeout' => (int) env('SAP_LOGOUT_TIMEOUT', 10),
+    ],
+
 ];

@@ -14,7 +14,7 @@ trait HandlesSapHttp
         $response = null;
 
         try {
-            $client = Http::timeout(30)->acceptJson();
+            $client = Http::timeout($this->sapHttpTimeout())->acceptJson();
             if (!$this->verifySsl) {
                 $client = $client->withoutVerifying();
             }
@@ -45,7 +45,7 @@ trait HandlesSapHttp
         $response = null;
 
         try {
-            $client = Http::timeout(30)->acceptJson();
+            $client = Http::timeout($this->sapPostTimeout())->acceptJson();
             if (!$this->verifySsl) {
                 $client = $client->withoutVerifying();
             }
@@ -119,7 +119,7 @@ trait HandlesSapHttp
         $response = null;
 
         try {
-            $client = Http::timeout(30)->acceptJson();
+            $client = Http::timeout($this->sapHttpTimeout())->acceptJson();
             if (!$this->verifySsl) {
                 $client = $client->withoutVerifying();
             }
@@ -150,7 +150,7 @@ trait HandlesSapHttp
         $response = null;
 
         try {
-            $client = Http::timeout(30)->acceptJson();
+            $client = Http::timeout($this->sapHttpTimeout())->acceptJson();
             if (!$this->verifySsl) {
                 $client = $client->withoutVerifying();
             }
@@ -180,7 +180,7 @@ trait HandlesSapHttp
             throw new \RuntimeException('SAP credentials are incomplete');
         }
 
-        $client = Http::timeout(20)->acceptJson();
+        $client = Http::timeout($this->sapLoginTimeout())->acceptJson();
         if (!$this->verifySsl) {
             $client = $client->withoutVerifying();
         }
@@ -214,7 +214,7 @@ trait HandlesSapHttp
 
     private function logout(string $cookie): void
     {
-        $client = Http::timeout(10)->acceptJson();
+        $client = Http::timeout($this->sapLogoutTimeout())->acceptJson();
         if (!$this->verifySsl) {
             $client = $client->withoutVerifying();
         }
@@ -239,5 +239,24 @@ trait HandlesSapHttp
             return now()->format('Y-m-d');
         }
     }
-}
 
+    private function sapHttpTimeout(): int
+    {
+        return max(1, (int) config('services.sap.http_timeout', 60));
+    }
+
+    private function sapPostTimeout(): int
+    {
+        return max(1, (int) config('services.sap.post_timeout', 120));
+    }
+
+    private function sapLoginTimeout(): int
+    {
+        return max(1, (int) config('services.sap.login_timeout', 30));
+    }
+
+    private function sapLogoutTimeout(): int
+    {
+        return max(1, (int) config('services.sap.logout_timeout', 10));
+    }
+}
