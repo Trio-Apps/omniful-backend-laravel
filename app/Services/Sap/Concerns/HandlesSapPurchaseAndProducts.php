@@ -110,6 +110,7 @@ trait HandlesSapPurchaseAndProducts
             'TaxDate' => $taxDate,
             'DocumentLines' => $lines,
             'Comments' => $comments,
+            'NumAtCard' => $externalId,
             // SAP B1 AR Reserve Invoice via Invoices with ReserveInvoice = tYES
             'ReserveInvoice' => 'tYES',
         ];
@@ -209,6 +210,13 @@ trait HandlesSapPurchaseAndProducts
         }
 
         foreach ($references as $reference) {
+            $invoice = $this->findArInvoiceByDocumentReference((string) $reference);
+            if ($invoice !== null) {
+                return $invoice;
+            }
+        }
+
+        foreach ($references as $reference) {
             $invoice = $this->findArReserveInvoiceByComments((string) $reference);
             if ($invoice !== null) {
                 return $invoice;
@@ -232,7 +240,7 @@ trait HandlesSapPurchaseAndProducts
         $escapedField = str_replace("'", "''", $field);
         $escapedValue = str_replace("'", "''", $value);
         $filter = rawurlencode("{$escapedField} eq '{$escapedValue}'");
-        $select = 'DocEntry,DocNum,CardCode,DocDate,DocTotal,DocStatus,ReserveInvoice,Comments';
+        $select = 'DocEntry,DocNum,CardCode,DocDate,DocTotal,DocStatus,ReserveInvoice,NumAtCard,Comments';
         $response = $this->get("/Invoices?\$select={$select}&\$filter={$filter}&\$orderby=DocEntry desc&\$top=1");
 
         if (!$response->successful()) {
@@ -251,11 +259,47 @@ trait HandlesSapPurchaseAndProducts
             return null;
         }
 
-        if ((string) ($invoice['ReserveInvoice'] ?? '') !== 'tYES') {
+        return $this->normalizeFoundArInvoice($invoice);
+    }
+
+    private function findArInvoiceByDocumentReference(string $reference): ?array
+    {
+        $reference = trim($reference);
+        if ($reference === '') {
             return null;
         }
 
-        return $invoice;
+        $select = 'DocEntry,DocNum,CardCode,DocDate,DocTotal,DocStatus,ReserveInvoice,NumAtCard,Comments';
+        $escapedValue = str_replace("'", "''", $reference);
+        $filters = ["NumAtCard eq '{$escapedValue}'"];
+
+        if (ctype_digit($reference)) {
+            $filters[] = 'DocNum eq ' . (int) $reference;
+        }
+
+        foreach ($filters as $filterExpression) {
+            $filter = rawurlencode($filterExpression);
+            $response = $this->get("/Invoices?\$select={$select}&\$filter={$filter}&\$orderby=DocEntry desc&\$top=1");
+
+            if (!$response->successful()) {
+                Log::warning('SAP existing AR invoice document-reference lookup failed', [
+                    'reference' => $reference,
+                    'filter' => $filterExpression,
+                    'status' => $response->status(),
+                    'body' => $response->body(),
+                ]);
+
+                continue;
+            }
+
+            $rows = (array) ($response->json('value') ?? []);
+            $invoice = $rows[0] ?? null;
+            if (is_array($invoice)) {
+                return $this->normalizeFoundArInvoice($invoice);
+            }
+        }
+
+        return null;
     }
 
     private function findArReserveInvoiceByComments(string $reference): ?array
@@ -267,7 +311,7 @@ trait HandlesSapPurchaseAndProducts
 
         $escapedValue = str_replace("'", "''", $reference);
         $filter = rawurlencode("contains(Comments,'{$escapedValue}')");
-        $select = 'DocEntry,DocNum,CardCode,DocDate,DocTotal,DocStatus,ReserveInvoice,Comments';
+        $select = 'DocEntry,DocNum,CardCode,DocDate,DocTotal,DocStatus,ReserveInvoice,NumAtCard,Comments';
         $response = $this->get("/Invoices?\$select={$select}&\$filter={$filter}&\$orderby=DocEntry desc&\$top=1");
 
         if (!$response->successful()) {
@@ -286,10 +330,20 @@ trait HandlesSapPurchaseAndProducts
             return null;
         }
 
+        return $this->normalizeFoundArInvoice($invoice);
+    }
+
+    private function normalizeFoundArInvoice(array $invoice): array
+    {
         if ((string) ($invoice['ReserveInvoice'] ?? '') !== 'tYES') {
-            return null;
+            Log::warning('Reusing existing SAP AR invoice that is not marked as reserve invoice', [
+                'doc_entry' => $invoice['DocEntry'] ?? null,
+                'doc_num' => $invoice['DocNum'] ?? null,
+                'reserve_invoice' => $invoice['ReserveInvoice'] ?? null,
+            ]);
         }
 
+        $invoice['ignored'] = false;
         return $invoice;
     }
 
