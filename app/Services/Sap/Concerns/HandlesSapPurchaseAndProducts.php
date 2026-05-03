@@ -128,13 +128,14 @@ trait HandlesSapPurchaseAndProducts
         }
 
         if (!$response->successful()) {
-            if ($this->isSapArInvoiceAlreadyExistsError((string) $response->body())) {
-                $existingInvoice = $this->findExistingArReserveInvoiceForOmnifulOrder($body, $data, $externalId);
+            $responseBody = (string) $response->body();
+            if ($this->isSapArInvoiceAlreadyExistsError($responseBody)) {
+                $existingInvoice = $this->findExistingArReserveInvoiceForOmnifulOrder($body, $data, $externalId, $responseBody);
                 if ($existingInvoice !== null) {
                     $existingInvoice['ignored'] = false;
                     $existingInvoice['reused_existing'] = true;
                     $existingInvoice['request_body'] = $body;
-                    $existingInvoice['sap_duplicate_error'] = (string) $response->body();
+                    $existingInvoice['sap_duplicate_error'] = $responseBody;
 
                     return $existingInvoice;
                 }
@@ -177,9 +178,16 @@ trait HandlesSapPurchaseAndProducts
             && str_contains($normalized, 'already exists');
     }
 
-    private function findExistingArReserveInvoiceForOmnifulOrder(array $body, array $data, string $externalId): ?array
+    private function findExistingArReserveInvoiceForOmnifulOrder(array $body, array $data, string $externalId, string $duplicateErrorBody = ''): ?array
     {
         $orderReference = $this->resolveOmnifulOrderReferenceForSap($data, $externalId);
+        $duplicateReference = $this->extractSapDuplicateArInvoiceReference($duplicateErrorBody);
+        $references = array_values(array_unique(array_filter([
+            $orderReference,
+            $externalId,
+            $duplicateReference,
+        ], fn ($value) => is_string($value) && trim($value) !== '')));
+
         $fields = array_values(array_unique(array_filter([
             trim((string) config('omniful.order_sync.order_number_udf_field', 'U_omo')),
             'U_ZidId',
@@ -187,18 +195,36 @@ trait HandlesSapPurchaseAndProducts
         ], fn ($field) => is_string($field) && trim($field) !== '')));
 
         foreach ($fields as $field) {
-            $value = trim((string) ($body[$field] ?? ($field === trim((string) config('omniful.order_sync.order_number_udf_field', 'U_omo')) ? $orderReference : '')));
-            if ($value === '') {
-                continue;
+            $values = $references;
+            if (isset($body[$field])) {
+                array_unshift($values, trim((string) $body[$field]));
             }
 
-            $invoice = $this->findArReserveInvoiceByFieldValue($field, $value);
+            foreach (array_values(array_unique(array_filter($values, fn ($value) => trim((string) $value) !== ''))) as $value) {
+                $invoice = $this->findArReserveInvoiceByFieldValue($field, (string) $value);
+                if ($invoice !== null) {
+                    return $invoice;
+                }
+            }
+        }
+
+        foreach ($references as $reference) {
+            $invoice = $this->findArReserveInvoiceByComments((string) $reference);
             if ($invoice !== null) {
                 return $invoice;
             }
         }
 
         return null;
+    }
+
+    private function extractSapDuplicateArInvoiceReference(string $body): string
+    {
+        if (preg_match('/\((?:\d+)\)\s*([^\s]+)\s+AR\s+invoice/i', $body, $matches)) {
+            return trim((string) ($matches[1] ?? ''));
+        }
+
+        return '';
     }
 
     private function findArReserveInvoiceByFieldValue(string $field, string $value): ?array
@@ -212,6 +238,41 @@ trait HandlesSapPurchaseAndProducts
         if (!$response->successful()) {
             Log::warning('SAP existing AR reserve invoice lookup failed', [
                 'field' => $field,
+                'status' => $response->status(),
+                'body' => $response->body(),
+            ]);
+
+            return null;
+        }
+
+        $rows = (array) ($response->json('value') ?? []);
+        $invoice = $rows[0] ?? null;
+        if (!is_array($invoice)) {
+            return null;
+        }
+
+        if ((string) ($invoice['ReserveInvoice'] ?? '') !== 'tYES') {
+            return null;
+        }
+
+        return $invoice;
+    }
+
+    private function findArReserveInvoiceByComments(string $reference): ?array
+    {
+        $reference = trim($reference);
+        if ($reference === '') {
+            return null;
+        }
+
+        $escapedValue = str_replace("'", "''", $reference);
+        $filter = rawurlencode("contains(Comments,'{$escapedValue}')");
+        $select = 'DocEntry,DocNum,CardCode,DocDate,DocTotal,DocStatus,ReserveInvoice,Comments';
+        $response = $this->get("/Invoices?\$select={$select}&\$filter={$filter}&\$orderby=DocEntry desc&\$top=1");
+
+        if (!$response->successful()) {
+            Log::warning('SAP existing AR reserve invoice comments lookup failed', [
+                'reference' => $reference,
                 'status' => $response->status(),
                 'body' => $response->body(),
             ]);
