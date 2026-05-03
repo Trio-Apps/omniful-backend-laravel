@@ -18,7 +18,6 @@ use Filament\Tables\Filters\SelectFilter;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 use Throwable;
 
 class OmnifulOrderMonitor extends Page implements HasTable
@@ -279,14 +278,11 @@ class OmnifulOrderMonitor extends Page implements HasTable
                         // Ask active workers to stop gracefully before cleanup.
                         Artisan::call('queue:restart');
 
-                        DB::transaction(function () {
-                            DB::table('omniful_orders')->delete();
-                            DB::table('omniful_order_events')->delete();
-                            DB::table('jobs')->where('queue', 'omniful-orders')->delete();
-                            if (Schema::hasTable('failed_jobs')) {
-                                DB::table('failed_jobs')->where('queue', 'omniful-orders')->delete();
-                            }
-                        });
+                        $this->truncateOrderTables();
+                        DB::table('jobs')->where('queue', 'omniful-orders')->delete();
+                        if (DB::getSchemaBuilder()->hasTable('failed_jobs')) {
+                            DB::table('failed_jobs')->where('queue', 'omniful-orders')->delete();
+                        }
 
                         // Trigger workers restart after cleanup (for supervisor-managed workers).
                         Artisan::call('queue:restart');
@@ -305,5 +301,25 @@ class OmnifulOrderMonitor extends Page implements HasTable
                     }
                 }),
         ];
+    }
+
+    private function truncateOrderTables(): void
+    {
+        $driver = DB::getDriverName();
+
+        if (in_array($driver, ['mysql', 'mariadb'], true)) {
+            DB::statement('SET FOREIGN_KEY_CHECKS=0');
+            try {
+                DB::table('omniful_order_events')->truncate();
+                DB::table('omniful_orders')->truncate();
+            } finally {
+                DB::statement('SET FOREIGN_KEY_CHECKS=1');
+            }
+
+            return;
+        }
+
+        DB::table('omniful_order_events')->delete();
+        DB::table('omniful_orders')->delete();
     }
 }
