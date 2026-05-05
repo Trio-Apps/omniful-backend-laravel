@@ -10,6 +10,7 @@ use App\Models\OmnifulOrderEvent;
 use App\Models\OmnifulProductEvent;
 use App\Models\OmnifulPurchaseOrderEvent;
 use App\Models\OmnifulReturnOrderEvent;
+use App\Models\OmnifulStockTransferEvent;
 use App\Services\IntegrationDirectionService;
 use App\Services\SapServiceLayerClient;
 
@@ -146,6 +147,34 @@ class WebhookRetryService
             $event->sap_status = 'failed';
             $event->sap_error = $e->getMessage();
             $event->save();
+            return ['ok' => false, 'message' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * @return array{ok:bool,message:string}
+     */
+    public function retryStockTransferEvent(OmnifulStockTransferEvent $event): array
+    {
+        if (app(IntegrationDirectionService::class)->isSapToOmniful('inventory')) {
+            $event->sap_status = 'ignored';
+            $event->sap_error = 'Ignored: inventory sync direction is SAP -> Omniful';
+            $event->save();
+
+            return ['ok' => false, 'message' => 'Inventory direction is SAP -> Omniful'];
+        }
+
+        try {
+            $event->sap_error = null;
+            $event->save();
+            app(StockTransferWebhookService::class)->process($event);
+
+            return ['ok' => true, 'message' => 'Stock transfer event retried successfully'];
+        } catch (\Throwable $e) {
+            $event->sap_status = 'failed';
+            $event->sap_error = $e->getMessage();
+            $event->save();
+
             return ['ok' => false, 'message' => $e->getMessage()];
         }
     }

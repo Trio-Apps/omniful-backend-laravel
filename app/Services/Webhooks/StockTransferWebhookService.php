@@ -2,12 +2,12 @@
 
 namespace App\Services\Webhooks;
 
-use App\Models\OmnifulInventoryEvent;
 use App\Services\SapServiceLayerClient;
+use Illuminate\Database\Eloquent\Model;
 
 class StockTransferWebhookService
 {
-    public function process(OmnifulInventoryEvent $event): void
+    public function process(Model $event): void
     {
         $payload = (array) ($event->payload ?? []);
         $data = (array) data_get($payload, 'data', []);
@@ -28,7 +28,9 @@ class StockTransferWebhookService
         }
 
         if ($event->external_id) {
-            $existing = OmnifulInventoryEvent::where('external_id', $event->external_id)
+            $eventModel = $event::class;
+            $existing = $eventModel::query()
+                ->where('external_id', $event->external_id)
                 ->where('id', '!=', $event->id)
                 ->whereNotNull('sap_doc_entry')
                 ->latest()

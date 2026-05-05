@@ -2,7 +2,7 @@
 
 namespace App\Http\Controllers\Webhooks;
 
-use App\Models\OmnifulInventoryEvent;
+use App\Models\OmnifulStockTransferEvent;
 use App\Services\IntegrationDirectionService;
 use App\Services\Webhooks\StockTransferWebhookService;
 use Illuminate\Http\Request;
@@ -12,13 +12,13 @@ class OmnifulStockTransferWebhookController extends OmnifulWebhookBase
 {
     public function __invoke(Request $request, StockTransferWebhookService $service)
     {
-        $result = $this->storeEvent($request, 'stock-transfer-request', OmnifulInventoryEvent::class, false);
+        $result = $this->storeEvent($request, 'stock-transfer-request', OmnifulStockTransferEvent::class, false);
 
         if (isset($result['response'])) {
             return $result['response'];
         }
 
-        /** @var OmnifulInventoryEvent $event */
+        /** @var OmnifulStockTransferEvent $event */
         $event = $result['event'];
         $isDuplicate = (bool) ($result['duplicate'] ?? false);
 

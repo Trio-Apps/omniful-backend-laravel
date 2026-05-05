@@ -29,7 +29,10 @@ class OmnifulInventoryEvents extends Page implements HasTable
 
     protected function getTableQuery(): Builder
     {
-        return OmnifulInventoryEvent::query()->orderByDesc('received_at');
+        return OmnifulInventoryEvent::query()
+            ->where('payload', 'not like', '%stock_transfer%')
+            ->where('payload', 'not like', '%stock-transfer%')
+            ->orderByDesc('received_at');
     }
 
     protected function getTableColumns(): array

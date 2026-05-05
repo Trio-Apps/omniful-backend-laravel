@@ -3263,19 +3263,56 @@ trait HandlesSapPurchaseAndProducts
 
     private function extractOrderFreightTaxPercent(array $data): float
     {
-        $candidates = [
-            data_get($data, 'invoice.shipping_tax_percent'),
-            data_get($data, 'invoice.delivery_tax_percent'),
-            data_get($data, 'shipping_tax_percent'),
-            data_get($data, 'delivery_tax_percent'),
-            data_get($data, 'invoice.additional_charges.0.tax_percentage'),
-            data_get($data, 'invoice.shipping_tax'),
-            data_get($data, 'shipping_tax'),
+        $explicitPercentPaths = [
+            'invoice.shipping_tax_percent',
+            'invoice.delivery_tax_percent',
+            'shipping_tax_percent',
+            'delivery_tax_percent',
         ];
 
-        foreach ($candidates as $candidate) {
+        foreach ($explicitPercentPaths as $path) {
+            $candidate = data_get($data, $path);
             if (is_numeric($candidate)) {
                 return (float) $candidate;
+            }
+        }
+
+        $charges = (array) data_get($data, 'invoice.additional_charges', data_get($data, 'additional_charges', []));
+        foreach ($charges as $charge) {
+            $type = strtolower(trim((string) data_get($charge, 'type', '')));
+            if (!in_array($type, ['shipment_fee', 'shipping_fee', 'delivery_fee', 'freight'], true)) {
+                continue;
+            }
+
+            $taxPercentage = data_get($charge, 'tax_percentage');
+            if (is_numeric($taxPercentage)) {
+                return (float) $taxPercentage;
+            }
+        }
+
+        $explicitTaxAmountPaths = [
+            'invoice.shipping_tax',
+            'invoice.delivery_tax',
+            'shipping_tax',
+            'delivery_tax',
+        ];
+
+        foreach ($explicitTaxAmountPaths as $path) {
+            $candidate = data_get($data, $path);
+            if (is_numeric($candidate)) {
+                return (float) $candidate > 0 ? $this->inferFreightTaxPercentFromAmount($data, (float) $candidate) : 0.0;
+            }
+        }
+
+        foreach ($charges as $charge) {
+            $type = strtolower(trim((string) data_get($charge, 'type', '')));
+            if (!in_array($type, ['shipment_fee', 'shipping_fee', 'delivery_fee', 'freight'], true)) {
+                continue;
+            }
+
+            $taxAmount = data_get($charge, 'tax_amount');
+            if (is_numeric($taxAmount)) {
+                return (float) $taxAmount > 0 ? $this->inferFreightTaxPercentFromAmount($data, (float) $taxAmount) : 0.0;
             }
         }
 
@@ -3288,6 +3325,21 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return 0.0;
+    }
+
+    private function inferFreightTaxPercentFromAmount(array $data, float $taxAmount): float
+    {
+        $freightGross = $this->extractOrderFreightGrossAmount($data);
+        if ($freightGross <= 0 || $taxAmount <= 0 || $taxAmount >= $freightGross) {
+            return 0.0;
+        }
+
+        $freightNet = max($freightGross - $taxAmount, 0.0);
+        if ($freightNet <= 0) {
+            return 0.0;
+        }
+
+        return ($taxAmount / $freightNet) * 100;
     }
 
     private function resolveSapTaxCodeForOrderLine(array $data, array $item): string
