@@ -504,7 +504,7 @@ class OrderWebhookService
 
         foreach ($candidates as $value) {
             if (is_numeric($value) && (float) $value > 0) {
-                return (float) $value;
+                return round((float) $value, 2);
             }
         }
 
@@ -706,7 +706,7 @@ class OrderWebhookService
 
         foreach ($candidates as $value) {
             if (is_numeric($value) && (float) $value > 0) {
-                return (float) $value;
+                return round((float) $value, 2);
             }
         }
 

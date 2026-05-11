@@ -13,6 +13,7 @@ use App\Models\OmnifulReturnOrderEvent;
 use App\Models\OmnifulStockTransferEvent;
 use App\Services\IntegrationDirectionService;
 use App\Services\SapServiceLayerClient;
+use App\Support\Utf8;
 
 class WebhookRetryService
 {
@@ -69,10 +70,11 @@ class WebhookRetryService
             app(ReturnOrderWebhookService::class)->process($event);
             return ['ok' => true, 'message' => 'Return order retried successfully'];
         } catch (\Throwable $e) {
+            $message = Utf8::sanitizeString($e->getMessage());
             $event->sap_status = 'failed';
-            $event->sap_error = $e->getMessage();
+            $event->sap_error = $message;
             $event->save();
-            return ['ok' => false, 'message' => $e->getMessage()];
+            return ['ok' => false, 'message' => $message];
         }
     }
 
@@ -87,10 +89,11 @@ class WebhookRetryService
             app(PurchaseOrderWebhookService::class)->process($event);
             return ['ok' => true, 'message' => 'Purchase order retried successfully'];
         } catch (\Throwable $e) {
+            $message = Utf8::sanitizeString($e->getMessage());
             $event->sap_status = 'failed';
-            $event->sap_error = $e->getMessage();
+            $event->sap_error = $message;
             $event->save();
-            return ['ok' => false, 'message' => $e->getMessage()];
+            return ['ok' => false, 'message' => $message];
         }
     }
 

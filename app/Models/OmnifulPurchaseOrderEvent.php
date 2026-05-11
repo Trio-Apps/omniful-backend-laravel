@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\Utf8;
 use Illuminate\Database\Eloquent\Model;
 
 class OmnifulPurchaseOrderEvent extends Model
@@ -25,4 +26,13 @@ class OmnifulPurchaseOrderEvent extends Model
         'signature_valid' => 'boolean',
         'received_at' => 'datetime',
     ];
+
+    public function setAttribute($key, $value)
+    {
+        if (in_array($key, ['payload', 'headers', 'sap_error'], true)) {
+            $value = Utf8::sanitize($value);
+        }
+
+        return parent::setAttribute($key, $value);
+    }
 }

@@ -2,6 +2,8 @@
 
 namespace App\Services\Sap\Concerns;
 
+use Illuminate\Http\Client\Response;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -23,6 +25,13 @@ trait HandlesSapHttp
                 'Cookie' => $cookies,
             ])->get($this->baseUrl . $path);
 
+            if ($this->sapSessionExpired($response)) {
+                $cookies = $this->login(true);
+                $response = $client->withHeaders([
+                    'Cookie' => $cookies,
+                ])->get($this->baseUrl . $path);
+            }
+
             return $response;
         } finally {
             $durationMs = (int) round((microtime(true) - $startedAt) * 1000);
@@ -32,14 +41,13 @@ trait HandlesSapHttp
                 'duration_ms' => $durationMs,
                 'status' => $response?->status(),
             ]);
-
-            $this->logout($cookies);
         }
     }
 
 
     private function post(string $path, array|object $body)
     {
+        $body = $this->normalizeSapPostAmounts($body);
         $cookies = $this->login();
         $startedAt = microtime(true);
         $response = null;
@@ -54,6 +62,13 @@ trait HandlesSapHttp
                 'Cookie' => $cookies,
             ])->post($this->baseUrl . $path, $body);
 
+            if ($this->sapSessionExpired($response)) {
+                $cookies = $this->login(true);
+                $response = $client->withHeaders([
+                    'Cookie' => $cookies,
+                ])->post($this->baseUrl . $path, $body);
+            }
+
             return $response;
         } finally {
             $durationMs = (int) round((microtime(true) - $startedAt) * 1000);
@@ -64,8 +79,6 @@ trait HandlesSapHttp
                 'status' => $response?->status(),
                 'meta' => $this->buildSapPostMeta($path, $body),
             ]);
-
-            $this->logout($cookies);
         }
     }
 
@@ -111,6 +124,59 @@ trait HandlesSapHttp
         return $meta;
     }
 
+    private function normalizeSapPostAmounts(array|object $body): array|object
+    {
+        if (is_array($body)) {
+            foreach ($body as $key => $value) {
+                $body[$key] = $this->normalizeSapPostAmountValue((string) $key, $value);
+            }
+
+            return $body;
+        }
+
+        foreach (get_object_vars($body) as $key => $value) {
+            $body->{$key} = $this->normalizeSapPostAmountValue((string) $key, $value);
+        }
+
+        return $body;
+    }
+
+    private function normalizeSapPostAmountValue(string $key, mixed $value): mixed
+    {
+        if (is_array($value) || is_object($value)) {
+            return $this->normalizeSapPostAmounts($value);
+        }
+
+        if (!$this->isSapAmountField($key) || !is_numeric($value)) {
+            return $value;
+        }
+
+        return round((float) $value, 2);
+    }
+
+    private function isSapAmountField(string $key): bool
+    {
+        return in_array($key, [
+            'UnitPrice',
+            'Price',
+            'LineTotal',
+            'GrossTotal',
+            'DocTotal',
+            'SumApplied',
+            'TransferSum',
+            'CashSum',
+            'CheckSum',
+            'CreditSum',
+            'Debit',
+            'Credit',
+            'VatSum',
+            'TaxTotal',
+            'DiscountSum',
+            'Total',
+            'Amount',
+        ], true);
+    }
+
 
     private function patch(string $path, array $body)
     {
@@ -128,6 +194,13 @@ trait HandlesSapHttp
                 'Cookie' => $cookies,
             ])->patch($this->baseUrl . $path, $body);
 
+            if ($this->sapSessionExpired($response)) {
+                $cookies = $this->login(true);
+                $response = $client->withHeaders([
+                    'Cookie' => $cookies,
+                ])->patch($this->baseUrl . $path, $body);
+            }
+
             return $response;
         } finally {
             $durationMs = (int) round((microtime(true) - $startedAt) * 1000);
@@ -137,8 +210,6 @@ trait HandlesSapHttp
                 'duration_ms' => $durationMs,
                 'status' => $response?->status(),
             ]);
-
-            $this->logout($cookies);
         }
     }
 
@@ -159,6 +230,13 @@ trait HandlesSapHttp
                 'Cookie' => $cookies,
             ])->delete($this->baseUrl . $path);
 
+            if ($this->sapSessionExpired($response)) {
+                $cookies = $this->login(true);
+                $response = $client->withHeaders([
+                    'Cookie' => $cookies,
+                ])->delete($this->baseUrl . $path);
+            }
+
             return $response;
         } finally {
             $durationMs = (int) round((microtime(true) - $startedAt) * 1000);
@@ -168,16 +246,24 @@ trait HandlesSapHttp
                 'duration_ms' => $durationMs,
                 'status' => $response?->status(),
             ]);
-
-            $this->logout($cookies);
         }
     }
 
 
-    private function login(): string
+    private function login(bool $forceRefresh = false): string
     {
         if ($this->baseUrl === '' || $this->companyDb === '' || $this->username === '' || $this->password === '') {
             throw new \RuntimeException('SAP credentials are incomplete');
+        }
+
+        $cacheKey = $this->sapSessionCacheKey();
+        if ($forceRefresh) {
+            Cache::forget($cacheKey);
+        }
+
+        $cachedCookie = Cache::get($cacheKey);
+        if (is_string($cachedCookie) && trim($cachedCookie) !== '') {
+            return $cachedCookie;
         }
 
         $client = Http::timeout($this->sapLoginTimeout())->acceptJson();
@@ -208,7 +294,37 @@ trait HandlesSapHttp
             $cookie .= '; ROUTEID=' . $routeId;
         }
 
+        Cache::put($cacheKey, $cookie, now()->addMinutes($this->sapSessionCacheMinutes()));
+
         return $cookie;
+    }
+
+    private function sapSessionExpired(Response $response): bool
+    {
+        if (in_array($response->status(), [401, 403], true)) {
+            return true;
+        }
+
+        $body = strtolower($response->body());
+
+        return str_contains($body, 'invalid session')
+            || str_contains($body, 'session timeout')
+            || str_contains($body, 'session expired')
+            || str_contains($body, 'b1session');
+    }
+
+    private function sapSessionCacheKey(): string
+    {
+        return 'sap_service_layer_session:' . sha1(implode('|', [
+            $this->baseUrl,
+            $this->companyDb,
+            $this->username,
+        ]));
+    }
+
+    private function sapSessionCacheMinutes(): int
+    {
+        return max(1, (int) config('services.sap.session_cache_minutes', 25));
     }
 
 

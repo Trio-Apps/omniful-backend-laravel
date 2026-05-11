@@ -4,6 +4,7 @@ namespace App\Services\Webhooks;
 
 use App\Models\OmnifulPurchaseOrderEvent;
 use App\Services\SapServiceLayerClient;
+use App\Support\Utf8;
 use Illuminate\Support\Facades\Log;
 
 class PurchaseOrderWebhookService
@@ -81,15 +82,16 @@ class PurchaseOrderWebhookService
             }
         } catch (\Throwable $e) {
             $stepsLine = implode(' | ', $steps);
+            $message = Utf8::sanitizeString($e->getMessage());
             Log::error('PO webhook processing failed', [
                 'trace_id' => $traceId,
                 'event_id' => $event->id,
                 'external_id' => $event->external_id,
-                'message' => $e->getMessage(),
+                'message' => $message,
                 'steps' => $steps,
             ]);
 
-            throw new \RuntimeException($e->getMessage() . ' | trace_id=' . $traceId . ' | steps=' . $stepsLine, 0, $e);
+            throw new \RuntimeException($message . ' | trace_id=' . $traceId . ' | steps=' . $stepsLine, 0, $e);
         } finally {
             $durationMs = (int) round((microtime(true) - $startedAt) * 1000);
             Log::info('PO webhook processing summary', [

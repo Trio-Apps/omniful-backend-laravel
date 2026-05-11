@@ -3165,19 +3165,7 @@ trait HandlesSapPurchaseAndProducts
             return 0.0;
         }
 
-        $taxAmount = $this->extractOrderFreightTaxAmount($data);
-        if ($taxAmount > 0) {
-            return $this->roundSapAmount(max($grossAmount - $taxAmount, 0));
-        }
-
-        $taxPercent = $this->extractOrderFreightTaxPercent($data);
-        $taxInclusive = filter_var(data_get($data, 'invoice.shipping_tax_inclusive', false), FILTER_VALIDATE_BOOL)
-            || filter_var(data_get($data, 'shipping_tax_inclusive', false), FILTER_VALIDATE_BOOL);
-
-        if ($taxInclusive && $taxPercent > 0) {
-            return $this->roundSapAmount($grossAmount / (1 + ($taxPercent / 100)));
-        }
-
+        // Freight is sent as the full charge amount. SAP calculates tax from VatGroup.
         return $this->roundSapAmount($grossAmount);
     }
 
