@@ -653,10 +653,23 @@ trait HandlesSapPurchaseAndProducts
 
         $response = $this->post('/JournalEntries', $body);
         if (!$response->successful()) {
+            $responseBody = (string) $response->body();
+            if ($this->isSapJournalAlreadyIntegratedError($responseBody)) {
+                return [
+                    'ignored' => false,
+                    'already_integrated' => true,
+                    'TransId' => 'already_integrated',
+                    'Number' => 'already_integrated',
+                    'request_body' => $body,
+                    'error_response_body' => $responseBody,
+                    'status_code' => $response->status(),
+                ];
+            }
+
             throw new SapRequestException(
-                'SAP card-fee journal create failed: ' . $response->status() . ' ' . $response->body(),
+                'SAP card-fee journal create failed: ' . $response->status() . ' ' . $responseBody,
                 $body,
-                (string) $response->body(),
+                $responseBody,
                 $response->status(),
             );
         }
@@ -666,6 +679,14 @@ trait HandlesSapPurchaseAndProducts
         $payload['request_body'] = $body;
 
         return $payload;
+    }
+
+    private function isSapJournalAlreadyIntegratedError(string $body): bool
+    {
+        $normalized = preg_replace('/\s+/', ' ', strtolower($body)) ?? strtolower($body);
+
+        return str_contains($normalized, 'je already integrated')
+            || (str_contains($normalized, 'je') && str_contains($normalized, 'already integrated'));
     }
 
     public function createDeliveryFromReserveOrder(array $data): array
