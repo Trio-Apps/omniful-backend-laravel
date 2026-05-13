@@ -33,6 +33,7 @@ trait HandlesSapPurchaseAndProducts
         $lines = [];
         $lineTaxPercents = [];
         $lineIndex = 0;
+        $salesItemChecked = [];
         $items = data_get($data, 'order_items', data_get($data, 'items', []));
         foreach ((array) $items as $item) {
             $lineIndex++;
@@ -48,6 +49,12 @@ trait HandlesSapPurchaseAndProducts
             $qty = (float) (data_get($item, 'quantity') ?? 0);
             if ($qty <= 0) {
                 continue;
+            }
+
+            $itemCode = (string) $itemCode;
+            if (!isset($salesItemChecked[$itemCode])) {
+                $this->ensureItemCanBeSold($itemCode, $lineIndex);
+                $salesItemChecked[$itemCode] = true;
             }
 
             $unitPrice = data_get($item, 'unit_price');
@@ -68,7 +75,7 @@ trait HandlesSapPurchaseAndProducts
             }
 
             $line = [
-                'ItemCode' => (string) $itemCode,
+                'ItemCode' => $itemCode,
                 'Quantity' => $this->roundSapQuantity($qty),
                 'UnitPrice' => $this->roundSapAmount((float) ($unitPrice ?? 0)),
             ];
