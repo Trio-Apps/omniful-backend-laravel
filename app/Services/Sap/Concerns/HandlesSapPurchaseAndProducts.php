@@ -1039,7 +1039,7 @@ trait HandlesSapPurchaseAndProducts
         if ($baseDeliveryDocEntry > 0) {
             $delivery = $this->getDeliveryNote($baseDeliveryDocEntry);
             $cardCode = (string) ($delivery['CardCode'] ?? '');
-            $documentLines = $this->buildCreditLinesFromDelivery($items, $delivery, $hubCode, $baseDeliveryDocEntry);
+            $documentLines = $this->buildCreditLinesFromDelivery($items, $delivery, $hubCode, $baseDeliveryDocEntry, $data);
         }
 
         if ($documentLines === [] && $baseOrderDocEntry > 0) {
@@ -4589,7 +4589,7 @@ trait HandlesSapPurchaseAndProducts
      * @param array<int,array{item_code:string,quantity:float,unit_price:float}> $items
      * @return array<int,array<string,mixed>>
      */
-    private function buildCreditLinesFromDelivery(array $items, array $delivery, string $hubCode, int $deliveryDocEntry): array
+    private function buildCreditLinesFromDelivery(array $items, array $delivery, string $hubCode, int $deliveryDocEntry, array $data = []): array
     {
         $deliveryByItem = [];
         foreach ((array) ($delivery['DocumentLines'] ?? []) as $line) {
@@ -4647,6 +4647,14 @@ trait HandlesSapPurchaseAndProducts
 
                 if ($hubCode !== '') {
                     $line['WarehouseCode'] = $hubCode;
+                }
+
+                $taxCode = $this->resolveSapTaxCodeForOrderLine($data, [
+                    'sku_code' => $itemCode,
+                    'tax_percent' => data_get($item, 'tax_percent'),
+                ]);
+                if ($taxCode !== '') {
+                    $line['VatGroup'] = $taxCode;
                 }
 
                 $creditLines[] = $line;
