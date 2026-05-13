@@ -30,8 +30,21 @@ class OmnifulInventoryEvents extends Page implements HasTable
     protected function getTableQuery(): Builder
     {
         return OmnifulInventoryEvent::query()
-            ->where('payload', 'not like', '%stock_transfer%')
-            ->where('payload', 'not like', '%stock-transfer%')
+            ->select([
+                'id',
+                'external_id',
+                'signature_valid',
+                'received_at',
+                'sap_status',
+                'sap_doc_entry',
+                'sap_doc_num',
+                'sap_error',
+            ])
+            ->selectRaw("JSON_UNQUOTE(JSON_EXTRACT(payload, '$.event_name')) as event_name_meta")
+            ->selectRaw("JSON_UNQUOTE(JSON_EXTRACT(payload, '$.action')) as action_meta")
+            ->selectRaw("JSON_UNQUOTE(JSON_EXTRACT(payload, '$.entity')) as entity_meta")
+            ->selectRaw("JSON_UNQUOTE(JSON_EXTRACT(payload, '$.data.hub_code')) as hub_code_meta")
+            ->selectRaw("COALESCE(JSON_LENGTH(JSON_EXTRACT(payload, '$.data.hub_inventory_items')), JSON_LENGTH(JSON_EXTRACT(payload, '$.data.items')), 0) as items_count_meta")
             ->orderByDesc('received_at');
     }
 
@@ -40,7 +53,7 @@ class OmnifulInventoryEvents extends Page implements HasTable
         return [
             TextColumn::make('event_name')
                 ->label('Event')
-                ->getStateUsing(fn ($record) => data_get($record->payload, 'event_name'))
+                ->getStateUsing(fn ($record) => $record->event_name_meta ?: '-')
                 ->toggleable(),
             TextColumn::make('external_id')
                 ->label('Reference')
@@ -49,22 +62,19 @@ class OmnifulInventoryEvents extends Page implements HasTable
             TextColumn::make('action')
                 ->label('Action')
                 ->badge()
-                ->getStateUsing(fn ($record) => data_get($record->payload, 'action'))
+                ->getStateUsing(fn ($record) => $record->action_meta ?: '-')
                 ->toggleable(),
             TextColumn::make('entity')
                 ->label('Entity')
-                ->getStateUsing(fn ($record) => data_get($record->payload, 'entity'))
+                ->getStateUsing(fn ($record) => $record->entity_meta ?: '-')
                 ->toggleable(),
             TextColumn::make('hub_code')
                 ->label('Hub')
-                ->getStateUsing(fn ($record) => data_get($record->payload, 'data.hub_code'))
+                ->getStateUsing(fn ($record) => $record->hub_code_meta ?: '-')
                 ->toggleable(),
             TextColumn::make('items_count')
                 ->label('Items')
-                ->getStateUsing(function ($record) {
-                    $items = data_get($record->payload, 'data.hub_inventory_items', data_get($record->payload, 'data.items', []));
-                    return is_array($items) ? count($items) : 0;
-                })
+                ->getStateUsing(fn ($record) => (int) ($record->items_count_meta ?? 0))
                 ->toggleable(),
             TextColumn::make('sap_status')
                 ->label('SAP')
