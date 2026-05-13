@@ -757,8 +757,8 @@ class OrderWebhookService
             }
         }
 
-        $percent = $this->resolveCardFeePercent($paymentMethod);
-        if ($percent <= 0) {
+        $feeRule = $this->resolveCardFeeRule($paymentMethod);
+        if (($feeRule['percent'] ?? 0.0) <= 0 && ($feeRule['fixed'] ?? 0.0) <= 0) {
             return 0.0;
         }
 
@@ -771,25 +771,88 @@ class OrderWebhookService
             return 0.0;
         }
 
-        return round(((float) $total) * ($percent / 100), 2);
+        return round((((float) $total) * (($feeRule['percent'] ?? 0.0) / 100)) + ($feeRule['fixed'] ?? 0.0), 2);
     }
 
-    private function resolveCardFeePercent(string $paymentMethod): float
+    /**
+     * @return array{percent:float,fixed:float}
+     */
+    private function resolveCardFeeRule(string $paymentMethod): array
     {
         $normalizedMethod = strtolower(str_replace([' ', '-', '_'], '', trim($paymentMethod)));
 
         $settings = IntegrationSetting::query()->first();
         $settingsMap = $this->parseSimpleMapping((string) ($settings?->order_card_fee_method_percent_map ?? ''));
-        if ($normalizedMethod !== '' && isset($settingsMap[$normalizedMethod]) && is_numeric($settingsMap[$normalizedMethod])) {
-            return (float) $settingsMap[$normalizedMethod];
+        if ($normalizedMethod !== '' && isset($settingsMap[$normalizedMethod])) {
+            $rule = $this->parseCardFeeRule($settingsMap[$normalizedMethod]);
+            if ($rule['percent'] > 0 || $rule['fixed'] > 0) {
+                return $rule;
+            }
         }
 
         $configuredMap = config('omniful.order_payment.card_fee_method_percent_map', []);
-        if ($normalizedMethod !== '' && is_array($configuredMap) && isset($configuredMap[$normalizedMethod]) && is_numeric($configuredMap[$normalizedMethod])) {
-            return (float) $configuredMap[$normalizedMethod];
+        if ($normalizedMethod !== '' && is_array($configuredMap) && isset($configuredMap[$normalizedMethod])) {
+            $rule = $this->parseCardFeeRule($configuredMap[$normalizedMethod]);
+            if ($rule['percent'] > 0 || $rule['fixed'] > 0) {
+                return $rule;
+            }
         }
 
-        return (float) $this->resolveIntegrationSettingValue('order_card_fee_percent', config('omniful.order_payment.card_fee_percent', 0));
+        return [
+            'percent' => (float) $this->resolveIntegrationSettingValue('order_card_fee_percent', config('omniful.order_payment.card_fee_percent', 0)),
+            'fixed' => 0.0,
+        ];
+    }
+
+    /**
+     * @return array{percent:float,fixed:float}
+     */
+    private function parseCardFeeRule(mixed $value): array
+    {
+        if (is_array($value)) {
+            return [
+                'percent' => (float) ($value['percent'] ?? $value['percentage'] ?? 0),
+                'fixed' => (float) ($value['fixed'] ?? $value['amount'] ?? $value['fixed_amount'] ?? 0),
+            ];
+        }
+
+        if (is_numeric($value)) {
+            return ['percent' => (float) $value, 'fixed' => 0.0];
+        }
+
+        $raw = strtolower(trim((string) $value));
+        if ($raw === '') {
+            return ['percent' => 0.0, 'fixed' => 0.0];
+        }
+
+        $decoded = json_decode($raw, true);
+        if (is_array($decoded)) {
+            return $this->parseCardFeeRule($decoded);
+        }
+
+        $percent = 0.0;
+        $fixed = 0.0;
+
+        if (preg_match('/(?:percent|percentage)\s*=\s*([0-9]+(?:\.[0-9]+)?)/', $raw, $match)) {
+            $percent = (float) $match[1];
+        }
+        if (preg_match('/(?:fixed|amount|fixed_amount)\s*=\s*([0-9]+(?:\.[0-9]+)?)/', $raw, $match)) {
+            $fixed = (float) $match[1];
+        }
+
+        if ($percent > 0 || $fixed > 0) {
+            return ['percent' => $percent, 'fixed' => $fixed];
+        }
+
+        $parts = preg_split('/\s*(?:\+|\|)\s*/', str_replace('%', '', $raw)) ?: [];
+        if (isset($parts[0]) && is_numeric($parts[0])) {
+            $percent = (float) $parts[0];
+        }
+        if (isset($parts[1]) && is_numeric($parts[1])) {
+            $fixed = (float) $parts[1];
+        }
+
+        return ['percent' => $percent, 'fixed' => $fixed];
     }
 
     private function createDeliveryIfEligible(OmnifulOrder $order, array $data): void

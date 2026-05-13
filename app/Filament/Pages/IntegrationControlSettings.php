@@ -132,11 +132,11 @@ class IntegrationControlSettings extends Page implements HasForms
                             ->placeholder('Example: 2.5')
                             ->helperText('Fallback only when no payment-method fee percent is configured.'),
                         Textarea::make('order_card_fee_method_percent_map')
-                            ->label('Card Fee Percent by Payment Method')
+                            ->label('Card Fee by Payment Method')
                             ->rows(8)
                             ->default("tamara:4\ntabby:4\ntapkeynet:1.5\ntapmada:0.9\ntapcreditcard:2\ntapapplepay:1.5\ntabbyaddon:1\ntamaraaddon:1.5\nzidpaymada:0.75\nzidpayvisa:1.75")
-                            ->placeholder("tamara:4\ntabby:4\ntapkeynet:1.5\ntapmada:0.9\ntapcreditcard:2\ntapapplepay:1.5\nzidpayvisa:1.75")
-                            ->helperText('Format: omniful_payment_method:fee_percent. One pair per line or comma-separated. This drives Enable Card Fee Journal only.'),
+                            ->placeholder("tamara:4%+1.5\ntabby:4\ntapkeynet:1.5|0.25\nzidpayvisa:1.75")
+                            ->helperText('Format: method:percent or method:percent%+fixed_amount. Examples: tamara:4, tamara:4%+1.5, tapkeynet:1.5|0.25. This drives Enable Card Fee Journal only.'),
                         Toggle::make('order_cogs_journal_enabled')
                             ->label('Enable COGS Journal')
                             ->default(true)
