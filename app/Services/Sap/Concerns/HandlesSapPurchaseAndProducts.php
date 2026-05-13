@@ -4578,8 +4578,8 @@ trait HandlesSapPurchaseAndProducts
 
         $creditLines = [];
         foreach ($items as $item) {
-            $itemCode = $item['item_code'];
-            $remaining = (float) $item['quantity'];
+            $itemCode = $this->extractCreditMemoItemCode((array) $item);
+            $remaining = (float) ($item['quantity'] ?? $item['return_quantity'] ?? $item['returned_quantity'] ?? 0);
             if (!isset($deliveryByItem[$itemCode]) || $remaining <= 0) {
                 continue;
             }
@@ -4634,21 +4634,23 @@ trait HandlesSapPurchaseAndProducts
         $lineIndex = 0;
         foreach ($items as $item) {
             $lineIndex++;
-            $itemCode = $item['item_code'];
-            $qty = (float) $item['quantity'];
+            $item = (array) $item;
+            $itemCode = $this->extractCreditMemoItemCode($item);
+            $qty = (float) ($item['quantity'] ?? $item['return_quantity'] ?? $item['returned_quantity'] ?? 0);
             if ($itemCode === '' || $qty <= 0) {
                 continue;
             }
 
+            $unitPrice = (float) ($item['unit_price'] ?? $item['price'] ?? $item['selling_price'] ?? $item['display_price'] ?? 0);
             $this->ensureItemExists($itemCode, [
                 'sku_code' => $itemCode,
-                'unit_price' => $item['unit_price'],
+                'unit_price' => $unitPrice,
             ], $lineIndex);
 
             $line = [
                 'ItemCode' => $itemCode,
                 'Quantity' => $this->roundSapQuantity($qty),
-                'UnitPrice' => $this->roundSapAmount((float) $item['unit_price']),
+                'UnitPrice' => $this->roundSapAmount($unitPrice),
             ];
 
             $taxCode = $this->resolveSapTaxCodeForOrderLine($data, [
@@ -4667,6 +4669,31 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return $lines;
+    }
+
+    private function extractCreditMemoItemCode(array $item): string
+    {
+        $candidates = [
+            $item['item_code'] ?? null,
+            $item['sku_code'] ?? null,
+            $item['seller_sku_code'] ?? null,
+            data_get($item, 'seller_sku.seller_sku_code'),
+            data_get($item, 'seller_sku.seller_sku_id'),
+            data_get($item, 'sku.seller_sku_code'),
+            data_get($item, 'code'),
+        ];
+
+        foreach ($candidates as $candidate) {
+            if (is_string($candidate) && trim($candidate) !== '') {
+                return trim($candidate);
+            }
+
+            if (is_numeric($candidate)) {
+                return (string) $candidate;
+            }
+        }
+
+        return '';
     }
 
     private function retryArOrderWithDynamicSeries(array $body, string $initialDocDate, bool &$usedReserveInvoiceFallback)
