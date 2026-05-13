@@ -28,7 +28,9 @@ class OmnifulReturnOrderWebhookController extends OmnifulWebhookBase
         try {
             $service->process($event);
         } catch (\Throwable $e) {
-            $event->sap_status = 'failed';
+            if (!$event->sap_doc_entry) {
+                $event->sap_status = 'failed';
+            }
             $event->sap_error = $e->getMessage();
             $event->save();
 

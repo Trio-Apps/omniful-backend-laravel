@@ -71,7 +71,9 @@ class WebhookRetryService
             return ['ok' => true, 'message' => 'Return order retried successfully'];
         } catch (\Throwable $e) {
             $message = Utf8::sanitizeString($e->getMessage());
-            $event->sap_status = 'failed';
+            if (!$event->sap_doc_entry) {
+                $event->sap_status = 'failed';
+            }
             $event->sap_error = $message;
             $event->save();
             return ['ok' => false, 'message' => $message];

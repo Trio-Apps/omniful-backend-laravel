@@ -2,6 +2,7 @@
 
 namespace App\Services\Webhooks;
 
+use App\Exceptions\SapRequestException;
 use App\Models\OmnifulOrder;
 use App\Models\OmnifulReturnOrderEvent;
 use App\Services\SapServiceLayerClient;
@@ -44,10 +45,12 @@ class ReturnOrderWebhookService
                 $event->sap_doc_entry = $existing->sap_doc_entry;
                 $event->sap_doc_num = $existing->sap_doc_num;
                 $event->sap_error = $existing->sap_error;
+                $event->sap_response = $existing->sap_response;
                 $event->sap_cogs_reversal_status = $existing->sap_cogs_reversal_status;
                 $event->sap_cogs_reversal_journal_entry = $existing->sap_cogs_reversal_journal_entry;
                 $event->sap_cogs_reversal_journal_num = $existing->sap_cogs_reversal_journal_num;
                 $event->sap_cogs_reversal_error = $existing->sap_cogs_reversal_error;
+                $event->sap_cogs_reversal_response = $existing->sap_cogs_reversal_response;
                 $event->save();
             }
         }
@@ -67,16 +70,30 @@ class ReturnOrderWebhookService
                 : null;
 
             $client = app(SapServiceLayerClient::class);
-            $result = $client->createArCreditMemoFromReturnOrder($data, [
-                'external_id' => (string) ($event->external_id ?? ''),
-                'base_delivery_doc_entry' => (int) ($order->sap_delivery_doc_entry ?? 0),
-                'base_order_doc_entry' => (int) ($order->sap_doc_entry ?? 0),
-                'parsed_items' => $items,
-            ]);
+            try {
+                $result = $client->createArCreditMemoFromReturnOrder($data, [
+                    'external_id' => (string) ($event->external_id ?? ''),
+                    'base_delivery_doc_entry' => (int) ($order->sap_delivery_doc_entry ?? 0),
+                    'base_order_doc_entry' => (int) ($order->sap_doc_entry ?? 0),
+                    'parsed_items' => $items,
+                ]);
+            } catch (SapRequestException $e) {
+                $event->sap_status = 'failed';
+                $event->sap_error = $e->getMessage();
+                $event->sap_response = [
+                    'request_body' => $e->requestBody,
+                    'error_response_body' => $e->responseBody,
+                    'status_code' => $e->statusCode,
+                ];
+                $event->save();
+
+                throw $e;
+            }
 
             if (($result['ignored'] ?? false) === true) {
                 $event->sap_status = 'ignored';
                 $event->sap_error = (string) ($result['reason'] ?? 'Ignored: return cannot be converted to AR credit memo');
+                $event->sap_response = $result;
                 $event->save();
                 return;
             }
@@ -85,6 +102,7 @@ class ReturnOrderWebhookService
             $event->sap_doc_entry = $result['DocEntry'] ?? null;
             $event->sap_doc_num = $result['DocNum'] ?? null;
             $event->sap_error = null;
+            $event->sap_response = $result;
             $event->save();
         } else {
             $event->sap_status = $event->sap_status ?: 'logged';
@@ -128,17 +146,39 @@ class ReturnOrderWebhookService
             }
 
             if (!isset($totals[$itemCode])) {
-                $totals[$itemCode] = 0.0;
+                $totals[$itemCode] = [
+                    'item_code' => (string) $itemCode,
+                    'quantity' => 0.0,
+                    'unit_price' => 0.0,
+                    'tax_percent' => null,
+                ];
             }
 
-            $totals[$itemCode] += $qty;
+            $totals[$itemCode]['quantity'] += $qty;
+
+            $unitPrice = data_get($item, 'unit_price');
+            if ($unitPrice === null) {
+                $unitPrice = data_get($item, 'price');
+            }
+            if ($unitPrice === null) {
+                $unitPrice = data_get($item, 'selling_price');
+            }
+            if ($unitPrice === null) {
+                $unitPrice = data_get($item, 'display_price');
+            }
+
+            if (is_numeric($unitPrice) && (float) $unitPrice > 0 && (float) $totals[$itemCode]['unit_price'] <= 0) {
+                $totals[$itemCode]['unit_price'] = (float) $unitPrice;
+            }
+
+            $taxPercent = data_get($item, 'tax_percent');
+            if (is_numeric($taxPercent)) {
+                $totals[$itemCode]['tax_percent'] = (float) $taxPercent;
+            }
         }
 
-        foreach ($totals as $itemCode => $qty) {
-            $lines[] = [
-                'seller_sku_code' => $itemCode,
-                'quantity' => $qty,
-            ];
+        foreach ($totals as $line) {
+            $lines[] = $line;
         }
 
         return $lines;
@@ -230,17 +270,31 @@ class ReturnOrderWebhookService
         }
 
         $client = app(SapServiceLayerClient::class);
-        $result = $client->createCogsReversalJournalForCreditMemo([
-            'credit_memo_doc_entry' => $creditMemoDocEntry,
-            'reference' => (string) ($event->external_id ?? ''),
-            'memo' => 'COGS reversal from Omniful return ' . (string) ($event->external_id ?? ''),
-            'expense_account' => config('omniful.order_accounting.cogs_expense_account'),
-            'offset_account' => config('omniful.order_accounting.inventory_offset_account'),
-        ]);
+        try {
+            $result = $client->createCogsReversalJournalForCreditMemo([
+                'credit_memo_doc_entry' => $creditMemoDocEntry,
+                'reference' => (string) ($event->external_id ?? ''),
+                'memo' => 'COGS reversal from Omniful return ' . (string) ($event->external_id ?? ''),
+                'expense_account' => config('omniful.order_accounting.cogs_expense_account'),
+                'offset_account' => config('omniful.order_accounting.inventory_offset_account'),
+            ]);
+        } catch (SapRequestException $e) {
+            $event->sap_cogs_reversal_status = 'failed';
+            $event->sap_cogs_reversal_error = $e->getMessage();
+            $event->sap_cogs_reversal_response = [
+                'request_body' => $e->requestBody,
+                'error_response_body' => $e->responseBody,
+                'status_code' => $e->statusCode,
+            ];
+            $event->save();
+
+            throw $e;
+        }
 
         if (($result['ignored'] ?? false) === true) {
             $event->sap_cogs_reversal_status = 'ignored';
             $event->sap_cogs_reversal_error = (string) ($result['reason'] ?? 'COGS reversal ignored');
+            $event->sap_cogs_reversal_response = $result;
             $event->save();
             return;
         }
@@ -249,6 +303,7 @@ class ReturnOrderWebhookService
         $event->sap_cogs_reversal_journal_entry = (string) ($result['TransId'] ?? '');
         $event->sap_cogs_reversal_journal_num = (string) ($result['Number'] ?? $result['JdtNum'] ?? '');
         $event->sap_cogs_reversal_error = null;
+        $event->sap_cogs_reversal_response = $result;
         $event->save();
     }
 }

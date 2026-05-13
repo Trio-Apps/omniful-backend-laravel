@@ -70,6 +70,10 @@
                     <div class="po-value">{{ data_get($data, 'invoice.total', data_get($data, 'total', '-')) }} {{ data_get($data, 'invoice.currency', '') }}</div>
                 </div>
                 <div class="po-card">
+                    <div class="po-label">Payment Method</div>
+                    <div class="po-value">{{ data_get($data, 'invoice.payment_mode', data_get($data, 'payment_method', '-')) ?: '-' }}</div>
+                </div>
+                <div class="po-card">
                     <div class="po-label">Created At</div>
                     <div class="po-value">{{ data_get($data, 'order_created_at', data_get($data, 'created_at', '-')) }}</div>
                 </div>
@@ -126,7 +130,7 @@
                     </div>
                     <div class="po-kv">
                         <div class="po-label">Payment Method</div>
-                        <div class="po-value po-break">{{ data_get($data, 'payment_method', '-') }}</div>
+                        <div class="po-value po-break">{{ data_get($data, 'invoice.payment_mode', data_get($data, 'payment_method', '-')) ?: '-' }}</div>
                     </div>
                 </div>
             </div>

@@ -172,6 +172,7 @@ trait HandlesSapHttp
             'VatSum',
             'TaxTotal',
             'DiscountSum',
+            'DiscountPercent',
             'Total',
             'Amount',
         ], true);

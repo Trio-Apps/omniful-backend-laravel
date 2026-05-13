@@ -92,7 +92,11 @@ trait HandlesSapPurchaseAndProducts
                 'request_body' => null,
             ];
         }
-        $lines = $this->rebalanceOrderLinesForInvoiceTotals($lines, $data, $lineTaxPercents);
+        $documentDiscountPercent = $this->resolveOrderDocumentDiscountPercent($data, $lines);
+        if ($documentDiscountPercent <= 0) {
+            $lines = $this->rebalanceOrderLinesForInvoiceTotals($lines, $data, $lineTaxPercents);
+        }
+
         $lines = $this->normalizeSapDocumentLines(
             $this->applyDefaultCostCentersToLines($lines)
         );
@@ -114,6 +118,10 @@ trait HandlesSapPurchaseAndProducts
             // SAP B1 AR Reserve Invoice via Invoices with ReserveInvoice = tYES
             'ReserveInvoice' => 'tYES',
         ];
+
+        if ($documentDiscountPercent > 0) {
+            $body['DiscountPercent'] = $documentDiscountPercent;
+        }
 
         if ($currency) {
             $body['DocCurrency'] = $currency;
@@ -3456,6 +3464,47 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return $lines;
+    }
+
+    private function resolveOrderDocumentDiscountPercent(array $data, array $lines): float
+    {
+        $discount = data_get($data, 'invoice.discount');
+        if (!is_numeric($discount) || (float) $discount <= 0) {
+            return 0.0;
+        }
+
+        $discountInclusive = filter_var(data_get($data, 'invoice.sub_total_discount_inclusive', false), FILTER_VALIDATE_BOOL);
+        if ($discountInclusive) {
+            return 0.0;
+        }
+
+        $freightDiscount = $this->extractOrderFreightDiscountAmount($data);
+        $merchandiseDiscount = $this->roundSapAmount(max((float) $discount - $freightDiscount, 0.0));
+        if ($merchandiseDiscount <= 0) {
+            return 0.0;
+        }
+
+        $lineSubtotal = $this->sumSapLineMerchandiseTotals($lines);
+        $subtotal = data_get($data, 'invoice.subtotal');
+        $discountBase = $lineSubtotal > 0
+            ? $lineSubtotal
+            : (is_numeric($subtotal) && (float) $subtotal > 0 ? (float) $subtotal : 0.0);
+
+        if ($discountBase <= 0) {
+            return 0.0;
+        }
+
+        return round(min(($merchandiseDiscount / $discountBase) * 100, 100), 2);
+    }
+
+    private function sumSapLineMerchandiseTotals(array $lines): float
+    {
+        $total = 0.0;
+        foreach ($lines as $line) {
+            $total += $this->extractSapLineMerchandiseTotal((array) $line);
+        }
+
+        return $this->roundSapAmount($total);
     }
 
     private function resolveTargetOrderMerchandiseSubtotal(array $data, array $lines, array $lineTaxPercents = []): ?float

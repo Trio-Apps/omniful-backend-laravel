@@ -12,6 +12,7 @@ use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
+use Filament\Tables\Filters\SelectFilter;
 use Illuminate\Database\Eloquent\Builder;
 
 class OmnifulReturnOrderEvents extends Page implements HasTable
@@ -39,10 +40,17 @@ class OmnifulReturnOrderEvents extends Page implements HasTable
             TextColumn::make('return_order_id')
                 ->label('Return ID')
                 ->getStateUsing(fn ($record) => data_get($record->payload, 'data.return_order_id'))
+                ->searchable(query: fn (Builder $query, string $search) => $query->where('external_id', 'like', "%{$search}%"))
                 ->toggleable(),
-            TextColumn::make('external_id')
-                ->label('Order ID')
-                ->searchable(),
+            TextColumn::make('order_reference_id')
+                ->label('Order Ref')
+                ->getStateUsing(fn ($record) => data_get($record->payload, 'data.order_reference_id', data_get($record->payload, 'data.order_id')))
+                ->searchable(query: fn (Builder $query, string $search) => $query->where('payload', 'like', "%{$search}%"))
+                ->toggleable(),
+            TextColumn::make('event_name')
+                ->label('Event')
+                ->getStateUsing(fn ($record) => data_get($record->payload, 'event_name', '-'))
+                ->toggleable(),
             TextColumn::make('status')
                 ->label('Status')
                 ->badge()
@@ -75,11 +83,20 @@ class OmnifulReturnOrderEvents extends Page implements HasTable
                 ->label('Received')
                 ->dateTime()
                 ->sortable(),
-            TextColumn::make('payload')
-                ->label('Payload')
-                ->formatStateUsing(fn ($state) => is_array($state) ? json_encode($state) : (string) $state)
-                ->limit(120)
-                ->toggleable(),
+        ];
+    }
+
+    protected function getTableFilters(): array
+    {
+        return [
+            SelectFilter::make('sap_status')
+                ->label('SAP Status')
+                ->options([
+                    'created' => 'Created',
+                    'failed' => 'Failed',
+                    'ignored' => 'Ignored',
+                    'skipped' => 'Skipped',
+                ]),
         ];
     }
 
@@ -105,6 +122,10 @@ class OmnifulReturnOrderEvents extends Page implements HasTable
                 ->label('Retry SAP')
                 ->icon('heroicon-o-arrow-path')
                 ->color('warning')
+                ->visible(fn ($record) => in_array((string) $record->sap_status, ['failed', 'ignored'], true))
+                ->requiresConfirmation()
+                ->modalHeading('Retry return order SAP sync?')
+                ->modalDescription('This will resend the return order to SAP and update the stored SAP status and payload debug.')
                 ->action(function ($record) {
                     $result = app(WebhookRetryService::class)->retryReturnOrderEvent($record);
                     Notification::make()
