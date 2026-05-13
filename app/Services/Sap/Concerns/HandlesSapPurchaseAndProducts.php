@@ -617,13 +617,14 @@ trait HandlesSapPurchaseAndProducts
         $referenceDate = $this->formatDate((string) ($data['posting_date'] ?? now()->format('Y-m-d')));
         $reference = trim((string) ($data['reference'] ?? ''));
         $memo = trim((string) ($data['memo'] ?? 'Card fee journal from Omniful prepaid order'));
+        $journalReference = trim((string) ($data['journal_reference'] ?? 'CARD_FEE'));
 
         $journalLines = $this->applyDefaultCostCentersToJournalLines([
             [
                 'AccountCode' => $expenseAccount,
                 'Debit' => $this->roundSapAmount($amount),
                 'LineMemo' => $this->truncateSapText($memo, 254),
-                'Reference1' => $reference,
+                'Reference1' => $journalReference,
                 'Reference2' => $reference,
                 'AdditionalReference' => $this->truncateSapText($reference, 100),
             ],
@@ -631,7 +632,7 @@ trait HandlesSapPurchaseAndProducts
                 'AccountCode' => $offsetAccount,
                 'Credit' => $this->roundSapAmount($amount),
                 'LineMemo' => $this->truncateSapText($memo, 254),
-                'Reference1' => $reference,
+                'Reference1' => $journalReference,
                 'Reference2' => $reference,
                 'AdditionalReference' => $this->truncateSapText($reference, 100),
             ],
@@ -646,9 +647,8 @@ trait HandlesSapPurchaseAndProducts
         ];
 
         if ($reference !== '') {
-            $body['Reference'] = $reference;
+            $body['Reference'] = $journalReference !== '' ? $journalReference : $reference;
             $body['Reference2'] = $reference;
-            $body['Reference3'] = $reference;
         }
 
         $response = $this->post('/JournalEntries', $body);
