@@ -621,10 +621,18 @@ trait HandlesSapPurchaseAndProducts
             [
                 'AccountCode' => $expenseAccount,
                 'Debit' => $this->roundSapAmount($amount),
+                'LineMemo' => $this->truncateSapText($memo, 254),
+                'Reference1' => $reference,
+                'Reference2' => $reference,
+                'AdditionalReference' => $this->truncateSapText($reference, 100),
             ],
             [
                 'AccountCode' => $offsetAccount,
                 'Credit' => $this->roundSapAmount($amount),
+                'LineMemo' => $this->truncateSapText($memo, 254),
+                'Reference1' => $reference,
+                'Reference2' => $reference,
+                'AdditionalReference' => $this->truncateSapText($reference, 100),
             ],
         ], $this->resolveOrderWarehouseCode(data_get($data, 'hub_code')));
 
@@ -632,7 +640,7 @@ trait HandlesSapPurchaseAndProducts
             'ReferenceDate' => $referenceDate,
             'DueDate' => $referenceDate,
             'TaxDate' => $referenceDate,
-            'Memo' => $memo,
+            'Memo' => $this->truncateSapText($memo, 254),
             'JournalEntryLines' => $journalLines,
         ];
 
@@ -927,7 +935,14 @@ trait HandlesSapPurchaseAndProducts
         }
 
         $delivery = $this->getDeliveryNote($deliveryDocEntry);
-        $amount = (float) ($data['amount'] ?? $this->extractDeliveryCogsAmount($delivery));
+        $reference = trim((string) ($data['reference'] ?? ($delivery['NumAtCard'] ?? '')));
+        $amount = (float) ($data['amount'] ?? 0);
+        if ($amount <= 0 && $reference !== '') {
+            $amount = $this->fetchCogsAmountByOrderReference($reference);
+        }
+        if ($amount <= 0) {
+            $amount = $this->extractDeliveryCogsAmount($delivery);
+        }
         if ($amount <= 0) {
             return [
                 'ignored' => true,
@@ -937,17 +952,24 @@ trait HandlesSapPurchaseAndProducts
         }
 
         $referenceDate = $this->formatDate((string) (($delivery['DocDate'] ?? null) ?: now()->format('Y-m-d')));
-        $reference = trim((string) ($data['reference'] ?? ($delivery['NumAtCard'] ?? '')));
         $memo = trim((string) ($data['memo'] ?? ('COGS journal for Delivery ' . ($delivery['DocNum'] ?? $deliveryDocEntry))));
 
         $journalLines = $this->applyDefaultCostCentersToJournalLines([
             [
                 'AccountCode' => $expenseAccount,
                 'Debit' => $this->roundSapAmount($amount),
+                'LineMemo' => $this->truncateSapText($memo, 254),
+                'Reference1' => $reference,
+                'Reference2' => (string) ($delivery['DocNum'] ?? ''),
+                'AdditionalReference' => $this->truncateSapText($reference, 100),
             ],
             [
                 'AccountCode' => $offsetAccount,
                 'Credit' => $this->roundSapAmount($amount),
+                'LineMemo' => $this->truncateSapText($memo, 254),
+                'Reference1' => $reference,
+                'Reference2' => (string) ($delivery['DocNum'] ?? ''),
+                'AdditionalReference' => $this->truncateSapText($reference, 100),
             ],
         ], $this->resolveWarehouseCodeFromDocumentLines($delivery));
 
@@ -955,7 +977,7 @@ trait HandlesSapPurchaseAndProducts
             'ReferenceDate' => $referenceDate,
             'DueDate' => $referenceDate,
             'TaxDate' => $referenceDate,
-            'Memo' => $memo,
+            'Memo' => $this->truncateSapText($memo, 254),
             'JournalEntryLines' => $journalLines,
         ];
 
@@ -4370,6 +4392,45 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return $this->roundSapAmount($total);
+    }
+
+    private function fetchCogsAmountByOrderReference(string $reference): float
+    {
+        $reference = trim($reference);
+        if ($reference === '') {
+            return 0.0;
+        }
+
+        $escapedReference = str_replace("'", "''", $reference);
+        $path = "/SQLQueries('CogsSP')/List?SallaOrderId='" . rawurlencode($escapedReference) . "'";
+        $response = $this->get($path);
+        if (!$response->successful()) {
+            Log::warning('SAP COGS SQL query failed', [
+                'reference' => $reference,
+                'status' => $response->status(),
+                'body' => $response->body(),
+            ]);
+
+            return 0.0;
+        }
+
+        $payload = $response->json() ?? [];
+        $value = data_get($payload, 'value.0.TotalStockValue');
+        if (!is_numeric($value) || (float) $value <= 0) {
+            return 0.0;
+        }
+
+        return $this->roundSapAmount((float) $value);
+    }
+
+    private function truncateSapText(string $value, int $limit): string
+    {
+        $value = trim($value);
+        if ($limit <= 0 || $value === '') {
+            return '';
+        }
+
+        return mb_substr($value, 0, $limit);
     }
 
     private function extractCreditMemoCogsAmount(array $creditMemo): float
