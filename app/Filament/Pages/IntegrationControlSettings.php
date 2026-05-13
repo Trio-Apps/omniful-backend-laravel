@@ -112,6 +112,36 @@ class IntegrationControlSettings extends Page implements HasForms
                             ->placeholder('1')
                             ->helperText('Used when shipping or delivery fee exists in Omniful payload.'),
                     ]),
+                Section::make('Order Journal Entries')
+                    ->description('Configure SAP journal entries created after payment and delivery.')
+                    ->schema([
+                        Toggle::make('order_card_fee_journal_enabled')
+                            ->label('Enable Card Fee Journal')
+                            ->default(true)
+                            ->helperText('Creates a commission/card-fee journal after incoming payment is created.'),
+                        TextInput::make('order_card_fee_expense_account')
+                            ->label('Card Fee Expense Account')
+                            ->placeholder('Debit account'),
+                        TextInput::make('order_card_fee_offset_account')
+                            ->label('Card Fee Offset Account')
+                            ->placeholder('Credit account'),
+                        TextInput::make('order_card_fee_percent')
+                            ->label('Card Fee Percent')
+                            ->numeric()
+                            ->placeholder('Example: 2.5')
+                            ->helperText('Used only when Omniful payload does not include an explicit card fee amount.'),
+                        Toggle::make('order_cogs_journal_enabled')
+                            ->label('Enable COGS Journal')
+                            ->default(true)
+                            ->helperText('Creates COGS journal after SAP Delivery is created.'),
+                        TextInput::make('order_cogs_expense_account')
+                            ->label('COGS Expense Account')
+                            ->placeholder('Debit account'),
+                        TextInput::make('order_cogs_inventory_offset_account')
+                            ->label('Inventory Offset Account')
+                            ->placeholder('Credit account'),
+                    ])
+                    ->columns(2),
             ])
             ->statePath('data');
     }
@@ -133,6 +163,13 @@ class IntegrationControlSettings extends Page implements HasForms
                 'order_tax_code_ksa_zero' => $state['order_tax_code_ksa_zero'] ?? null,
                 'order_tax_code_foreign' => $state['order_tax_code_foreign'] ?? null,
                 'order_freight_expense_code' => $state['order_freight_expense_code'] ?? null,
+                'order_card_fee_journal_enabled' => (bool) ($state['order_card_fee_journal_enabled'] ?? false),
+                'order_card_fee_expense_account' => $state['order_card_fee_expense_account'] ?? null,
+                'order_card_fee_offset_account' => $state['order_card_fee_offset_account'] ?? null,
+                'order_card_fee_percent' => $state['order_card_fee_percent'] ?? null,
+                'order_cogs_journal_enabled' => (bool) ($state['order_cogs_journal_enabled'] ?? false),
+                'order_cogs_expense_account' => $state['order_cogs_expense_account'] ?? null,
+                'order_cogs_inventory_offset_account' => $state['order_cogs_inventory_offset_account'] ?? null,
             ]
         );
 

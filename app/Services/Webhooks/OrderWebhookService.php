@@ -388,13 +388,13 @@ class OrderWebhookService
     {
         if (!$this->isIncomingPaymentEnabled()) {
             if ((string) ($order->sap_payment_doc_entry ?? '') === '') {
-            $order->sap_payment_status = 'ignored';
-            $order->sap_payment_error = 'Incoming payments disabled from integration settings';
-            $order->sap_payment_response = [
-                'ignored' => true,
-                'reason' => 'Incoming payments disabled from integration settings',
-            ];
-            $order->save();
+                $order->sap_payment_status = 'ignored';
+                $order->sap_payment_error = 'Incoming payments disabled from integration settings';
+                $order->sap_payment_response = [
+                    'ignored' => true,
+                    'reason' => 'Incoming payments disabled from integration settings',
+                ];
+                $order->save();
             }
 
             return;
@@ -574,6 +574,41 @@ class OrderWebhookService
         return (bool) config('omniful.order_payment.enabled', true);
     }
 
+    private function isCardFeeJournalEnabled(): bool
+    {
+        $settings = IntegrationSetting::query()->first();
+        if ($settings && $settings->order_card_fee_journal_enabled !== null) {
+            return (bool) $settings->order_card_fee_journal_enabled;
+        }
+
+        return (bool) config('omniful.order_payment.card_fee_journal_enabled', false);
+    }
+
+    private function isCogsJournalEnabled(): bool
+    {
+        $settings = IntegrationSetting::query()->first();
+        if ($settings && $settings->order_cogs_journal_enabled !== null) {
+            return (bool) $settings->order_cogs_journal_enabled;
+        }
+
+        return (bool) config('omniful.order_accounting.cogs_journal_enabled', false);
+    }
+
+    private function resolveIntegrationSettingValue(string $field, mixed $fallback = ''): mixed
+    {
+        $settings = IntegrationSetting::query()->first();
+        if (!$settings || !array_key_exists($field, $settings->getAttributes())) {
+            return $fallback;
+        }
+
+        $value = $settings->{$field};
+        if ($value === null || $value === '') {
+            return $fallback;
+        }
+
+        return $value;
+    }
+
     /**
      * @return array<int,int>
      */
@@ -623,7 +658,17 @@ class OrderWebhookService
 
     private function createCardFeeJournalIfEligible(OmnifulOrder $order, array $data): void
     {
-        if (!(bool) config('omniful.order_payment.card_fee_journal_enabled', false)) {
+        if (!$this->isCardFeeJournalEnabled()) {
+            if ((string) ($order->sap_card_fee_journal_entry ?? '') === '') {
+                $order->sap_card_fee_status = 'ignored';
+                $order->sap_card_fee_error = 'Card fee journal disabled from integration settings';
+                $order->sap_card_fee_response = [
+                    'ignored' => true,
+                    'reason' => 'Card fee journal disabled from integration settings',
+                ];
+                $order->save();
+            }
+
             return;
         }
 
@@ -658,8 +703,9 @@ class OrderWebhookService
                 'posting_date' => data_get($data, 'order_created_at') ?? data_get($data, 'created_at'),
                 'reference' => (string) ($order->external_id ?? ''),
                 'memo' => 'Card fee from Omniful order ' . (string) ($order->external_id ?? ''),
-                'expense_account' => config('omniful.order_payment.card_fee_expense_account'),
-                'offset_account' => config('omniful.order_payment.card_fee_offset_account'),
+                'expense_account' => $this->resolveIntegrationSettingValue('order_card_fee_expense_account', config('omniful.order_payment.card_fee_expense_account')),
+                'offset_account' => $this->resolveIntegrationSettingValue('order_card_fee_offset_account', config('omniful.order_payment.card_fee_offset_account')),
+                'hub_code' => (string) ($order->hub_code ?? data_get($data, 'hub_code', '')),
             ]);
         } catch (SapRequestException $e) {
             $order->sap_card_fee_status = 'failed';
@@ -709,15 +755,15 @@ class OrderWebhookService
             }
         }
 
-        $percent = (float) config('omniful.order_payment.card_fee_percent', 0);
+        $percent = (float) $this->resolveIntegrationSettingValue('order_card_fee_percent', config('omniful.order_payment.card_fee_percent', 0));
         if ($percent <= 0) {
             return 0.0;
         }
 
-        $total = data_get($data, 'invoice.grand_total');
-        if ($total === null) {
-            $total = data_get($data, 'total_amount');
-        }
+        $total = data_get($data, 'invoice.total_paid')
+            ?? data_get($data, 'invoice.total')
+            ?? data_get($data, 'invoice.grand_total')
+            ?? data_get($data, 'total_amount');
 
         if (!is_numeric($total) || (float) $total <= 0) {
             return 0.0;
@@ -851,7 +897,17 @@ class OrderWebhookService
 
     private function createCogsJournalIfEligible(OmnifulOrder $order): void
     {
-        if (!(bool) config('omniful.order_accounting.cogs_journal_enabled', false)) {
+        if (!$this->isCogsJournalEnabled()) {
+            if ((string) ($order->sap_cogs_journal_entry ?? '') === '') {
+                $order->sap_cogs_status = 'ignored';
+                $order->sap_cogs_error = 'COGS journal disabled from integration settings';
+                $order->sap_cogs_response = [
+                    'ignored' => true,
+                    'reason' => 'COGS journal disabled from integration settings',
+                ];
+                $order->save();
+            }
+
             return;
         }
 
@@ -874,8 +930,8 @@ class OrderWebhookService
                 'delivery_doc_entry' => $deliveryDocEntry,
                 'reference' => (string) ($order->external_id ?? ''),
                 'memo' => 'COGS journal from Omniful order ' . (string) ($order->external_id ?? ''),
-                'expense_account' => config('omniful.order_accounting.cogs_expense_account'),
-                'offset_account' => config('omniful.order_accounting.inventory_offset_account'),
+                'expense_account' => $this->resolveIntegrationSettingValue('order_cogs_expense_account', config('omniful.order_accounting.cogs_expense_account')),
+                'offset_account' => $this->resolveIntegrationSettingValue('order_cogs_inventory_offset_account', config('omniful.order_accounting.inventory_offset_account')),
             ]);
         } catch (SapRequestException $e) {
             $order->sap_cogs_status = 'failed';

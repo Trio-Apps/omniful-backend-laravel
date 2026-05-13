@@ -44,6 +44,13 @@ class IntegrationSetting extends Model
         'order_tax_code_ksa_zero',
         'order_tax_code_foreign',
         'order_freight_expense_code',
+        'order_card_fee_journal_enabled',
+        'order_card_fee_expense_account',
+        'order_card_fee_offset_account',
+        'order_card_fee_percent',
+        'order_cogs_journal_enabled',
+        'order_cogs_expense_account',
+        'order_cogs_inventory_offset_account',
     ];
 
     protected $casts = [
@@ -78,5 +85,12 @@ class IntegrationSetting extends Model
         'order_tax_code_ksa_zero' => 'string',
         'order_tax_code_foreign' => 'string',
         'order_freight_expense_code' => 'string',
+        'order_card_fee_journal_enabled' => 'boolean',
+        'order_card_fee_expense_account' => 'string',
+        'order_card_fee_offset_account' => 'string',
+        'order_card_fee_percent' => 'decimal:4',
+        'order_cogs_journal_enabled' => 'boolean',
+        'order_cogs_expense_account' => 'string',
+        'order_cogs_inventory_offset_account' => 'string',
     ];
 }
