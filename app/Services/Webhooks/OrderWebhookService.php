@@ -437,6 +437,15 @@ class OrderWebhookService
                 'payment_method' => $paymentMethod,
                 'transfer_account' => $this->resolveIncomingPaymentTransferAccount($paymentMethod),
                 'invoice_type_candidates' => $this->resolveIncomingPaymentInvoiceTypeCandidates(),
+                'external_id' => (string) ($order->external_id ?? ''),
+                'order_id' => data_get($data, 'order_id'),
+                'order_alias' => data_get($data, 'order_alias'),
+                'sales_channel' => data_get($data, 'sales_channel'),
+                'source' => data_get($data, 'source'),
+                'source_name' => data_get($data, 'source_name'),
+                'channel' => data_get($data, 'channel'),
+                'channel_name' => data_get($data, 'channel_name'),
+                'store_name' => data_get($data, 'store_name'),
             ]);
         } catch (SapRequestException $e) {
             $order->sap_payment_status = 'failed';

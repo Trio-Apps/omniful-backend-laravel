@@ -154,17 +154,14 @@ class WebhookStatusMapper
      */
     public function resolveOrderDeliveryEligibility(string $eventName, string $status): array
     {
-        $eventName = $this->normalize($eventName);
         $status = $this->normalizeOrderStatus($status);
         $strict = (bool) config('omniful.status_mapping.order.strict', false);
 
-        $eventRules = array_map([$this, 'normalize'], (array) config('omniful.status_mapping.order.delivery_event_contains', []));
         $statusRules = array_map([$this, 'normalize'], (array) config('omniful.status_mapping.order.delivery_statuses', []));
 
-        $eventOk = $eventRules === [] || $this->containsAny($eventName, $eventRules);
         $statusOk = $statusRules === [] || in_array($status, $statusRules, true);
 
-        if ($eventOk || $statusOk) {
+        if ($statusOk) {
             return ['eligible' => true, 'reason' => null];
         }
 

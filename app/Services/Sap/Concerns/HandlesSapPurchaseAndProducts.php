@@ -519,6 +519,8 @@ trait HandlesSapPurchaseAndProducts
             'Remarks' => $remarks,
         ];
 
+        $body = $this->appendOmnifulDocumentUdfs($body, $data, $reference);
+
         if ($paymentCreditCard !== null) {
             $body['PaymentCreditCards'] = [$paymentCreditCard];
         } else {
