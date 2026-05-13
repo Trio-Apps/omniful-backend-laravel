@@ -277,35 +277,25 @@ class OrderWebhookService
         }
 
         $client = app(SapServiceLayerClient::class);
-        try {
-            $invoiceResult = $client->createArReserveInvoiceFromOmnifulOrder($data, $externalId);
-        } catch (SapRequestException $e) {
-            $order->sap_order_response = [
-                'ignored' => false,
-                'request_body' => $e->requestBody,
-                'error_response_body' => $e->responseBody,
-                'status_code' => $e->statusCode,
-            ];
-            $order->save();
-            throw $e;
-        }
-        if (($invoiceResult['ignored'] ?? false) === true) {
-            $order->sap_status = 'ignored';
-            $order->sap_error = (string) ($invoiceResult['reason'] ?? 'Ignored: no order lines found');
-            $order->sap_order_response = $invoiceResult;
+        $existingInvoice = $client->findExistingArReserveInvoiceForOmnifulOrderReference($data, $externalId);
+        if ($existingInvoice !== null) {
+            $order->sap_status = 'created';
+            $order->sap_doc_entry = (string) ($existingInvoice['DocEntry'] ?? '');
+            $order->sap_doc_num = (string) ($existingInvoice['DocNum'] ?? '');
+            $order->sap_error = null;
+            $existingInvoice['ignored'] = false;
+            $existingInvoice['reused_existing'] = true;
+            $order->sap_order_response = $existingInvoice;
             $order->save();
 
-            return $invoiceResult;
+            return $existingInvoice;
         }
 
-        $order->sap_status = 'created';
-        $order->sap_doc_entry = (string) ($invoiceResult['DocEntry'] ?? '');
-        $order->sap_doc_num = (string) ($invoiceResult['DocNum'] ?? '');
-        $order->sap_error = null;
-        $order->sap_order_response = $invoiceResult;
+        $order->sap_status = 'blocked';
+        $order->sap_error = 'Missing SAP AR reserve invoice for follow-up event; shipment/delivery events do not create base invoices';
         $order->save();
 
-        return $invoiceResult;
+        return null;
     }
 
     private function refreshOverallSapStatus(OmnifulOrder $order): void

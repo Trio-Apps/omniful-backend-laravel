@@ -142,13 +142,6 @@ class WebhookStatusMapper
             return ['eligible' => true, 'reason' => null];
         }
 
-        // Some orders reach SAP for the first time at fulfillment stages like
-        // ready_to_ship or delivered. Allow creating the base sales document
-        // so follow-up delivery/credit actions can continue on the same order.
-        if ($isPrepaid && $this->isOrderDeliveryStatus($status)) {
-            return ['eligible' => true, 'reason' => null];
-        }
-
         if ($strict) {
             return ['eligible' => false, 'reason' => 'Unmapped order event/status/payment for AR reserve invoice'];
         }

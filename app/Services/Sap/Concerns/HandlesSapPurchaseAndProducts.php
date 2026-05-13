@@ -114,7 +114,6 @@ trait HandlesSapPurchaseAndProducts
             'TaxDate' => $taxDate,
             'DocumentLines' => $lines,
             'Comments' => $comments,
-            'NumAtCard' => $externalId,
             // SAP B1 AR Reserve Invoice via Invoices with ReserveInvoice = tYES
             'ReserveInvoice' => 'tYES',
         ];
@@ -129,6 +128,15 @@ trait HandlesSapPurchaseAndProducts
 
         $body = $this->appendOmnifulDocumentUdfs($body, $data, $externalId);
         $body = $this->appendFreightToMarketingDocument($body, $data);
+
+        $existingInvoice = $this->findExistingArReserveInvoiceForOmnifulOrder($body, $data, $externalId);
+        if ($existingInvoice !== null) {
+            $existingInvoice['ignored'] = false;
+            $existingInvoice['reused_existing'] = true;
+            $existingInvoice['request_body'] = $body;
+
+            return $existingInvoice;
+        }
 
         $usedReserveInvoiceFallback = false;
         $response = $this->postArOrderWithReserveFallback($body, $usedReserveInvoiceFallback);
@@ -179,12 +187,23 @@ trait HandlesSapPurchaseAndProducts
         return $this->post('/Invoices', $body);
     }
 
+    public function findExistingArReserveInvoiceForOmnifulOrderReference(array $data, string $externalId): ?array
+    {
+        $body = $this->appendOmnifulDocumentUdfs([], $data, $externalId);
+
+        return $this->findExistingArReserveInvoiceForOmnifulOrder($body, $data, $externalId);
+    }
+
     private function isSapArInvoiceAlreadyExistsError(string $body): bool
     {
         $normalized = strtolower($body);
 
-        return str_contains($normalized, 'ar invoice')
-            && str_contains($normalized, 'already exists');
+        return str_contains($normalized, 'already exists')
+            && (
+                str_contains($normalized, 'ar invoice')
+                || str_contains($normalized, 'invoice')
+                || str_contains($normalized, 'reference number')
+            );
     }
 
     private function findExistingArReserveInvoiceForOmnifulOrder(array $body, array $data, string $externalId, string $duplicateErrorBody = ''): ?array
@@ -243,6 +262,10 @@ trait HandlesSapPurchaseAndProducts
 
     private function extractSapDuplicateArInvoiceReference(string $body): string
     {
+        if (preg_match('/reference\s+number\s+already\s+exists\s*:\s*([A-Za-z0-9_\-]+)/i', $body, $matches)) {
+            return trim((string) ($matches[1] ?? ''));
+        }
+
         if (preg_match('/\((?:\d+)\)\s*([^\s]+)\s+AR\s+invoice/i', $body, $matches)) {
             return trim((string) ($matches[1] ?? ''));
         }
@@ -711,6 +734,7 @@ trait HandlesSapPurchaseAndProducts
         ];
 
         $body = $this->appendOmnifulDocumentUdfs($body, $data, $externalId);
+        $body = $this->appendFreightToMarketingDocument($body, $data);
 
         $response = $this->post('/DeliveryNotes', $body);
         if (!$response->successful()) {
