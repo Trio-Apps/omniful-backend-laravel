@@ -121,7 +121,8 @@ class IntegrationControlSettings extends Page implements HasForms
                             ->helperText('Creates a commission/card-fee journal after incoming payment is created.'),
                         TextInput::make('order_card_fee_expense_account')
                             ->label('Card Fee Expense Account')
-                            ->placeholder('Debit account'),
+                            ->default(config('omniful.order_payment.card_fee_expense_account'))
+                            ->placeholder('2102001'),
                         TextInput::make('order_card_fee_offset_account')
                             ->label('Card Fee Offset Account')
                             ->placeholder('Credit account'),
@@ -129,7 +130,13 @@ class IntegrationControlSettings extends Page implements HasForms
                             ->label('Card Fee Percent')
                             ->numeric()
                             ->placeholder('Example: 2.5')
-                            ->helperText('Used only when Omniful payload does not include an explicit card fee amount.'),
+                            ->helperText('Fallback only when no payment-method fee percent is configured.'),
+                        Textarea::make('order_card_fee_method_percent_map')
+                            ->label('Card Fee Percent by Payment Method')
+                            ->rows(8)
+                            ->default("tamara:4\ntabby:4\ntapkeynet:1.5\ntapmada:0.9\ntapcreditcard:2\ntapapplepay:1.5\ntabbyaddon:1\ntamaraaddon:1.5\nzidpaymada:0.75\nzidpayvisa:1.75")
+                            ->placeholder("tamara:4\ntabby:4\ntapkeynet:1.5\ntapmada:0.9\ntapcreditcard:2\ntapapplepay:1.5\nzidpayvisa:1.75")
+                            ->helperText('Format: omniful_payment_method:fee_percent. One pair per line or comma-separated. This drives Enable Card Fee Journal only.'),
                         Toggle::make('order_cogs_journal_enabled')
                             ->label('Enable COGS Journal')
                             ->default(true)
@@ -167,6 +174,7 @@ class IntegrationControlSettings extends Page implements HasForms
                 'order_card_fee_expense_account' => $state['order_card_fee_expense_account'] ?? null,
                 'order_card_fee_offset_account' => $state['order_card_fee_offset_account'] ?? null,
                 'order_card_fee_percent' => $state['order_card_fee_percent'] ?? null,
+                'order_card_fee_method_percent_map' => $state['order_card_fee_method_percent_map'] ?? null,
                 'order_cogs_journal_enabled' => (bool) ($state['order_cogs_journal_enabled'] ?? false),
                 'order_cogs_expense_account' => $state['order_cogs_expense_account'] ?? null,
                 'order_cogs_inventory_offset_account' => $state['order_cogs_inventory_offset_account'] ?? null,

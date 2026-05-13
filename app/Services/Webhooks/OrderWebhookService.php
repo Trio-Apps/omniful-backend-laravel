@@ -684,7 +684,8 @@ class OrderWebhookService
             return;
         }
 
-        $feeAmount = $this->extractCardFeeAmount($data);
+        $paymentMethod = $this->resolvePaymentMethod($data);
+        $feeAmount = $this->extractCardFeeAmount($data, $paymentMethod);
         if ($feeAmount <= 0) {
             $order->sap_card_fee_status = 'ignored';
             $order->sap_card_fee_error = 'Ignored: card fee amount missing';
@@ -702,7 +703,8 @@ class OrderWebhookService
                 'amount' => $feeAmount,
                 'posting_date' => data_get($data, 'order_created_at') ?? data_get($data, 'created_at'),
                 'reference' => (string) ($order->external_id ?? ''),
-                'memo' => 'Card fee from Omniful order ' . (string) ($order->external_id ?? ''),
+                'memo' => trim('Card fee from Omniful order ' . (string) ($order->external_id ?? '') . ($paymentMethod !== '' ? ' | method=' . $paymentMethod : '')),
+                'payment_method' => $paymentMethod,
                 'expense_account' => $this->resolveIntegrationSettingValue('order_card_fee_expense_account', config('omniful.order_payment.card_fee_expense_account')),
                 'offset_account' => $this->resolveIntegrationSettingValue('order_card_fee_offset_account', config('omniful.order_payment.card_fee_offset_account')),
                 'hub_code' => (string) ($order->hub_code ?? data_get($data, 'hub_code', '')),
@@ -736,7 +738,7 @@ class OrderWebhookService
         $order->save();
     }
 
-    private function extractCardFeeAmount(array $data): float
+    private function extractCardFeeAmount(array $data, string $paymentMethod = ''): float
     {
         $candidates = [
             data_get($data, 'payment.card_fee_amount'),
@@ -755,7 +757,7 @@ class OrderWebhookService
             }
         }
 
-        $percent = (float) $this->resolveIntegrationSettingValue('order_card_fee_percent', config('omniful.order_payment.card_fee_percent', 0));
+        $percent = $this->resolveCardFeePercent($paymentMethod);
         if ($percent <= 0) {
             return 0.0;
         }
@@ -770,6 +772,24 @@ class OrderWebhookService
         }
 
         return round(((float) $total) * ($percent / 100), 2);
+    }
+
+    private function resolveCardFeePercent(string $paymentMethod): float
+    {
+        $normalizedMethod = strtolower(str_replace([' ', '-', '_'], '', trim($paymentMethod)));
+
+        $settings = IntegrationSetting::query()->first();
+        $settingsMap = $this->parseSimpleMapping((string) ($settings?->order_card_fee_method_percent_map ?? ''));
+        if ($normalizedMethod !== '' && isset($settingsMap[$normalizedMethod]) && is_numeric($settingsMap[$normalizedMethod])) {
+            return (float) $settingsMap[$normalizedMethod];
+        }
+
+        $configuredMap = config('omniful.order_payment.card_fee_method_percent_map', []);
+        if ($normalizedMethod !== '' && is_array($configuredMap) && isset($configuredMap[$normalizedMethod]) && is_numeric($configuredMap[$normalizedMethod])) {
+            return (float) $configuredMap[$normalizedMethod];
+        }
+
+        return (float) $this->resolveIntegrationSettingValue('order_card_fee_percent', config('omniful.order_payment.card_fee_percent', 0));
     }
 
     private function createDeliveryIfEligible(OmnifulOrder $order, array $data): void
