@@ -5238,19 +5238,17 @@ trait HandlesSapPurchaseAndProducts
                 ->first();
         }
 
-        if (!$setting) {
-            $setting = SapCostCenterSetting::query()
-                ->whereNull('warehouse_code')
-                ->first();
-        }
+        $globalSetting = SapCostCenterSetting::query()
+            ->whereNull('warehouse_code')
+            ->first();
 
         $raw = [
-            'CostingCode' => (string) ($setting->costing_code ?? config('omniful.sap_cost_centers.costing_code', '')),
-            'CostingCode2' => (string) ($setting->costing_code2 ?? config('omniful.sap_cost_centers.costing_code2', '')),
-            'CostingCode3' => (string) ($setting->costing_code3 ?? config('omniful.sap_cost_centers.costing_code3', '')),
-            'CostingCode4' => (string) ($setting->costing_code4 ?? config('omniful.sap_cost_centers.costing_code4', '')),
-            'CostingCode5' => (string) ($setting->costing_code5 ?? config('omniful.sap_cost_centers.costing_code5', '')),
-            'ProjectCode' => (string) ($setting->project_code ?? config('omniful.sap_cost_centers.project_code', '')),
+            'CostingCode' => $this->resolveCostCenterFieldValue($setting, $globalSetting, 'costing_code', 'omniful.sap_cost_centers.costing_code'),
+            'CostingCode2' => $this->resolveCostCenterFieldValue($setting, $globalSetting, 'costing_code2', 'omniful.sap_cost_centers.costing_code2'),
+            'CostingCode3' => $this->resolveCostCenterFieldValue($setting, $globalSetting, 'costing_code3', 'omniful.sap_cost_centers.costing_code3'),
+            'CostingCode4' => $this->resolveCostCenterFieldValue($setting, $globalSetting, 'costing_code4', 'omniful.sap_cost_centers.costing_code4'),
+            'CostingCode5' => $this->resolveCostCenterFieldValue($setting, $globalSetting, 'costing_code5', 'omniful.sap_cost_centers.costing_code5'),
+            'ProjectCode' => $this->resolveCostCenterFieldValue($setting, $globalSetting, 'project_code', 'omniful.sap_cost_centers.project_code'),
         ];
 
         $fields = [];
@@ -5263,6 +5261,22 @@ trait HandlesSapPurchaseAndProducts
 
         $cached[$cacheKey] = $fields;
         return $fields;
+    }
+
+    private function resolveCostCenterFieldValue(?SapCostCenterSetting $warehouseSetting, ?SapCostCenterSetting $globalSetting, string $field, string $configKey): string
+    {
+        foreach ([
+            $warehouseSetting?->{$field},
+            $globalSetting?->{$field},
+            config($configKey, ''),
+        ] as $value) {
+            $value = trim((string) ($value ?? ''));
+            if ($value !== '') {
+                return $value;
+            }
+        }
+
+        return '';
     }
 
     private function resolveWarehouseCodeFromDocumentLines(array $document): ?string
