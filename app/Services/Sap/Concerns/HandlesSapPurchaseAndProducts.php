@@ -6,6 +6,7 @@ use App\Exceptions\SapRequestException;
 use App\Models\IntegrationSetting;
 use App\Models\SapBankAccount;
 use App\Models\SapCostCenterSetting;
+use App\Support\Utf8;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
@@ -3391,19 +3392,53 @@ trait HandlesSapPurchaseAndProducts
         $taxPercent = $this->extractOrderLineTaxPercent($item);
 
         if ($this->isLocalOrderCustomer($data)) {
-            return trim((string) (
-                $this->getIntegrationSettingValue($taxPercent > 0 ? 'order_tax_code_ksa_taxable' : 'order_tax_code_ksa_zero')
-                ?? config(
-                    $taxPercent > 0 ? 'omniful.order_tax.ksa_taxable_code' : 'omniful.order_tax.ksa_zero_tax_code',
-                    $taxPercent > 0 ? 'SOV' : 'EOV'
-                )
-            ));
+            return $this->resolveConfiguredSapTaxCode(
+                $taxPercent > 0 ? 'order_tax_code_ksa_taxable' : 'order_tax_code_ksa_zero',
+                $taxPercent > 0 ? 'omniful.order_tax.ksa_taxable_code' : 'omniful.order_tax.ksa_zero_tax_code',
+                $taxPercent > 0 ? 'SOV' : 'EOV',
+            );
         }
 
-        return trim((string) (
-            $this->getIntegrationSettingValue('order_tax_code_foreign')
-            ?? config('omniful.order_tax.foreign_code', 'EOV')
-        ));
+        return $this->resolveConfiguredSapTaxCode(
+            'order_tax_code_foreign',
+            'omniful.order_tax.foreign_code',
+            'EOV',
+        );
+    }
+
+    private function resolveConfiguredSapTaxCode(string $settingKey, string $configKey, string $fallback): string
+    {
+        foreach ([
+            $this->getIntegrationSettingValue($settingKey),
+            config($configKey, $fallback),
+            $fallback,
+        ] as $candidate) {
+            $taxCode = $this->sanitizeSapTaxCode($candidate);
+            if ($taxCode !== '') {
+                return $taxCode;
+            }
+        }
+
+        return '';
+    }
+
+    private function sanitizeSapTaxCode(mixed $value): string
+    {
+        $code = trim(Utf8::sanitizeString((string) $value));
+
+        if ($code === '') {
+            return '';
+        }
+
+        if (!preg_match('/^[A-Za-z0-9_.-]+$/', $code)) {
+            Log::warning('Ignoring invalid SAP tax code value.', [
+                'tax_code' => $code,
+            ]);
+
+            return '';
+        }
+
+        return $code;
     }
 
     private function extractOrderLineTaxPercent(array $item): float
