@@ -4387,43 +4387,14 @@ trait HandlesSapPurchaseAndProducts
             }
         }
 
-        $expenses = $body['DocumentAdditionalExpenses'] ?? [];
-        if (is_array($expenses) && $expenses !== []) {
-            $freightTaxPercent = (float) $this->extractOrderFreightTaxPercent($data);
-            $freightGrossTarget = $this->extractOrderFreightGrossAmount($data);
-
-            foreach ($expenses as $index => $expense) {
-                if (!is_array($expense) || !isset($expense['LineTotal']) || !is_numeric($expense['LineTotal'])) {
-                    continue;
-                }
-                $lineTotal = (float) $expense['LineTotal'];
-                if ($lineTotal <= 0) {
-                    continue;
-                }
-
-                if ($freightGrossTarget > 0 && $freightTaxPercent > 0) {
-                    // Reconciled approach: TaxAmount fills the gap to the
-                    // freight gross Omniful billed, so the combined gross is
-                    // the same 2-dp figure regardless of any net-side
-                    // precision loss when Path C divided gross by (1 + rate).
-                    $taxAmount = round($freightGrossTarget - $lineTotal, 2);
-                } elseif ($freightTaxPercent > 0) {
-                    $taxAmount = round($lineTotal * ($freightTaxPercent / 100), 2);
-                } else {
-                    continue;
-                }
-
-                if ($taxAmount < 0) {
-                    continue;
-                }
-                $body['DocumentAdditionalExpenses'][$index]['TaxAmount'] = $taxAmount;
-                // Only apply the gross-reconciliation absorption once: the
-                // freight expense line usually has a single entry, but for
-                // unusual multi-expense docs we re-derive freightGrossTarget
-                // from per-line net to keep the next iteration tax-aware.
-                $freightGrossTarget = max($freightGrossTarget - ($lineTotal + $taxAmount), 0.0);
-            }
-        }
+        // Do NOT stamp TaxAmount on DocumentAdditionalExpenses. SAP B1's
+        // freight expense validator requires the supplied TaxAmount to match
+        // VatGroup * LineTotal exactly; even a sub-cent mismatch (e.g. our
+        // 2-dp reconciled TaxAmount vs SAP's auto-computed 4-dp value)
+        // surfaces as the misleading "Tax code required for freight
+        // charges (N)" -10 error. We let SAP auto-compute freight VAT from
+        // VatGroup and absorb the small residual via the merchandise-line
+        // nudge in applyDocumentRoundingIfNeeded.
 
         return $body;
     }
