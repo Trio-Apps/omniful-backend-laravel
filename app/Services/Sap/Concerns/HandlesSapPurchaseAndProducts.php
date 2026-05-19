@@ -528,25 +528,13 @@ trait HandlesSapPurchaseAndProducts
      */
     public function recoverArReserveInvoiceForOmnifulOrder(string $responseBody, array $data, string $externalId): ?array
     {
-        $invoice = $this->findExistingArReserveInvoiceForOmnifulOrder([], $data, $externalId, $responseBody);
+        $inspection = $this->inspectArReserveInvoiceDuplicate($responseBody, $data, $externalId);
+        $invoice = $inspection['invoice'] ?? null;
         if (!is_array($invoice) || empty($invoice['DocEntry'])) {
-            Log::warning('SAP AR invoice duplicate-error recovery found no candidate', [
-                'external_id' => $externalId,
-                'response_body' => $responseBody,
-            ]);
             return null;
         }
 
-        if (!$this->arInvoiceMatchesOmnifulOrder($invoice, $externalId, $data)) {
-            Log::error('SAP AR invoice duplicate-error recovery found a foreign invoice — possible SAP numbering series rollback', [
-                'external_id' => $externalId,
-                'response_body' => $responseBody,
-                'candidate_doc_entry' => $invoice['DocEntry'] ?? null,
-                'candidate_doc_num' => $invoice['DocNum'] ?? null,
-                'candidate_u_omo' => $invoice['U_omo'] ?? null,
-                'candidate_u_zid_id' => $invoice['U_ZidId'] ?? null,
-                'candidate_num_at_card' => $invoice['NumAtCard'] ?? null,
-            ]);
+        if (($inspection['ownership'] ?? 'unknown') === 'foreign') {
             return null;
         }
 
@@ -554,8 +542,107 @@ trait HandlesSapPurchaseAndProducts
         $invoice['reused_existing'] = true;
         $invoice['recovered_after_duplicate_error'] = true;
         $invoice['sap_duplicate_error'] = $responseBody;
+        $invoice['ownership'] = $inspection['ownership'];
 
         return $invoice;
+    }
+
+    /**
+     * Inspect a SAP "already exists" duplicate error and classify the conflicting
+     * invoice ownership. Used to decide whether to rebind locally, escalate as a
+     * SAP numbering-series conflict (foreign invoice), or treat as a hard failure.
+     *
+     * Returned shape:
+     *   ['invoice' => ?array, 'ownership' => 'match'|'orphan'|'foreign'|'none', 'reason' => string]
+     *
+     * - match:   UDFs/Comments tie the invoice to this Omniful order. Safe to rebind.
+     * - orphan:  Invoice has no order ownership markers at all. Likely created by an
+     *            earlier integration version without UDFs — caller may choose to
+     *            adopt with caution.
+     * - foreign: Invoice carries ownership markers pointing to a different order.
+     *            Strong signal of a SAP numbering-series rollback; the SAP admin
+     *            must increase the AR Invoice series "Next No." past MAX(DocNum).
+     * - none:    No invoice located at all.
+     */
+    public function inspectArReserveInvoiceDuplicate(string $responseBody, array $data, string $externalId): array
+    {
+        $invoice = $this->findExistingArReserveInvoiceForOmnifulOrder([], $data, $externalId, $responseBody);
+        if (!is_array($invoice) || empty($invoice['DocEntry'])) {
+            Log::warning('SAP AR invoice duplicate-error recovery found no candidate', [
+                'external_id' => $externalId,
+                'response_body' => $responseBody,
+            ]);
+
+            return [
+                'invoice' => null,
+                'ownership' => 'none',
+                'reason' => 'No invoice located in SAP for the duplicate error',
+            ];
+        }
+
+        if ($this->arInvoiceMatchesOmnifulOrder($invoice, $externalId, $data)) {
+            return [
+                'invoice' => $invoice,
+                'ownership' => 'match',
+                'reason' => 'Invoice ownership matches the Omniful order',
+            ];
+        }
+
+        if ($this->arInvoiceHasNoOwnershipMarkers($invoice)) {
+            Log::warning('SAP AR invoice duplicate-error recovery found an orphan invoice (no ownership markers)', [
+                'external_id' => $externalId,
+                'response_body' => $responseBody,
+                'candidate_doc_entry' => $invoice['DocEntry'] ?? null,
+                'candidate_doc_num' => $invoice['DocNum'] ?? null,
+            ]);
+
+            return [
+                'invoice' => $invoice,
+                'ownership' => 'orphan',
+                'reason' => 'Invoice has no UDF/Comments ownership markers; adoption requires manual review',
+            ];
+        }
+
+        Log::error('SAP AR invoice duplicate-error recovery found a foreign invoice — likely SAP numbering series rollback', [
+            'external_id' => $externalId,
+            'response_body' => $responseBody,
+            'candidate_doc_entry' => $invoice['DocEntry'] ?? null,
+            'candidate_doc_num' => $invoice['DocNum'] ?? null,
+            'candidate_u_omo' => $invoice['U_omo'] ?? null,
+            'candidate_u_zid_id' => $invoice['U_ZidId'] ?? null,
+            'candidate_u_salla_order_id' => $invoice['U_SallaOrderId'] ?? null,
+            'candidate_num_at_card' => $invoice['NumAtCard'] ?? null,
+            'candidate_comments' => $invoice['Comments'] ?? null,
+        ]);
+
+        return [
+            'invoice' => $invoice,
+            'ownership' => 'foreign',
+            'reason' => 'Conflicting invoice belongs to a different order; SAP series counter may have been rolled back',
+        ];
+    }
+
+    /**
+     * True when the invoice has no UDF / NumAtCard / Comments markers identifying
+     * any specific Omniful order. Such "orphan" invoices may safely be reviewed
+     * for adoption by the current order.
+     */
+    private function arInvoiceHasNoOwnershipMarkers(array $invoice): bool
+    {
+        foreach (['U_omo', 'U_ZidId', 'U_SallaOrderId', 'NumAtCard'] as $field) {
+            if (trim((string) ($invoice[$field] ?? '')) !== '') {
+                return false;
+            }
+        }
+
+        $comments = trim((string) ($invoice['Comments'] ?? ''));
+        if ($comments === '') {
+            return true;
+        }
+
+        // Comments may carry the standard "AR Reserve Invoice from Omniful order <id>"
+        // template — treat that as an ownership marker only when an id follows it.
+        return !preg_match('/Omniful\s+order\s+\S+/i', $comments);
     }
 
     public function createIncomingPaymentForInvoice(array $data): array

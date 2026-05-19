@@ -236,46 +236,22 @@ class OrderWebhookService
                 try {
                     $invoiceResult = $client->createArReserveInvoiceFromOmnifulOrder($data, $externalId);
                 } catch (SapRequestException $e) {
-                    // Last-chance recovery: SAP rejected the POST with "already exists"
-                    // (or another duplicate signal). Try to pull the matching invoice
-                    // from SAP one more time and rebind locally. This rescues orders
-                    // whose AR reserve invoice exists in SAP but never made it into
-                    // our DB (worker crash between POST and save, queue restart, or
-                    // local truncate via Reset Orders & Queue).
-                    $rescued = null;
-                    if ($e->responseBody !== '' && method_exists($client, 'recoverArReserveInvoiceForOmnifulOrder')) {
-                        try {
-                            $rescued = $client->recoverArReserveInvoiceForOmnifulOrder(
-                                (string) $e->responseBody,
-                                $data,
-                                $externalId,
-                            );
-                        } catch (\Throwable $rescueError) {
-                            $rescued = null;
-                        }
-                    }
+                    // Unified duplicate-error handling: rebind on ownership match,
+                    // mark as blocked (not failed) when the conflicting DocNum
+                    // belongs to a foreign or orphan invoice — preserves the order
+                    // for retry once SAP series counter is corrected.
+                    $rescued = $this->handleFollowUpInvoiceCreateException(
+                        $order,
+                        $client,
+                        $e,
+                        $data,
+                        $externalId,
+                    );
 
                     if (is_array($rescued) && !empty($rescued['DocEntry'])) {
-                        $order->sap_status = 'created';
-                        $order->sap_doc_entry = (string) ($rescued['DocEntry'] ?? '');
-                        $order->sap_doc_num = (string) ($rescued['DocNum'] ?? '');
-                        $order->sap_error = null;
-                        $rescued['ignored'] = false;
-                        $rescued['reused_existing'] = true;
-                        $rescued['recovered_after_duplicate_error'] = true;
-                        $order->sap_order_response = $rescued;
-                        $order->save();
-
                         $invoiceResult = $rescued;
                     } else {
-                        $order->sap_order_response = [
-                            'ignored' => false,
-                            'request_body' => $e->requestBody,
-                            'error_response_body' => $e->responseBody,
-                            'status_code' => $e->statusCode,
-                        ];
-                        $order->save();
-                        throw $e;
+                        return;
                     }
                 }
                 if (($invoiceResult['ignored'] ?? false) === true) {
@@ -361,47 +337,7 @@ class OrderWebhookService
         try {
             $invoiceResult = $client->createArReserveInvoiceFromOmnifulOrder($data, $externalId);
         } catch (SapRequestException $e) {
-            // Last-chance rescue: if SAP rejects with "already exists", re-attempt
-            // to pull the matching invoice using the duplicate response body.
-            $rescued = null;
-            if ($e->responseBody !== '' && method_exists($client, 'recoverArReserveInvoiceForOmnifulOrder')) {
-                try {
-                    $rescued = $client->recoverArReserveInvoiceForOmnifulOrder(
-                        (string) $e->responseBody,
-                        $data,
-                        $externalId,
-                    );
-                } catch (\Throwable $rescueError) {
-                    $rescued = null;
-                }
-            }
-
-            if (is_array($rescued) && !empty($rescued['DocEntry'])) {
-                $order->sap_status = 'created';
-                $order->sap_doc_entry = (string) ($rescued['DocEntry'] ?? '');
-                $order->sap_doc_num = (string) ($rescued['DocNum'] ?? '');
-                $order->sap_error = null;
-                $rescued['ignored'] = false;
-                $rescued['reused_existing'] = true;
-                $rescued['recovered_after_duplicate_error'] = true;
-                $order->sap_order_response = $rescued;
-                $order->save();
-
-                return $rescued;
-            }
-
-            $order->sap_status = 'failed';
-            $order->sap_error = 'Lazy AR reserve invoice creation failed during follow-up event: ' . $e->getMessage();
-            $order->sap_order_response = [
-                'ignored' => false,
-                'request_body' => $e->requestBody,
-                'error_response_body' => $e->responseBody,
-                'status_code' => $e->statusCode,
-                'created_during_follow_up' => true,
-            ];
-            $order->save();
-
-            return null;
+            return $this->handleFollowUpInvoiceCreateException($order, $client, $e, $data, $externalId);
         }
 
         if (($invoiceResult['ignored'] ?? false) === true) {
@@ -424,6 +360,112 @@ class OrderWebhookService
         $order->save();
 
         return $invoiceResult;
+    }
+
+    /**
+     * Map a SapRequestException raised by a lazy/follow-up AR reserve invoice
+     * create attempt to the appropriate local order state. Distinguishes:
+     *
+     * - Owned recovery (invoice exists with matching UDFs/Comments): rebind locally.
+     * - Foreign duplicate (invoice exists but belongs to another order): mark the
+     *   order as `blocked` with a SAP series-counter advisory message — keeps the
+     *   order recoverable once the SAP admin advances the AR Invoice numbering
+     *   series Next No. past MAX(DocNum).
+     * - Orphan duplicate (invoice exists with no ownership markers): mark the
+     *   order as `blocked` for manual review rather than silently adopting an
+     *   ambiguous SAP record.
+     * - True failure (no candidate invoice): mark the order as `failed`.
+     */
+    private function handleFollowUpInvoiceCreateException(
+        OmnifulOrder $order,
+        $client,
+        SapRequestException $e,
+        array $data,
+        string $externalId,
+    ): ?array {
+        $inspection = null;
+        if ($e->responseBody !== '' && method_exists($client, 'inspectArReserveInvoiceDuplicate')) {
+            try {
+                $inspection = $client->inspectArReserveInvoiceDuplicate(
+                    (string) $e->responseBody,
+                    $data,
+                    $externalId,
+                );
+            } catch (\Throwable $inspectError) {
+                $inspection = null;
+            }
+        }
+
+        $ownership = (string) ($inspection['ownership'] ?? 'none');
+        $candidate = is_array($inspection['invoice'] ?? null) ? $inspection['invoice'] : null;
+
+        if ($ownership === 'match' && is_array($candidate) && !empty($candidate['DocEntry'])) {
+            $order->sap_status = 'created';
+            $order->sap_doc_entry = (string) ($candidate['DocEntry'] ?? '');
+            $order->sap_doc_num = (string) ($candidate['DocNum'] ?? '');
+            $order->sap_error = null;
+            $candidate['ignored'] = false;
+            $candidate['reused_existing'] = true;
+            $candidate['recovered_after_duplicate_error'] = true;
+            $order->sap_order_response = $candidate;
+            $order->save();
+
+            return $candidate;
+        }
+
+        if ($ownership === 'foreign' && is_array($candidate)) {
+            $order->sap_status = 'blocked';
+            $order->sap_error = sprintf(
+                'SAP AR Invoice numbering series conflict: conflicting DocNum %s already exists in SAP and belongs to a different order (UDF/Comments do not match Omniful order %s). Ask SAP admin to advance the AR Invoice series "Next No." past MAX(DocNum) in OINV, then retry.',
+                (string) ($candidate['DocNum'] ?? '?'),
+                $externalId,
+            );
+            $order->sap_order_response = [
+                'ignored' => false,
+                'request_body' => $e->requestBody,
+                'error_response_body' => $e->responseBody,
+                'status_code' => $e->statusCode,
+                'created_during_follow_up' => true,
+                'duplicate_inspection' => $inspection,
+            ];
+            $order->save();
+
+            return null;
+        }
+
+        if ($ownership === 'orphan' && is_array($candidate)) {
+            $order->sap_status = 'blocked';
+            $order->sap_error = sprintf(
+                'SAP returned a duplicate DocNum %s but the conflicting invoice carries no UDF/Comments to confirm ownership. Review in SAP and either set U_omo=%s or update the AR Invoice series "Next No." then retry.',
+                (string) ($candidate['DocNum'] ?? '?'),
+                $externalId,
+            );
+            $order->sap_order_response = [
+                'ignored' => false,
+                'request_body' => $e->requestBody,
+                'error_response_body' => $e->responseBody,
+                'status_code' => $e->statusCode,
+                'created_during_follow_up' => true,
+                'duplicate_inspection' => $inspection,
+            ];
+            $order->save();
+
+            return null;
+        }
+
+        $order->sap_status = 'failed';
+        $order->sap_error = 'AR reserve invoice creation failed during follow-up event: ' . $e->getMessage();
+        $order->sap_order_response = [
+            'ignored' => false,
+            'request_body' => $e->requestBody,
+            'error_response_body' => $e->responseBody,
+            'status_code' => $e->statusCode,
+            'created_during_follow_up' => true,
+            'duplicate_inspection' => $inspection,
+        ];
+        $order->save();
+
+        return null;
     }
 
     private function refreshOverallSapStatus(OmnifulOrder $order): void
