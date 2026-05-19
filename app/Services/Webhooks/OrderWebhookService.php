@@ -329,8 +329,10 @@ class OrderWebhookService
         }
 
         $client = app(SapServiceLayerClient::class);
+
+        // 1) Try to rebind an existing AR reserve invoice already in SAP.
         $existingInvoice = $client->findExistingArReserveInvoiceForOmnifulOrderReference($data, $externalId);
-        if ($existingInvoice !== null) {
+        if (is_array($existingInvoice) && !empty($existingInvoice['DocEntry'])) {
             $order->sap_status = 'created';
             $order->sap_doc_entry = (string) ($existingInvoice['DocEntry'] ?? '');
             $order->sap_doc_num = (string) ($existingInvoice['DocNum'] ?? '');
@@ -343,11 +345,85 @@ class OrderWebhookService
             return $existingInvoice;
         }
 
-        $order->sap_status = 'blocked';
-        $order->sap_error = 'Missing SAP AR reserve invoice for follow-up event; shipment/delivery events do not create base invoices';
+        // 2) Fallback: create the AR reserve invoice on-the-fly from the follow-up payload.
+        //
+        // The shipment/delivery webhook payload carries the full order context
+        // (items, prices, customer, hub) — equivalent to what order.new/order.create
+        // would have provided. Creating the invoice here recovers orders whose
+        // initial create event never arrived (integration started after the order,
+        // earlier event failed, replayed shipped event, etc.), turning a hard
+        // "blocked" state into a successful sale + delivery flow.
+        //
+        // Duplicate protection is preserved by the SDK-side recovery logic:
+        // createArReserveInvoiceFromOmnifulOrder runs findExistingArReserveInvoiceForOmnifulOrder
+        // before POST and on "already exists" errors, with UDF ownership validation
+        // (U_omo / U_ZidId / U_SallaOrderId / NumAtCard / Comments).
+        try {
+            $invoiceResult = $client->createArReserveInvoiceFromOmnifulOrder($data, $externalId);
+        } catch (SapRequestException $e) {
+            // Last-chance rescue: if SAP rejects with "already exists", re-attempt
+            // to pull the matching invoice using the duplicate response body.
+            $rescued = null;
+            if ($e->responseBody !== '' && method_exists($client, 'recoverArReserveInvoiceForOmnifulOrder')) {
+                try {
+                    $rescued = $client->recoverArReserveInvoiceForOmnifulOrder(
+                        (string) $e->responseBody,
+                        $data,
+                        $externalId,
+                    );
+                } catch (\Throwable $rescueError) {
+                    $rescued = null;
+                }
+            }
+
+            if (is_array($rescued) && !empty($rescued['DocEntry'])) {
+                $order->sap_status = 'created';
+                $order->sap_doc_entry = (string) ($rescued['DocEntry'] ?? '');
+                $order->sap_doc_num = (string) ($rescued['DocNum'] ?? '');
+                $order->sap_error = null;
+                $rescued['ignored'] = false;
+                $rescued['reused_existing'] = true;
+                $rescued['recovered_after_duplicate_error'] = true;
+                $order->sap_order_response = $rescued;
+                $order->save();
+
+                return $rescued;
+            }
+
+            $order->sap_status = 'failed';
+            $order->sap_error = 'Lazy AR reserve invoice creation failed during follow-up event: ' . $e->getMessage();
+            $order->sap_order_response = [
+                'ignored' => false,
+                'request_body' => $e->requestBody,
+                'error_response_body' => $e->responseBody,
+                'status_code' => $e->statusCode,
+                'created_during_follow_up' => true,
+            ];
+            $order->save();
+
+            return null;
+        }
+
+        if (($invoiceResult['ignored'] ?? false) === true) {
+            $order->sap_status = 'ignored';
+            $order->sap_error = (string) ($invoiceResult['reason'] ?? 'Ignored: no order lines found');
+            $invoiceResult['created_during_follow_up'] = true;
+            $order->sap_order_response = $invoiceResult;
+            $order->save();
+
+            return null;
+        }
+
+        $order->sap_status = 'created';
+        $order->sap_doc_entry = (string) ($invoiceResult['DocEntry'] ?? '');
+        $order->sap_doc_num = (string) ($invoiceResult['DocNum'] ?? '');
+        $order->sap_error = null;
+        $invoiceResult['ignored'] = false;
+        $invoiceResult['created_during_follow_up'] = true;
+        $order->sap_order_response = $invoiceResult;
         $order->save();
 
-        return null;
+        return $invoiceResult;
     }
 
     private function refreshOverallSapStatus(OmnifulOrder $order): void
