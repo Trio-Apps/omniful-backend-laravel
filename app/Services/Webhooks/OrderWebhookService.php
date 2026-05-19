@@ -904,6 +904,44 @@ class OrderWebhookService
             return;
         }
 
+        // Heal rows that were saved with the literal sentinel "already_integrated"
+        // by the previous duplicate-error handler: resolve the real TransId/Number
+        // from SAP so the local reference matches an actual Journal Entry instead
+        // of a meaningless placeholder string.
+        $existingJournalRef = (string) ($order->sap_card_fee_journal_entry ?? '');
+        $existingJournalNum = (string) ($order->sap_card_fee_journal_num ?? '');
+        if ($existingJournalRef === 'already_integrated' || $existingJournalNum === 'already_integrated') {
+            try {
+                $client = app(SapServiceLayerClient::class);
+                $recovered = $client->findExistingCardFeeJournalForOrder(
+                    (string) ($order->external_id ?? ''),
+                    'CARD_FEE',
+                );
+            } catch (\Throwable $e) {
+                $recovered = null;
+            }
+
+            if (is_array($recovered) && !empty($recovered['TransId'])) {
+                $order->sap_card_fee_journal_entry = (string) $recovered['TransId'];
+                $order->sap_card_fee_journal_num = (string) ($recovered['Number'] ?? $recovered['JdtNum'] ?? '');
+                $order->sap_card_fee_status = 'created';
+                $order->sap_card_fee_error = null;
+                $recovered['ignored'] = false;
+                $recovered['reused_existing'] = true;
+                $recovered['healed_from_legacy_marker'] = true;
+                $order->sap_card_fee_response = $recovered;
+                $order->save();
+                return;
+            }
+
+            // Could not resolve — clear the sentinel so the next retry can attempt
+            // a clean POST (with idempotency lookup inside the client).
+            $order->sap_card_fee_journal_entry = '';
+            $order->sap_card_fee_journal_num = '';
+            $order->sap_card_fee_status = '';
+            $order->save();
+        }
+
         if (!empty($order->sap_card_fee_journal_entry)) {
             if ((string) $order->sap_card_fee_status === '') {
                 $order->sap_card_fee_status = 'created';

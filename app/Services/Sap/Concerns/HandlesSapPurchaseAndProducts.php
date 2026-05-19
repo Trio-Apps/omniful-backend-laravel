@@ -1052,15 +1052,47 @@ trait HandlesSapPurchaseAndProducts
             $body['Reference2'] = $reference;
         }
 
+        // Idempotency: look for an existing card-fee journal entry first so a
+        // crash between POST and local save does not produce a duplicate.
+        $existingJournal = $this->findExistingCardFeeJournalForOrder($reference, $journalReference);
+        if (is_array($existingJournal) && !empty($existingJournal['TransId'])) {
+            $existingJournal['ignored'] = false;
+            $existingJournal['reused_existing'] = true;
+            $existingJournal['request_body'] = $body;
+            return $existingJournal;
+        }
+
         $response = $this->post('/JournalEntries', $body);
         if (!$response->successful()) {
             $responseBody = (string) $response->body();
             if ($this->isSapJournalAlreadyIntegratedError($responseBody)) {
+                // Resolve the actual TransId/Number from SAP rather than storing
+                // the literal "already_integrated" string in the local DB.
+                $recovered = $this->findExistingCardFeeJournalForOrder($reference, $journalReference);
+                if (is_array($recovered) && !empty($recovered['TransId'])) {
+                    $recovered['ignored'] = false;
+                    $recovered['already_integrated'] = true;
+                    $recovered['reused_existing'] = true;
+                    $recovered['recovered_after_duplicate_error'] = true;
+                    $recovered['request_body'] = $body;
+                    $recovered['sap_duplicate_error'] = $responseBody;
+                    return $recovered;
+                }
+
+                // Fallback when SAP refused the POST but we cannot locate the
+                // matching journal — keep the order recoverable by marking it
+                // ignored with a clear, actionable reason instead of storing
+                // a meaningless literal as the journal reference.
+                Log::warning('SAP card-fee journal "already integrated" but no matching JE could be located', [
+                    'reference' => $reference,
+                    'journal_reference' => $journalReference,
+                    'response_body' => $responseBody,
+                ]);
+
                 return [
-                    'ignored' => false,
+                    'ignored' => true,
                     'already_integrated' => true,
-                    'TransId' => 'already_integrated',
-                    'Number' => 'already_integrated',
+                    'reason' => 'SAP refused the card-fee journal as already integrated, but the matching JE could not be located by Reference/Reference2. Review in SAP and link manually if needed.',
                     'request_body' => $body,
                     'error_response_body' => $responseBody,
                     'status_code' => $response->status(),
@@ -1080,6 +1112,56 @@ trait HandlesSapPurchaseAndProducts
         $payload['request_body'] = $body;
 
         return $payload;
+    }
+
+    /**
+     * Locate an existing card-fee journal entry in SAP by Reference (CARD_FEE
+     * tag) and Reference2 (Omniful order id). Used both for pre-POST idempotency
+     * and to recover the real TransId/Number when SAP refuses a duplicate POST
+     * with "JE already integrated" — replacing the previous behavior of
+     * persisting the literal string "already_integrated" as a journal id.
+     */
+    public function findExistingCardFeeJournalForOrder(string $reference, string $journalReference = 'CARD_FEE'): ?array
+    {
+        $reference = trim($reference);
+        if ($reference === '') {
+            return null;
+        }
+
+        $escapedReference = str_replace("'", "''", $reference);
+        $escapedJournalReference = str_replace("'", "''", $journalReference !== '' ? $journalReference : 'CARD_FEE');
+
+        $filters = [
+            "Reference2 eq '{$escapedReference}' and Reference eq '{$escapedJournalReference}'",
+            "Reference2 eq '{$escapedReference}'",
+        ];
+
+        foreach ($filters as $filterExpression) {
+            $filter = rawurlencode($filterExpression);
+            // No $select: tenants may extend JournalEntries with UDFs that fail
+            // to project together; fetch the full record instead.
+            $response = $this->get("/JournalEntries?\$filter={$filter}&\$orderby=TransId desc&\$top=1");
+            if (!$response->successful()) {
+                Log::warning('SAP card-fee journal lookup failed', [
+                    'reference' => $reference,
+                    'filter' => $filterExpression,
+                    'status' => $response->status(),
+                    'body' => $response->body(),
+                ]);
+                continue;
+            }
+
+            $rows = (array) ($response->json('value') ?? []);
+            $journal = $rows[0] ?? null;
+            if (is_array($journal) && !empty($journal['TransId'])) {
+                if (!isset($journal['Number']) && isset($journal['JdtNum'])) {
+                    $journal['Number'] = $journal['JdtNum'];
+                }
+                return $journal;
+            }
+        }
+
+        return null;
     }
 
     private function isSapJournalAlreadyIntegratedError(string $body): bool
