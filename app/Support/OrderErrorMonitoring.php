@@ -28,16 +28,59 @@ class OrderErrorMonitoring
                 'external_id',
                 'omniful_status',
                 'sap_status',
+                'sap_doc_entry',
+                'sap_doc_num',
                 'sap_error',
+                'sap_payment_status',
+                'sap_payment_doc_entry',
                 'sap_payment_error',
+                'sap_card_fee_status',
+                'sap_card_fee_journal_entry',
                 'sap_card_fee_error',
+                'sap_delivery_status',
+                'sap_delivery_doc_entry',
                 'sap_delivery_error',
+                'sap_cogs_status',
+                'sap_cogs_journal_entry',
                 'sap_cogs_error',
+                'sap_credit_note_status',
+                'sap_credit_note_doc_entry',
                 'sap_credit_note_error',
+                'sap_cancel_cogs_status',
+                'sap_cancel_cogs_journal_entry',
                 'sap_cancel_cogs_error',
                 'last_event_at',
                 'last_payload',
             ]);
+    }
+
+    /**
+     * Clear stale *_error fields on orders where the corresponding *_doc_entry
+     * already exists (the operation actually succeeded after a previous retry
+     * but the error text was never wiped). Returns the number of fields cleared.
+     */
+    public function clearStaleErrors(): int
+    {
+        $stages = [
+            ['error' => 'sap_error', 'doc' => 'sap_doc_entry', 'status' => 'sap_status'],
+            ['error' => 'sap_payment_error', 'doc' => 'sap_payment_doc_entry', 'status' => 'sap_payment_status'],
+            ['error' => 'sap_card_fee_error', 'doc' => 'sap_card_fee_journal_entry', 'status' => 'sap_card_fee_status'],
+            ['error' => 'sap_delivery_error', 'doc' => 'sap_delivery_doc_entry', 'status' => 'sap_delivery_status'],
+            ['error' => 'sap_cogs_error', 'doc' => 'sap_cogs_journal_entry', 'status' => 'sap_cogs_status'],
+            ['error' => 'sap_credit_note_error', 'doc' => 'sap_credit_note_doc_entry', 'status' => 'sap_credit_note_status'],
+            ['error' => 'sap_cancel_cogs_error', 'doc' => 'sap_cancel_cogs_journal_entry', 'status' => 'sap_cancel_cogs_status'],
+        ];
+
+        $cleared = 0;
+        foreach ($stages as $stage) {
+            $cleared += OmnifulOrder::query()
+                ->whereNotNull($stage['error'])
+                ->whereNotNull($stage['doc'])
+                ->where($stage['doc'], '!=', '')
+                ->update([$stage['error'] => null]);
+        }
+
+        return $cleared;
     }
 
     public function buildErrorCases(Collection $orders): array
@@ -167,6 +210,20 @@ class OrderErrorMonitoring
         $topCase = $errorCases[0] ?? null;
         $topItem = $topErrorItems[0] ?? null;
 
+        // Count only orders that contributed at least one active error to a
+        // case. Orders whose errors were fully resolved by the smart recovery
+        // (doc entry populated or status moved to created/logged) drop out
+        // here so the dashboard matches what's actually listed below.
+        $activeOrders = $orders->filter(function ($order) {
+            $entries = $this->extractOrderErrors($order);
+            foreach ($entries as $entry) {
+                if (!$this->shouldIgnoreErrorEntry($entry)) {
+                    return true;
+                }
+            }
+            return false;
+        });
+
         return [
             [
                 'label' => 'Unique Error Cases',
@@ -174,7 +231,7 @@ class OrderErrorMonitoring
             ],
             [
                 'label' => 'Affected Orders',
-                'value' => number_format($orders->count()),
+                'value' => number_format($activeOrders->count()),
             ],
             [
                 'label' => 'Top Repeated Error',
@@ -269,28 +326,83 @@ class OrderErrorMonitoring
 
     public function extractOrderErrors(OmnifulOrder $order): array
     {
-        $fields = [
-            'sap_error' => 'Order / AR Reserve Invoice',
-            'sap_payment_error' => 'Incoming Payment',
-            'sap_card_fee_error' => 'Card Fee Journal',
-            'sap_delivery_error' => 'Delivery Note',
-            'sap_cogs_error' => 'COGS Journal',
-            'sap_credit_note_error' => 'AR Credit Memo',
-            'sap_cancel_cogs_error' => 'Cancel COGS Reversal',
+        // Each stage: the error column, the human label, the matching doc-entry
+        // column (an op succeeded once that column has a value), and the
+        // matching status column (we skip stages that landed on a success
+        // state like 'created').
+        $stages = [
+            [
+                'error' => 'sap_error',
+                'label' => 'Order / AR Reserve Invoice',
+                'doc' => 'sap_doc_entry',
+                'status' => 'sap_status',
+            ],
+            [
+                'error' => 'sap_payment_error',
+                'label' => 'Incoming Payment',
+                'doc' => 'sap_payment_doc_entry',
+                'status' => 'sap_payment_status',
+            ],
+            [
+                'error' => 'sap_card_fee_error',
+                'label' => 'Card Fee Journal',
+                'doc' => 'sap_card_fee_journal_entry',
+                'status' => 'sap_card_fee_status',
+            ],
+            [
+                'error' => 'sap_delivery_error',
+                'label' => 'Delivery Note',
+                'doc' => 'sap_delivery_doc_entry',
+                'status' => 'sap_delivery_status',
+            ],
+            [
+                'error' => 'sap_cogs_error',
+                'label' => 'COGS Journal',
+                'doc' => 'sap_cogs_journal_entry',
+                'status' => 'sap_cogs_status',
+            ],
+            [
+                'error' => 'sap_credit_note_error',
+                'label' => 'AR Credit Memo',
+                'doc' => 'sap_credit_note_doc_entry',
+                'status' => 'sap_credit_note_status',
+            ],
+            [
+                'error' => 'sap_cancel_cogs_error',
+                'label' => 'Cancel COGS Reversal',
+                'doc' => 'sap_cancel_cogs_journal_entry',
+                'status' => 'sap_cancel_cogs_status',
+            ],
         ];
 
         $results = [];
 
-        foreach ($fields as $field => $stage) {
-            $raw = trim((string) ($order->{$field} ?? ''));
+        foreach ($stages as $stage) {
+            $raw = trim((string) ($order->{$stage['error']} ?? ''));
             if ($raw === '') {
+                continue;
+            }
+
+            // Stale-error suppression: the smart recovery flow (lazy create,
+            // duplicate-ownership rebind, foreign-invoice handling, etc.)
+            // ends up either populating the stage's doc entry (real success)
+            // or moving the status to created. In either case the original
+            // failure message is no longer active and should drop from the
+            // monitor instead of haunting the dashboard forever.
+            $docValue = trim((string) ($order->{$stage['doc']} ?? ''));
+            if ($docValue !== '') {
+                continue;
+            }
+
+            $statusValue = strtolower(trim((string) ($order->{$stage['status']} ?? '')));
+            if (in_array($statusValue, ['created', 'logged', 'created_mixed', 'updated', 'ignored'], true)) {
                 continue;
             }
 
             $parsed = $this->normalizeErrorMessage($raw);
             $results[] = [
-                'field' => $field,
-                'stage' => $stage,
+                'field' => $stage['error'],
+                'stage' => $stage['label'],
                 'message' => $parsed['message'],
                 'fingerprint' => Str::lower($parsed['message']),
             ];

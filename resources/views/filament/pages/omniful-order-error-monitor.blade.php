@@ -12,12 +12,27 @@
         }
 
         .oem-stat {
+            position: relative;
             border: 1px solid #e5e7eb;
             border-radius: 16px;
             background: #ffffff;
             padding: 18px 20px;
             min-height: 118px;
+            overflow: hidden;
         }
+
+        .oem-stat::before {
+            content: '';
+            position: absolute;
+            inset: 0 auto 0 0;
+            width: 4px;
+            background: #cbd5e1;
+        }
+
+        .oem-stat-danger::before { background: linear-gradient(180deg, #ef4444, #b91c1c); }
+        .oem-stat-warning::before { background: linear-gradient(180deg, #f59e0b, #b45309); }
+        .oem-stat-info::before { background: linear-gradient(180deg, #6366f1, #4338ca); }
+        .oem-stat-success::before { background: linear-gradient(180deg, #10b981, #047857); }
 
         .oem-stat-label {
             font-size: 11px;
@@ -35,6 +50,11 @@
             font-weight: 800;
             color: #0f172a;
         }
+
+        .oem-stat-danger .oem-stat-value { color: #b91c1c; }
+        .oem-stat-warning .oem-stat-value { color: #92400e; }
+        .oem-stat-info .oem-stat-value { color: #3730a3; }
+        .oem-stat-success .oem-stat-value { color: #047857; }
 
         .oem-stat-subtext {
             margin-top: 10px;
@@ -106,6 +126,14 @@
 
         .oem-table tr:last-child td {
             border-bottom: none;
+        }
+
+        .oem-table tbody tr {
+            transition: background-color 0.15s ease;
+        }
+
+        .oem-table tbody tr:hover {
+            background: #f8fafc;
         }
 
         .oem-stage-list,
@@ -244,8 +272,18 @@
 
     <div class="oem-shell">
         <div class="oem-stats">
-            @foreach ($summaryCards as $card)
-                <div class="oem-stat">
+            @php
+                $tones = ['oem-stat-info', 'oem-stat-danger', 'oem-stat-warning', 'oem-stat-info'];
+            @endphp
+            @foreach ($summaryCards as $index => $card)
+                @php
+                    $rawValue = (int) str_replace([',', ' '], '', (string) ($card['value'] ?? ''));
+                    $tone = $tones[$index] ?? '';
+                    if ($rawValue === 0 && in_array($card['label'] ?? '', ['Unique Error Cases', 'Affected Orders'], true)) {
+                        $tone = 'oem-stat-success';
+                    }
+                @endphp
+                <div class="oem-stat {{ $tone }}">
                     <div class="oem-stat-label">{{ $card['label'] }}</div>
                     <div class="oem-stat-value">{{ $card['value'] }}</div>
                     @if (!empty($card['subtext']))
@@ -262,7 +300,12 @@
             </div>
 
             @if ($errorCases === [])
-                <div class="oem-empty">No captured order errors.</div>
+                <div class="oem-empty">
+                    <div style="font-size: 18px; font-weight: 600; color: #047857;">All clear — no active order errors</div>
+                    <div style="margin-top: 6px; font-size: 13px; color: #64748b;">
+                        Resolved errors are filtered out automatically. Use "Clear Resolved Errors" above to wipe stale messages on orders that already completed.
+                    </div>
+                </div>
             @else
                 <div class="oem-table-wrap">
                     <table class="oem-table">
