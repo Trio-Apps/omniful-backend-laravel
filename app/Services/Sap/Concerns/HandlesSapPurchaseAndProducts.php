@@ -4664,25 +4664,69 @@ trait HandlesSapPurchaseAndProducts
 
     private function appendFreightToMarketingDocument(array $body, array $data): array
     {
-        $expenseCode = (int) (
-            $this->getIntegrationSettingValue('order_freight_expense_code')
-            ?? config('omniful.order_freight.expense_code', 0)
-        );
         $freightTaxPercent = (float) $this->extractOrderFreightTaxPercent($data);
         $freightTaxCode = $this->resolveSapTaxCodeForOrderLine($data, [
             'tax_percent' => $freightTaxPercent,
         ]);
 
-        // Use the gross-target reverse approach: when freight should be
-        // tax-included on Omniful's invoice.total (Path C reconciliation), we
-        // know the gross the document must contain. Sending LineTotal at
-        // 4-dp = gross / (1 + rate) means SAP's auto-VAT reconstructs the
-        // exact gross at currency precision instead of dropping to 7.83 +
-        // 1.1745 = 9.0045 (the 3-dp tail that has been keeping Balance Due
-        // open).
         $freightGrossTarget = $this->extractOrderFreightGrossAmount($data);
+        if ($freightGrossTarget <= 0) {
+            return $body;
+        }
 
-        if ($freightTaxPercent > 0 && $freightGrossTarget > 0) {
+        // ============================================================
+        // Preferred path: post freight as a DocumentLines item line
+        // ============================================================
+        // SAP B1 rounds DocumentAdditionalExpenses.LineTotal to 2-dp on
+        // input. Pairing that with a 15 % VAT rate guarantees a 3-dp tail
+        // on the freight gross (7.83 * 1.15 = 9.0045) and the document
+        // total never matches Omniful's 2-dp invoice.total. DocumentLines,
+        // on the other hand, accept PriceAfterVAT — sending the
+        // gross-per-unit makes SAP back-compute UnitPrice / tax at the
+        // currency-precision (4-dp) it stores internally and the line gross
+        // lands exactly on Omniful's freight gross.
+        $freightItemCode = trim((string) (
+            $this->getIntegrationSettingValue('order_freight_item_code')
+            ?? config('omniful.order_freight.item_code', '')
+        ));
+        if ($freightItemCode !== '') {
+            $freightItemName = trim((string) (
+                $this->getIntegrationSettingValue('order_freight_item_name')
+                ?? config('omniful.order_freight.item_name', 'Freight / Shipping')
+            ));
+
+            // Auto-provision the freight item with SalesItem=tYES the first
+            // time we encounter it.
+            $this->ensureItemReadyForSale($freightItemCode, [
+                'sku_code' => $freightItemCode,
+                'name' => $freightItemName !== '' ? $freightItemName : $freightItemCode,
+            ], -1);
+
+            $hubCode = (string) $this->resolveOrderWarehouseCode(data_get($data, 'hub_code'));
+            $freightLine = [
+                'ItemCode' => $freightItemCode,
+                'Quantity' => 1,
+                'VatGroup' => $freightTaxCode !== '' ? $freightTaxCode : ($freightTaxPercent > 0 ? 'SOV' : 'EOV'),
+                'PriceAfterVAT' => $this->roundSapAmount($freightGrossTarget),
+            ];
+            if ($hubCode !== '') {
+                $freightLine['WarehouseCode'] = $hubCode;
+            }
+
+            $body['DocumentLines'][] = $freightLine;
+
+            return $body;
+        }
+
+        // ============================================================
+        // Legacy fallback: DocumentAdditionalExpense
+        // ============================================================
+        $expenseCode = (int) (
+            $this->getIntegrationSettingValue('order_freight_expense_code')
+            ?? config('omniful.order_freight.expense_code', 0)
+        );
+
+        if ($freightTaxPercent > 0) {
             $freightAmount = round($freightGrossTarget / (1 + ($freightTaxPercent / 100)), 4);
         } else {
             $freightAmount = $this->extractOrderFreightNetAmount($data);
@@ -4694,8 +4738,6 @@ trait HandlesSapPurchaseAndProducts
 
         $expenseLine = [
             'ExpenseCode' => $expenseCode,
-            // Do NOT roundSapAmount() here — that re-rounds to 2-dp and
-            // re-introduces the freight tail we just removed.
             'LineTotal' => $freightAmount,
         ];
 

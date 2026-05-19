@@ -261,6 +261,15 @@ return [
     ],
     'order_freight' => [
         'expense_code' => 1,
+        // When set, freight is posted as a DocumentLines item line (not as a
+        // DocumentAdditionalExpense) using PriceAfterVAT = freight_gross. This
+        // is the only way to land freight on a clean 2-dp gross on tenants
+        // where SAP rounds DocumentAdditionalExpenses.LineTotal to 2-dp on
+        // input (and so the per-line VAT recomputation always introduces a
+        // 3-dp tail that re-opens Balance Due). The item code is
+        // auto-provisioned in SAP on first use, with SalesItem=tYES.
+        'item_code' => env('OMNIFUL_FREIGHT_ITEM_CODE', 'FREIGHT'),
+        'item_name' => env('OMNIFUL_FREIGHT_ITEM_NAME', 'Freight / Shipping'),
     ],
     'order_fallback' => [
         'customer_code' => env('OMNIFUL_FALLBACK_CUSTOMER_CODE', ''),
