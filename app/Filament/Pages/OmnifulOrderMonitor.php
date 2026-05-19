@@ -7,6 +7,7 @@ use App\Filament\Pages\OmnifulOrderView;
 use App\Filament\Pages\OmnifulOrderErrorMonitor;
 use App\Services\Webhooks\WebhookRetryService;
 use Filament\Actions\Action;
+use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
@@ -96,7 +97,25 @@ class OmnifulOrderMonitor extends Page implements HasTable
         return [
             TextColumn::make('external_id')
                 ->label('Order ID')
-                ->searchable(),
+                ->searchable(query: function (Builder $query, string $search): Builder {
+                    $like = '%' . $search . '%';
+
+                    return $query->where(function (Builder $query) use ($like) {
+                        $query->where('external_id', 'like', $like)
+                            ->orWhere('sap_doc_num', 'like', $like)
+                            ->orWhere('sap_doc_entry', 'like', $like)
+                            ->orWhere('sap_payment_doc_num', 'like', $like)
+                            ->orWhere('sap_payment_doc_entry', 'like', $like)
+                            ->orWhere('sap_delivery_doc_num', 'like', $like)
+                            ->orWhere('sap_delivery_doc_entry', 'like', $like)
+                            ->orWhere('sap_credit_note_doc_num', 'like', $like)
+                            ->orWhere('sap_credit_note_doc_entry', 'like', $like)
+                            ->orWhere('sap_card_fee_journal_num', 'like', $like)
+                            ->orWhere('sap_cogs_journal_num', 'like', $like)
+                            ->orWhere('sap_cancel_cogs_journal_num', 'like', $like)
+                            ->orWhere('last_payload', 'like', $like);
+                    });
+                }),
             TextColumn::make('omniful_status')
                 ->label('Omniful Status')
                 ->badge()
@@ -113,7 +132,20 @@ class OmnifulOrderMonitor extends Page implements HasTable
                 ->toggleable(),
             TextColumn::make('sap_doc_num')
                 ->label('SAP Order')
+                ->searchable()
                 ->toggleable(),
+            TextColumn::make('sap_payment_doc_num')
+                ->label('SAP Payment')
+                ->searchable()
+                ->toggleable(isToggledHiddenByDefault: true),
+            TextColumn::make('sap_delivery_doc_num')
+                ->label('SAP Delivery')
+                ->searchable()
+                ->toggleable(isToggledHiddenByDefault: true),
+            TextColumn::make('sap_credit_note_doc_num')
+                ->label('SAP Credit Note')
+                ->searchable()
+                ->toggleable(isToggledHiddenByDefault: true),
             TextColumn::make('sap_payment_status')
                 ->label('Payment')
                 ->badge()
@@ -173,6 +205,17 @@ class OmnifulOrderMonitor extends Page implements HasTable
                     ->all())
                 ->multiple()
                 ->searchable(),
+            SelectFilter::make('last_event_type')
+                ->label('Last Event')
+                ->options(fn () => OmnifulOrder::query()
+                    ->whereNotNull('last_event_type')
+                    ->where('last_event_type', '!=', '')
+                    ->distinct()
+                    ->orderBy('last_event_type')
+                    ->pluck('last_event_type', 'last_event_type')
+                    ->all())
+                ->multiple()
+                ->searchable(),
             Filter::make('stuck')
                 ->label('SAP Pending')
                 ->query(fn (Builder $query) => $query->where(function (Builder $query) {
@@ -180,6 +223,107 @@ class OmnifulOrderMonitor extends Page implements HasTable
                         ->orWhere('sap_status', '')
                         ->orWhere('sap_status', 'pending');
                 })),
+            Filter::make('payload_search')
+                ->label('Payload Search')
+                ->form([
+                    TextInput::make('invoice_number')
+                        ->label('Invoice / Order Number')
+                        ->placeholder('e.g. 69484010 or 5865815')
+                        ->helperText('Searches SAP doc numbers and webhook payload.'),
+                    TextInput::make('awb_number')
+                        ->label('AWB / Tracking')
+                        ->placeholder('e.g. 6051826258191'),
+                    TextInput::make('hub_code')
+                        ->label('Hub Code')
+                        ->placeholder('e.g. CEN11'),
+                    TextInput::make('seller_code')
+                        ->label('Seller Code')
+                        ->placeholder('e.g. PL-873'),
+                    TextInput::make('payment_method')
+                        ->label('Payment Method')
+                        ->placeholder('e.g. zidpay, Tabby, prepaid, cod'),
+                    TextInput::make('customer_contact')
+                        ->label('Customer Email / Mobile')
+                        ->placeholder('email or phone'),
+                ])
+                ->query(function (Builder $query, array $data): Builder {
+                    $applyPayloadLike = function (Builder $query, ?string $value): void {
+                        $value = trim((string) $value);
+                        if ($value === '') {
+                            return;
+                        }
+                        $query->where('last_payload', 'like', '%' . $value . '%');
+                    };
+
+                    $invoice = trim((string) ($data['invoice_number'] ?? ''));
+                    if ($invoice !== '') {
+                        $like = '%' . $invoice . '%';
+                        $query->where(function (Builder $query) use ($like) {
+                            $query->where('external_id', 'like', $like)
+                                ->orWhere('sap_doc_num', 'like', $like)
+                                ->orWhere('sap_doc_entry', 'like', $like)
+                                ->orWhere('sap_payment_doc_num', 'like', $like)
+                                ->orWhere('sap_payment_doc_entry', 'like', $like)
+                                ->orWhere('sap_delivery_doc_num', 'like', $like)
+                                ->orWhere('sap_delivery_doc_entry', 'like', $like)
+                                ->orWhere('sap_credit_note_doc_num', 'like', $like)
+                                ->orWhere('sap_credit_note_doc_entry', 'like', $like)
+                                ->orWhere('sap_card_fee_journal_num', 'like', $like)
+                                ->orWhere('sap_cogs_journal_num', 'like', $like)
+                                ->orWhere('sap_cancel_cogs_journal_num', 'like', $like)
+                                ->orWhere('sap_error', 'like', $like)
+                                ->orWhere('last_payload', 'like', $like);
+                        });
+                    }
+
+                    $applyPayloadLike($query, $data['awb_number'] ?? null);
+                    $applyPayloadLike($query, $data['hub_code'] ?? null);
+                    $applyPayloadLike($query, $data['seller_code'] ?? null);
+                    $applyPayloadLike($query, $data['payment_method'] ?? null);
+                    $applyPayloadLike($query, $data['customer_contact'] ?? null);
+
+                    return $query;
+                })
+                ->indicateUsing(function (array $data): array {
+                    $indicators = [];
+                    foreach ([
+                        'invoice_number' => 'Invoice',
+                        'awb_number' => 'AWB',
+                        'hub_code' => 'Hub',
+                        'seller_code' => 'Seller',
+                        'payment_method' => 'Payment',
+                        'customer_contact' => 'Customer',
+                    ] as $key => $label) {
+                        $value = trim((string) ($data[$key] ?? ''));
+                        if ($value !== '') {
+                            $indicators[] = $label . ': ' . $value;
+                        }
+                    }
+
+                    return $indicators;
+                }),
+            Filter::make('created_at_range')
+                ->label('Created Date')
+                ->form([
+                    DatePicker::make('created_from')->label('From'),
+                    DatePicker::make('created_until')->label('Until'),
+                ])
+                ->query(function (Builder $query, array $data): Builder {
+                    return $query
+                        ->when($data['created_from'] ?? null, fn (Builder $q, $date) => $q->whereDate('created_at', '>=', $date))
+                        ->when($data['created_until'] ?? null, fn (Builder $q, $date) => $q->whereDate('created_at', '<=', $date));
+                })
+                ->indicateUsing(function (array $data): array {
+                    $indicators = [];
+                    if (!empty($data['created_from'])) {
+                        $indicators[] = 'From: ' . $data['created_from'];
+                    }
+                    if (!empty($data['created_until'])) {
+                        $indicators[] = 'Until: ' . $data['created_until'];
+                    }
+
+                    return $indicators;
+                }),
         ];
     }
 
