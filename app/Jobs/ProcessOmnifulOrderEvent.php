@@ -37,13 +37,20 @@ class ProcessOmnifulOrderEvent implements ShouldQueue
             return;
         }
 
-        $lock = Cache::lock('omniful-order-processing:' . $externalId, 300);
+        // Lock TTL must match (or exceed) the job timeout, otherwise a long-running
+        // worker can lose the lock mid-processing and a parallel worker can pick up
+        // the same external_id — causing duplicate SAP AR reserve invoice POSTs.
+        $lock = Cache::lock('omniful-order-processing:' . $externalId, $this->timeout);
         if (!$lock->get()) {
             $this->release(10);
             return;
         }
 
         try {
+            // Re-read the event/order under the lock to avoid acting on stale data
+            // produced by a sibling worker that just finished for the same order.
+            $event->refresh();
+
             $classification = $service->classifyEventForProcessing($event);
             if (!($classification['queue'] ?? false)) {
                 $service->applyNoOpEventOutcome($event);

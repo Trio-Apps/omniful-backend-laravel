@@ -215,32 +215,51 @@ class OrderWebhookService
         $client = app(SapServiceLayerClient::class);
         $invoiceResult = null;
         if (($invoiceEligibility['eligible'] ?? false) && empty($order->sap_doc_entry)) {
-            try {
-                $invoiceResult = $client->createArReserveInvoiceFromOmnifulOrder($data, $externalId);
-            } catch (SapRequestException $e) {
-                $order->sap_order_response = [
-                    'ignored' => false,
-                    'request_body' => $e->requestBody,
-                    'error_response_body' => $e->responseBody,
-                    'status_code' => $e->statusCode,
-                ];
+            // Idempotency recovery: an earlier worker may have created the AR reserve invoice
+            // in SAP but failed to persist the resulting DocEntry/DocNum locally (worker crash,
+            // queue restart, or local truncate). Before issuing a new POST, ask SAP directly
+            // via the order UDFs (U_omo / U_ZidId / U_SallaOrderId / NumAtCard / Comments).
+            $recoveredInvoice = $client->findExistingArReserveInvoiceForOmnifulOrderReference($data, $externalId);
+            if (is_array($recoveredInvoice) && !empty($recoveredInvoice['DocEntry'])) {
+                $order->sap_status = 'created';
+                $order->sap_doc_entry = (string) ($recoveredInvoice['DocEntry'] ?? '');
+                $order->sap_doc_num = (string) ($recoveredInvoice['DocNum'] ?? '');
+                $order->sap_error = null;
+                $recoveredInvoice['ignored'] = false;
+                $recoveredInvoice['reused_existing'] = true;
+                $recoveredInvoice['recovered_before_post'] = true;
+                $order->sap_order_response = $recoveredInvoice;
                 $order->save();
-                throw $e;
-            }
-            if (($invoiceResult['ignored'] ?? false) === true) {
-                $order->sap_status = 'ignored';
-                $order->sap_error = (string) ($invoiceResult['reason'] ?? 'Ignored: no order lines found');
+
+                $invoiceResult = $recoveredInvoice;
+            } else {
+                try {
+                    $invoiceResult = $client->createArReserveInvoiceFromOmnifulOrder($data, $externalId);
+                } catch (SapRequestException $e) {
+                    $order->sap_order_response = [
+                        'ignored' => false,
+                        'request_body' => $e->requestBody,
+                        'error_response_body' => $e->responseBody,
+                        'status_code' => $e->statusCode,
+                    ];
+                    $order->save();
+                    throw $e;
+                }
+                if (($invoiceResult['ignored'] ?? false) === true) {
+                    $order->sap_status = 'ignored';
+                    $order->sap_error = (string) ($invoiceResult['reason'] ?? 'Ignored: no order lines found');
+                    $order->sap_order_response = $invoiceResult;
+                    $order->save();
+                    return;
+                }
+
+                $order->sap_status = 'created';
+                $order->sap_doc_entry = (string) ($invoiceResult['DocEntry'] ?? '');
+                $order->sap_doc_num = (string) ($invoiceResult['DocNum'] ?? '');
+                $order->sap_error = null;
                 $order->sap_order_response = $invoiceResult;
                 $order->save();
-                return;
             }
-
-            $order->sap_status = 'created';
-            $order->sap_doc_entry = (string) ($invoiceResult['DocEntry'] ?? '');
-            $order->sap_doc_num = (string) ($invoiceResult['DocNum'] ?? '');
-            $order->sap_error = null;
-            $order->sap_order_response = $invoiceResult;
-            $order->save();
         }
 
         if (
