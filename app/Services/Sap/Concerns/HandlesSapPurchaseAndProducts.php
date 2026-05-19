@@ -3967,16 +3967,23 @@ trait HandlesSapPurchaseAndProducts
     }
 
     /**
-     * Set the Rounding flag (and explicit RoundingValue when computable) on
-     * an AR Reserve Invoice body so SAP's stored DocTotal matches Omniful's
-     * 2-dp invoice total. Required because SAP computes VAT line-by-line at
-     * currency precision, and 15% of a 2-dp subtotal naturally produces a
-     * 3-dp total (e.g. 193.48 -> 222.502), leaving the Incoming Payment
-     * with a sub-cent Balance Due that never closes the invoice.
+     * Align SAP's computed DocTotal with Omniful's authoritative 2-dp invoice
+     * total. 15 % VAT on a 2-dp subtotal naturally lands on 3 dp, and the
+     * downstream Incoming Payment then leaves a sub-cent Balance Due that
+     * keeps the AR Reserve Invoice "Open" forever.
      *
-     * SAP admin MUST configure a Rounding G/L Account
-     * (Administration -> Setup -> Financials -> G/L Account Determination
-     *  -> Sales -> General -> Rounding Account) for the post to succeed.
+     * Two-tier strategy:
+     *   1. If the document carries a freight expense line, absorb the small
+     *      tax-rounding tail by nudging the freight LineTotal to 4-dp precision
+     *      so SAP's auto-VAT reconstructs exactly the gross we want.  This is
+     *      a CODE-only fix and does not depend on any SAP admin configuration.
+     *   2. Otherwise fall back to SAP's document Rounding flag (requires the
+     *      Rounding G/L Account to be configured under Administration ->
+     *      Setup -> Financials -> G/L Account Determination -> Sales ->
+     *      General -> Rounding Account).
+     *
+     * Larger deltas (> 0.05 SAR) are left alone so a real pricing mismatch is
+     * surfaced for reconciliation rather than silently absorbed.
      */
     private function applyDocumentRoundingIfNeeded(array $body, array $data): array
     {
@@ -4002,6 +4009,41 @@ trait HandlesSapPurchaseAndProducts
             return $body;
         }
 
+        // Tier 1: nudge the freight expense LineTotal so SAP's computed VAT
+        // lands the document total exactly on the target. Higher-precision
+        // (4-dp) LineTotal stays within SAR's stored precision but absorbs
+        // the 0.0005-class drift introduced by per-line tax rounding.
+        if (!empty($body['DocumentAdditionalExpenses']) && is_array($body['DocumentAdditionalExpenses'])) {
+            $freightTaxPercent = (float) $this->extractOrderFreightTaxPercent($data);
+            $taxMultiplier = 1 + ($freightTaxPercent / 100);
+            if ($taxMultiplier > 0) {
+                foreach ($body['DocumentAdditionalExpenses'] as $index => $expense) {
+                    if (!is_array($expense) || !isset($expense['LineTotal']) || !is_numeric($expense['LineTotal'])) {
+                        continue;
+                    }
+                    $currentNet = (float) $expense['LineTotal'];
+                    if ($currentNet <= 0) {
+                        continue;
+                    }
+                    $currentGross = $currentNet * $taxMultiplier;
+                    $targetGross = $currentGross + $difference;
+                    if ($targetGross <= 0) {
+                        continue;
+                    }
+                    $body['DocumentAdditionalExpenses'][$index]['LineTotal'] = round(
+                        $targetGross / $taxMultiplier,
+                        4,
+                    );
+
+                    return $body;
+                }
+            }
+        }
+
+        // Tier 2: fall back to SAP document rounding (admin must configure the
+        // Rounding G/L Account). RoundingValue is the explicit adjustment SAP
+        // should post to the rounding account so the stored DocTotal lands on
+        // the target without inflating any individual line.
         $body['Rounding'] = 'tYES';
         $body['RoundingValue'] = round($difference, 3);
 
