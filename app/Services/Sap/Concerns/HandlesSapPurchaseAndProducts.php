@@ -4664,14 +4664,29 @@ trait HandlesSapPurchaseAndProducts
 
     private function appendFreightToMarketingDocument(array $body, array $data): array
     {
-        $freightAmount = $this->extractOrderFreightNetAmount($data);
         $expenseCode = (int) (
             $this->getIntegrationSettingValue('order_freight_expense_code')
             ?? config('omniful.order_freight.expense_code', 0)
         );
+        $freightTaxPercent = (float) $this->extractOrderFreightTaxPercent($data);
         $freightTaxCode = $this->resolveSapTaxCodeForOrderLine($data, [
-            'tax_percent' => $this->extractOrderFreightTaxPercent($data),
+            'tax_percent' => $freightTaxPercent,
         ]);
+
+        // Use the gross-target reverse approach: when freight should be
+        // tax-included on Omniful's invoice.total (Path C reconciliation), we
+        // know the gross the document must contain. Sending LineTotal at
+        // 4-dp = gross / (1 + rate) means SAP's auto-VAT reconstructs the
+        // exact gross at currency precision instead of dropping to 7.83 +
+        // 1.1745 = 9.0045 (the 3-dp tail that has been keeping Balance Due
+        // open).
+        $freightGrossTarget = $this->extractOrderFreightGrossAmount($data);
+
+        if ($freightTaxPercent > 0 && $freightGrossTarget > 0) {
+            $freightAmount = round($freightGrossTarget / (1 + ($freightTaxPercent / 100)), 4);
+        } else {
+            $freightAmount = $this->extractOrderFreightNetAmount($data);
+        }
 
         if ($freightAmount <= 0 || $expenseCode <= 0) {
             return $body;
@@ -4679,7 +4694,9 @@ trait HandlesSapPurchaseAndProducts
 
         $expenseLine = [
             'ExpenseCode' => $expenseCode,
-            'LineTotal' => $this->roundSapAmount($freightAmount),
+            // Do NOT roundSapAmount() here — that re-rounds to 2-dp and
+            // re-introduces the freight tail we just removed.
+            'LineTotal' => $freightAmount,
         ];
 
         if ($freightTaxCode !== '') {
