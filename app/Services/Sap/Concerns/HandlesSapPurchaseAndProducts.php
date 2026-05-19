@@ -3894,6 +3894,12 @@ trait HandlesSapPurchaseAndProducts
         }
 
         // 2) tax_percentage on a shipping/freight additional_charges line.
+        // Treat explicit zeros as missing: Omniful defaults this field to 0
+        // even on domestic Saudi orders that should carry 15% on shipping,
+        // so a literal 0 here is almost always "not computed" rather than
+        // "intentionally zero-rated". A merchant who genuinely wants
+        // zero-rated shipping sets the top-level shipping_tax_percent (path 1)
+        // which is honored above.
         $charges = (array) data_get($data, 'invoice.additional_charges', data_get($data, 'additional_charges', []));
         foreach ($charges as $charge) {
             $type = strtolower(trim((string) data_get($charge, 'type', '')));
@@ -3902,7 +3908,7 @@ trait HandlesSapPurchaseAndProducts
             }
 
             $taxPercentage = data_get($charge, 'tax_percentage');
-            if (is_numeric($taxPercentage)) {
+            if (is_numeric($taxPercentage) && (float) $taxPercentage > 0) {
                 return (float) $taxPercentage;
             }
         }
