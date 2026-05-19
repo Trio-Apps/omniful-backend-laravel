@@ -977,6 +977,12 @@ class OrderWebhookService
                 'payment_method' => $paymentMethod,
                 'expense_account' => $this->resolveIntegrationSettingValue('order_card_fee_expense_account', config('omniful.order_payment.card_fee_expense_account')),
                 'offset_account' => $this->resolveIntegrationSettingValue('order_card_fee_offset_account', config('omniful.order_payment.card_fee_offset_account')),
+                // Apply input VAT on payment gateway fees per ZATCA: gross
+                // amount is split into expense + VAT recoverable when both
+                // settings are configured. Without the recoverable account,
+                // the JE remains a tax-less 2-line entry (legacy behaviour).
+                'vat_percent' => (float) $this->resolveIntegrationSettingValue('order_card_fee_vat_percent', config('omniful.order_payment.card_fee_vat_percent', 15)),
+                'vat_recoverable_account' => (string) $this->resolveIntegrationSettingValue('order_card_fee_vat_recoverable_account', config('omniful.order_payment.card_fee_vat_recoverable_account', '')),
                 'hub_code' => (string) ($order->hub_code ?? data_get($data, 'hub_code', '')),
             ]);
         } catch (SapRequestException $e) {

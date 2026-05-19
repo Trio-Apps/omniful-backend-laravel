@@ -1103,24 +1103,65 @@ trait HandlesSapPurchaseAndProducts
         $memo = trim((string) ($data['memo'] ?? 'Card fee journal from Omniful prepaid order'));
         $journalReference = trim((string) ($data['journal_reference'] ?? 'CARD_FEE'));
 
-        $journalLines = $this->applyDefaultCostCentersToJournalLines([
+        // Payment-gateway / card fees in Saudi Arabia are taxable services
+        // (ZATCA standard 15% VAT). When a VAT recoverable G/L account is
+        // configured we split the gross fee into:
+        //   DR Card Fee Expense        (net)
+        //   DR VAT Input Recoverable   (vat)
+        //   CR Card Fee Offset / Bank  (gross)
+        // The configured VAT percent and account come from the caller
+        // (IntegrationSetting via OrderWebhookService), falling back to the
+        // config defaults. When the recoverable account is blank we keep the
+        // legacy 2-line JE for backwards compatibility.
+        $vatPercent = is_numeric($data['vat_percent'] ?? null) ? (float) $data['vat_percent'] : 0.0;
+        $vatRecoverableAccount = trim((string) ($data['vat_recoverable_account'] ?? ''));
+
+        $grossAmount = $this->roundSapAmount($amount);
+        $netAmount = $grossAmount;
+        $vatAmount = 0.0;
+        if ($vatPercent > 0 && $vatRecoverableAccount !== '') {
+            $netAmount = $this->roundSapAmount($grossAmount / (1 + ($vatPercent / 100)));
+            $vatAmount = $this->roundSapAmount($grossAmount - $netAmount);
+        }
+
+        $journalLineSpecs = [
             [
                 'AccountCode' => $expenseAccount,
-                'Debit' => $this->roundSapAmount($amount),
+                'Debit' => $netAmount,
                 'LineMemo' => $this->truncateSapText($memo, 254),
                 'Reference1' => $journalReference,
                 'Reference2' => $reference,
                 'AdditionalReference' => $this->truncateSapText($reference, 100),
             ],
-            [
-                'AccountCode' => $offsetAccount,
-                'Credit' => $this->roundSapAmount($amount),
-                'LineMemo' => $this->truncateSapText($memo, 254),
+        ];
+
+        if ($vatAmount > 0) {
+            $journalLineSpecs[] = [
+                'AccountCode' => $vatRecoverableAccount,
+                'Debit' => $vatAmount,
+                'LineMemo' => $this->truncateSapText(
+                    'Input VAT ' . number_format($vatPercent, 2, '.', '') . '% on ' . $memo,
+                    254,
+                ),
                 'Reference1' => $journalReference,
                 'Reference2' => $reference,
                 'AdditionalReference' => $this->truncateSapText($reference, 100),
-            ],
-        ], $this->resolveOrderWarehouseCode(data_get($data, 'hub_code')));
+            ];
+        }
+
+        $journalLineSpecs[] = [
+            'AccountCode' => $offsetAccount,
+            'Credit' => $grossAmount,
+            'LineMemo' => $this->truncateSapText($memo, 254),
+            'Reference1' => $journalReference,
+            'Reference2' => $reference,
+            'AdditionalReference' => $this->truncateSapText($reference, 100),
+        ];
+
+        $journalLines = $this->applyDefaultCostCentersToJournalLines(
+            $journalLineSpecs,
+            $this->resolveOrderWarehouseCode(data_get($data, 'hub_code')),
+        );
 
         $body = [
             'ReferenceDate' => $referenceDate,

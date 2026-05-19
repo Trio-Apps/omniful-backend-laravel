@@ -48,6 +48,8 @@ class IntegrationSetting extends Model
         'order_card_fee_expense_account',
         'order_card_fee_offset_account',
         'order_card_fee_percent',
+        'order_card_fee_vat_percent',
+        'order_card_fee_vat_recoverable_account',
         'order_card_fee_method_percent_map',
         'order_cogs_journal_enabled',
         'order_cogs_expense_account',

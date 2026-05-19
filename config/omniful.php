@@ -194,6 +194,12 @@ return [
         'card_fee_expense_account' => env('OMNIFUL_CARD_FEE_EXPENSE_ACCOUNT', '2102001'),
         'card_fee_offset_account' => env('OMNIFUL_CARD_FEE_OFFSET_ACCOUNT', ''),
         'card_fee_percent' => (float) env('OMNIFUL_CARD_FEE_PERCENT', 0),
+        // Payment gateway / card fees in Saudi Arabia are taxable services
+        // (ZATCA standard 15% VAT). Configure the input VAT recoverable G/L
+        // account here so the card fee journal splits gross -> net + input VAT.
+        // Leaving the account blank reverts to the legacy 2-line JE (no VAT).
+        'card_fee_vat_percent' => (float) env('OMNIFUL_CARD_FEE_VAT_PERCENT', 15),
+        'card_fee_vat_recoverable_account' => env('OMNIFUL_CARD_FEE_VAT_RECOVERABLE_ACCOUNT', ''),
         'card_fee_method_percent_map' => [
             'tamara' => 4.0,
             'tabby' => 4.0,
