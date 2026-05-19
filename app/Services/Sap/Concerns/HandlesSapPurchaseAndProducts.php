@@ -4075,17 +4075,18 @@ trait HandlesSapPurchaseAndProducts
      * downstream Incoming Payment then leaves a sub-cent Balance Due that
      * keeps the AR Reserve Invoice "Open" forever.
      *
-     * Two-tier strategy:
-     *   1. If the document carries a freight expense line, absorb the small
-     *      tax-rounding tail by nudging the freight LineTotal to 4-dp precision
-     *      so SAP's auto-VAT reconstructs exactly the gross we want.  This is
-     *      a CODE-only fix and does not depend on any SAP admin configuration.
-     *   2. Otherwise fall back to SAP's document Rounding flag (requires the
-     *      Rounding G/L Account to be configured under Administration ->
-     *      Setup -> Financials -> G/L Account Determination -> Sales ->
-     *      General -> Rounding Account).
+     * Three-tier strategy (highest precision first):
+     *   1. Nudge the LAST merchandise DocumentLine.LineTotal to 4-dp.
+     *      DocumentLines reliably accept high-precision LineTotal in SAP B1,
+     *      so the per-line VAT recomputation absorbs the residual cleanly.
+     *   2. If items can't absorb the diff (no taxed items, or single short
+     *      line), nudge the freight DocumentAdditionalExpense LineTotal.
+     *   3. Fallback to SAP's document Rounding flag (requires the Rounding
+     *      G/L Account to be configured under Administration -> Setup ->
+     *      Financials -> G/L Account Determination -> Sales -> General ->
+     *      Rounding Account).
      *
-     * Larger deltas (> 0.05 SAR) are left alone so a real pricing mismatch is
+     * Larger deltas (>= 0.05 SAR) are left alone so a real pricing mismatch is
      * surfaced for reconciliation rather than silently absorbed.
      */
     private function applyDocumentRoundingIfNeeded(array $body, array $data): array
@@ -4112,10 +4113,25 @@ trait HandlesSapPurchaseAndProducts
             return $body;
         }
 
-        // Tier 1: nudge the freight expense LineTotal so SAP's computed VAT
-        // lands the document total exactly on the target. Higher-precision
-        // (4-dp) LineTotal stays within SAR's stored precision but absorbs
-        // the 0.0005-class drift introduced by per-line tax rounding.
+        // Tier 1: nudge the LAST merchandise DocumentLine.LineTotal at 4-dp.
+        // SAP stores DocumentLines.LineTotal at currency precision (4 dp on
+        // standard KSA setups) and recomputes per-line VAT from it, so a
+        // sub-cent adjustment here flows through to DocTotal exactly. We
+        // prefer this over the freight expense because
+        // DocumentAdditionalExpenses.LineTotal is often coerced to 2 dp on
+        // input — defeating any sub-cent freight nudge.
+        $body = $this->nudgeLastMerchandiseLineForRounding($body, $data, $difference);
+        $expectedTotal = $this->estimateInvoiceGrossTotalFromBody($body, $data);
+        if ($expectedTotal !== null) {
+            $difference = round($targetTotal - $expectedTotal, 4);
+            if (abs($difference) < 0.0005) {
+                return $body;
+            }
+        }
+
+        // Tier 2: as a secondary absorber, nudge the freight expense
+        // LineTotal. This only contributes when DocumentAdditionalExpenses
+        // accepts >2-dp on this SAP tenant.
         if (!empty($body['DocumentAdditionalExpenses']) && is_array($body['DocumentAdditionalExpenses'])) {
             $freightTaxPercent = (float) $this->extractOrderFreightTaxPercent($data);
             $taxMultiplier = 1 + ($freightTaxPercent / 100);
@@ -4143,12 +4159,69 @@ trait HandlesSapPurchaseAndProducts
             }
         }
 
-        // Tier 2: fall back to SAP document rounding (admin must configure the
+        // Tier 3: fall back to SAP document rounding (admin must configure the
         // Rounding G/L Account). RoundingValue is the explicit adjustment SAP
         // should post to the rounding account so the stored DocTotal lands on
         // the target without inflating any individual line.
         $body['Rounding'] = 'tYES';
         $body['RoundingValue'] = round($difference, 3);
+
+        return $body;
+    }
+
+    /**
+     * Bump the last taxed merchandise DocumentLine.LineTotal by ($difference
+     * / (1 + line tax %)) so the gross moves by exactly $difference. Uses
+     * 4-dp precision because SAP stores DocumentLines.LineTotal at currency
+     * precision (typically 4 dp in KSA). Returns the body unchanged if no
+     * suitable line is found.
+     */
+    private function nudgeLastMerchandiseLineForRounding(array $body, array $data, float $difference): array
+    {
+        $lines = $body['DocumentLines'] ?? [];
+        if (!is_array($lines) || $lines === []) {
+            return $body;
+        }
+
+        $items = (array) data_get($data, 'order_items', data_get($data, 'items', []));
+        $taxByItemCode = [];
+        foreach ($items as $item) {
+            $itemCode = trim((string) (
+                data_get($item, 'sku_code')
+                ?? data_get($item, 'seller_sku_code')
+                ?? data_get($item, 'seller_sku.seller_sku_code')
+                ?? ''
+            ));
+            if ($itemCode === '') {
+                continue;
+            }
+            $taxByItemCode[$itemCode] = (float) $this->extractOrderLineTaxPercent((array) $item);
+        }
+
+        for ($index = count($lines) - 1; $index >= 0; $index--) {
+            $line = (array) $lines[$index];
+            $itemCode = trim((string) ($line['ItemCode'] ?? ''));
+            $taxPercent = $taxByItemCode[$itemCode] ?? 0.0;
+            $taxMultiplier = 1 + ($taxPercent / 100);
+            if ($taxMultiplier <= 0) {
+                continue;
+            }
+
+            $currentLineNet = $this->extractSapLineMerchandiseTotal($line);
+            if ($currentLineNet <= 0) {
+                continue;
+            }
+
+            $newLineNet = round($currentLineNet + ($difference / $taxMultiplier), 4);
+            if ($newLineNet <= 0) {
+                continue;
+            }
+
+            $body['DocumentLines'][$index]['LineTotal'] = $newLineNet;
+            unset($body['DocumentLines'][$index]['UnitPrice']);
+
+            return $body;
+        }
 
         return $body;
     }
