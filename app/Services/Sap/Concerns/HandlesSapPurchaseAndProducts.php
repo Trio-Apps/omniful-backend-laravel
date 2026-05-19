@@ -53,7 +53,14 @@ trait HandlesSapPurchaseAndProducts
 
             $itemCode = (string) $itemCode;
             if (!isset($salesItemChecked[$itemCode])) {
-                $this->ensureItemCanBeSold($itemCode, $lineIndex);
+                // Auto-provision the SAP item from the Omniful payload if it
+                // does not yet exist (e.g. SKUs created in Omniful after the
+                // last item sync, or one-off bundle codes like "B101430"
+                // that have not been pushed to SAP). This avoids the
+                // -2028 "Entity with the specified value does not exist"
+                // failure that would otherwise block the entire AR Reserve
+                // Invoice over a single missing master record.
+                $this->ensureItemReadyForSale($itemCode, (array) $item, $lineIndex);
                 $salesItemChecked[$itemCode] = true;
             }
 
@@ -2912,6 +2919,102 @@ trait HandlesSapPurchaseAndProducts
         if (!$patch->successful()) {
             throw new \RuntimeException('SAP item sales-enable failed for line ' . $lineIndex . ' (' . $itemCode . '): ' . $patch->status() . ' ' . $patch->body());
         }
+    }
+
+    /**
+     * Sales-flow item provisioning: confirm the SAP item exists (auto-create
+     * from the Omniful payload when it doesn't) and ensure SalesItem=tYES so
+     * the AR Reserve Invoice can reference it. Combines item auto-creation
+     * (previously only triggered by inventory/inwarding flows) with the
+     * existing sales-enable patch so a missing SKU no longer blocks the
+     * entire order with a -2028 "Entity does not exist" error.
+     */
+    private function ensureItemReadyForSale(string $itemCode, array $omnifulItem, int $lineIndex): void
+    {
+        $encoded = str_replace("'", "''", $itemCode);
+        $response = $this->get("/Items('{$encoded}')?\$select=ItemCode,SalesItem");
+
+        if ($response->status() === 404) {
+            $this->createSapItemForSale($itemCode, $omnifulItem, $lineIndex);
+            return;
+        }
+
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP item sales-check failed for line ' . $lineIndex . ' (' . $itemCode . '): ' . $response->status() . ' ' . $response->body());
+        }
+
+        $salesItem = strtolower((string) ($response->json()['SalesItem'] ?? ''));
+        if ($salesItem === 'tyes') {
+            return;
+        }
+
+        $patch = $this->patch("/Items('{$encoded}')", [
+            'SalesItem' => 'tYES',
+        ]);
+
+        if (!$patch->successful()) {
+            throw new \RuntimeException('SAP item sales-enable failed for line ' . $lineIndex . ' (' . $itemCode . '): ' . $patch->status() . ' ' . $patch->body());
+        }
+    }
+
+    /**
+     * Create a minimal SAP Item from an Omniful order line so the AR Reserve
+     * Invoice can post against it. Uses the same item-type defaults and
+     * fallback as the inventory provisioning path, but stamps SalesItem=tYES
+     * directly so we do not need a follow-up PATCH for the common case.
+     */
+    private function createSapItemForSale(string $itemCode, array $omnifulItem, int $lineIndex): void
+    {
+        $name = (string) (
+            data_get($omnifulItem, 'sku.name')
+            ?? data_get($omnifulItem, 'name')
+            ?? data_get($omnifulItem, 'sku_name')
+            ?? data_get($omnifulItem, 'product_name')
+            ?? $itemCode
+        );
+
+        $body = [
+            'ItemCode' => $itemCode,
+            'ItemName' => $name !== '' ? $name : $itemCode,
+            'ItemType' => (string) config('omniful.sap_item_defaults.item_type', 'itItems'),
+            'InventoryItem' => 'tYES',
+            'PurchaseItem' => 'tYES',
+            'SalesItem' => 'tYES',
+        ];
+        $this->applyItemTypeUdfDefaults($body);
+
+        $response = $this->post('/Items', $body);
+        if (!$response->successful() && $this->isSapItemTypeRequiredError($response->body())) {
+            $retryBody = $body;
+            $retryBody['ItemType'] = (int) config('omniful.sap_item_defaults.item_type_numeric_fallback', 0);
+            $this->applyItemTypeUdfDefaults($retryBody);
+            $retry = $this->post('/Items', $retryBody);
+            if ($retry->successful()) {
+                Log::info('SAP item auto-provisioned for sales (numeric fallback)', [
+                    'item_code' => $itemCode,
+                    'line' => $lineIndex,
+                ]);
+                return;
+            }
+
+            throw new \RuntimeException(
+                'SAP item create-for-sale failed for line ' . $lineIndex . ' (' . $itemCode . ') [retry]: '
+                . $retry->status() . ' ' . $retry->body()
+            );
+        }
+
+        if (!$response->successful()) {
+            throw new \RuntimeException(
+                'SAP item create-for-sale failed for line ' . $lineIndex . ' (' . $itemCode . '): '
+                . $response->status() . ' ' . $response->body()
+            );
+        }
+
+        Log::info('SAP item auto-provisioned for sales', [
+            'item_code' => $itemCode,
+            'line' => $lineIndex,
+            'item_name' => $body['ItemName'],
+        ]);
     }
 
     public function syncSupplierFromOmniful(array $data): array
