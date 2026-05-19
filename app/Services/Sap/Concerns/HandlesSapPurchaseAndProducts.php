@@ -160,6 +160,18 @@ trait HandlesSapPurchaseAndProducts
         $body = $this->appendOmnifulDocumentUdfs($body, $data, $externalId);
         $body = $this->appendFreightToMarketingDocument($body, $data);
 
+        // Document Rounding: when SAP's natural DocTotal computation diverges
+        // from Omniful's 2-dp total by a small amount (e.g. 15% VAT on a 2-dp
+        // subtotal yields 3-dp tax), enable SAP's automatic rounding so the
+        // stored DocTotal matches the 2-dp gross Omniful billed. The
+        // resulting 0.00X SAR rounding adjustment is posted to the company's
+        // configured Rounding G/L Account (Administration -> Setup ->
+        // Financials -> G/L Account Determination -> Sales -> General ->
+        // Rounding Account). Without rounding the Incoming Payment posts
+        // 222.50 against a DocTotal of 222.502 and leaves a 0.002 Balance
+        // Due that never closes.
+        $body = $this->applyDocumentRoundingIfNeeded($body, $data);
+
         $existingInvoice = $this->findExistingArReserveInvoiceForOmnifulOrder($body, $data, $externalId);
         if ($existingInvoice !== null) {
             $existingInvoice['ignored'] = false;
@@ -3759,6 +3771,121 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return '';
+    }
+
+    /**
+     * Set the Rounding flag (and explicit RoundingValue when computable) on
+     * an AR Reserve Invoice body so SAP's stored DocTotal matches Omniful's
+     * 2-dp invoice total. Required because SAP computes VAT line-by-line at
+     * currency precision, and 15% of a 2-dp subtotal naturally produces a
+     * 3-dp total (e.g. 193.48 -> 222.502), leaving the Incoming Payment
+     * with a sub-cent Balance Due that never closes the invoice.
+     *
+     * SAP admin MUST configure a Rounding G/L Account
+     * (Administration -> Setup -> Financials -> G/L Account Determination
+     *  -> Sales -> General -> Rounding Account) for the post to succeed.
+     */
+    private function applyDocumentRoundingIfNeeded(array $body, array $data): array
+    {
+        $targetTotal = $this->resolveTargetInvoiceGrossTotal($data);
+        if ($targetTotal === null || $targetTotal <= 0) {
+            return $body;
+        }
+
+        $expectedTotal = $this->estimateInvoiceGrossTotalFromBody($body, $data);
+        if ($expectedTotal === null || $expectedTotal <= 0) {
+            return $body;
+        }
+
+        $difference = round($targetTotal - $expectedTotal, 4);
+        if (abs($difference) < 0.0005) {
+            // Already matches within a tenth of a cent — no rounding needed.
+            return $body;
+        }
+        if (abs($difference) >= 0.05) {
+            // Larger than a typical tax-rounding tail; do NOT swallow it via
+            // rounding (could mask a real pricing mismatch). Let SAP post the
+            // natural total and surface the discrepancy in reconciliation.
+            return $body;
+        }
+
+        $body['Rounding'] = 'tYES';
+        $body['RoundingValue'] = round($difference, 3);
+
+        return $body;
+    }
+
+    /**
+     * Authoritative target DocTotal: Omniful's order grand total in document
+     * currency, rounded to 2 dp (Omniful never quotes more than 2 dp on
+     * invoice totals).
+     */
+    private function resolveTargetInvoiceGrossTotal(array $data): ?float
+    {
+        $candidates = [
+            data_get($data, 'invoice.grand_total'),
+            data_get($data, 'invoice.total'),
+            data_get($data, 'invoice.total_paid'),
+            data_get($data, 'total_amount'),
+        ];
+        foreach ($candidates as $value) {
+            if (is_numeric($value) && (float) $value > 0) {
+                return round((float) $value, 2);
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Estimate the DocTotal SAP will compute from a marketing-document body:
+     *   Σ (LineTotal or qty × UnitPrice) × (1 + line VAT %)
+     *   + Σ freight expense LineTotal × (1 + freight VAT %)
+     *   − document-level DiscountPercent applied to the subtotal.
+     * Returns null when essential inputs are missing.
+     */
+    private function estimateInvoiceGrossTotalFromBody(array $body, array $data): ?float
+    {
+        $lines = (array) ($body['DocumentLines'] ?? []);
+        if ($lines === []) {
+            return null;
+        }
+
+        $merchandiseGross = 0.0;
+        $merchandiseNet = 0.0;
+        foreach ($lines as $line) {
+            $lineNet = $this->extractSapLineMerchandiseTotal((array) $line);
+            if ($lineNet <= 0) {
+                continue;
+            }
+            $taxPercent = (float) $this->extractOrderLineTaxPercent((array) $line);
+            $merchandiseNet += $lineNet;
+            $merchandiseGross += $lineNet * (1 + ($taxPercent / 100));
+        }
+
+        if ($merchandiseGross <= 0) {
+            return null;
+        }
+
+        $discountPercent = isset($body['DiscountPercent']) && is_numeric($body['DiscountPercent'])
+            ? (float) $body['DiscountPercent']
+            : 0.0;
+        if ($discountPercent > 0 && $discountPercent < 100) {
+            $merchandiseGross *= (100 - $discountPercent) / 100;
+        }
+
+        $freightGross = 0.0;
+        $expenses = (array) ($body['DocumentAdditionalExpenses'] ?? []);
+        foreach ($expenses as $expense) {
+            $freightNet = (float) ($expense['LineTotal'] ?? 0);
+            if ($freightNet <= 0) {
+                continue;
+            }
+            $freightTaxPercent = $this->extractOrderFreightTaxPercent($data);
+            $freightGross += $freightNet * (1 + ($freightTaxPercent / 100));
+        }
+
+        return round($merchandiseGross + $freightGross, 4);
     }
 
     private function appendFreightToMarketingDocument(array $body, array $data): array
