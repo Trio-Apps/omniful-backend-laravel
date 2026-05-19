@@ -113,8 +113,14 @@ trait HandlesSapPurchaseAndProducts
             // gross Omniful billed. Without this, 15 % VAT on a 2-dp net
             // always produces 3-dp values and the document never matches
             // Omniful's invoice.total.
+            //
+            // CRITICAL: UnitPrice MUST be removed when PriceAfterVAT is set.
+            // If both are present SAP prefers UnitPrice and silently ignores
+            // PriceAfterVAT, defeating the entire approach. We trade the
+            // explicit net price (which SAP can derive) for an exact gross.
             if ($omnifulLineGross !== null && $linePerUnitTaxPercent > 0) {
                 $line['PriceAfterVAT'] = $this->roundSapAmount($omnifulLineGross);
+                unset($line['UnitPrice']);
             }
 
             if ($hubCode) {
