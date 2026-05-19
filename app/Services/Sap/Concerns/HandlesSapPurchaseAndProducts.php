@@ -167,6 +167,14 @@ trait HandlesSapPurchaseAndProducts
         $body = $this->appendOmnifulDocumentUdfs($body, $data, $externalId);
         $body = $this->appendFreightToMarketingDocument($body, $data);
 
+        // Force 2-dp tax on every taxable line and freight expense, so the
+        // computed DocTotal stays on the same 2-dp grid Omniful's invoice
+        // total uses. SAP B1 line VAT is otherwise computed at currency
+        // precision (3-4 dp), which leaves a sub-cent residual that the
+        // tenant's PaymentInvoices.SumApplied (2-dp on this SAP setup)
+        // cannot fully settle.
+        $body = $this->applyTwoDecimalTaxAmounts($body, $data, $lineTaxPercents);
+
         // Document Rounding: when SAP's natural DocTotal computation diverges
         // from Omniful's 2-dp total by a small amount (e.g. 15% VAT on a 2-dp
         // subtotal yields 3-dp tax), enable SAP's automatic rounding so the
@@ -4176,6 +4184,125 @@ trait HandlesSapPurchaseAndProducts
     }
 
     /**
+     * Stamp an explicit 2-dp TaxAmount onto every taxable DocumentLine and
+     * DocumentAdditionalExpense. SAP otherwise computes line VAT at currency
+     * precision (frequently 3-4 dp) and the resulting DocTotal lands a few
+     * thousandths off Omniful's 2-dp grid — leaving sub-cent Balance Due
+     * once the Payment (stored at 2-dp on this tenant) is applied.
+     *
+     * - Items: TaxAmount = round(LineTotal * line_tax_rate, 2)
+     * - Last taxable item line gets nudged to soak up the rounding so the
+     *   total stamped tax equals Omniful's invoice.tax exactly.
+     * - Freight expense: TaxAmount = freight_gross - LineTotal (so the
+     *   gross matches the price Omniful billed even when LineTotal is a
+     *   2-dp net version of a gross-inclusive freight).
+     *
+     * @param array<int,float> $lineTaxPercents Tax percent per original line index
+     *   from the caller (createArReserveInvoiceFromOmnifulOrder). Falls back to
+     *   the Omniful order_items lookup by sku_code when not provided.
+     */
+    private function applyTwoDecimalTaxAmounts(array $body, array $data, array $lineTaxPercents = []): array
+    {
+        $items = (array) data_get($data, 'order_items', data_get($data, 'items', []));
+        $taxByItemCode = [];
+        foreach ($items as $item) {
+            $itemCode = trim((string) (
+                data_get($item, 'sku_code')
+                ?? data_get($item, 'seller_sku_code')
+                ?? data_get($item, 'seller_sku.seller_sku_code')
+                ?? ''
+            ));
+            if ($itemCode === '' || isset($taxByItemCode[$itemCode])) {
+                continue;
+            }
+            $taxByItemCode[$itemCode] = (float) $this->extractOrderLineTaxPercent((array) $item);
+        }
+
+        $lines = $body['DocumentLines'] ?? [];
+        if (is_array($lines) && $lines !== []) {
+            // Target items tax: Omniful's invoice.tax already reflects the
+            // post-discount taxable base. We use it as the reconciliation
+            // target so per-line rounding sums to the merchant-facing tax.
+            $targetItemsTax = is_numeric(data_get($data, 'invoice.tax'))
+                ? round((float) data_get($data, 'invoice.tax'), 2)
+                : null;
+
+            $stampedTaxTotal = 0.0;
+            $lastTaxableIndex = null;
+
+            foreach ($lines as $index => $line) {
+                $line = (array) $line;
+                $itemCode = trim((string) ($line['ItemCode'] ?? ''));
+                $taxPercent = $lineTaxPercents[$index] ?? ($taxByItemCode[$itemCode] ?? 0.0);
+                if ($taxPercent <= 0) {
+                    continue;
+                }
+
+                $lineNet = $this->extractSapLineMerchandiseTotal($line);
+                if ($lineNet <= 0) {
+                    continue;
+                }
+
+                $taxAmount = round($lineNet * ($taxPercent / 100), 2);
+                $body['DocumentLines'][$index]['TaxAmount'] = $taxAmount;
+                $stampedTaxTotal += $taxAmount;
+                $lastTaxableIndex = $index;
+            }
+
+            // Last-line adjustment so summed line taxes equal Omniful's
+            // invoice.tax precisely (eliminates the residual that drifts
+            // out of per-line 2-dp rounding when there are multiple lines).
+            if ($targetItemsTax !== null && $lastTaxableIndex !== null) {
+                $residual = round($targetItemsTax - $stampedTaxTotal, 2);
+                if (abs($residual) > 0.0 && abs($residual) < 0.05) {
+                    $currentLast = (float) $body['DocumentLines'][$lastTaxableIndex]['TaxAmount'];
+                    $body['DocumentLines'][$lastTaxableIndex]['TaxAmount'] = round($currentLast + $residual, 2);
+                }
+            }
+        }
+
+        $expenses = $body['DocumentAdditionalExpenses'] ?? [];
+        if (is_array($expenses) && $expenses !== []) {
+            $freightTaxPercent = (float) $this->extractOrderFreightTaxPercent($data);
+            $freightGrossTarget = $this->extractOrderFreightGrossAmount($data);
+
+            foreach ($expenses as $index => $expense) {
+                if (!is_array($expense) || !isset($expense['LineTotal']) || !is_numeric($expense['LineTotal'])) {
+                    continue;
+                }
+                $lineTotal = (float) $expense['LineTotal'];
+                if ($lineTotal <= 0) {
+                    continue;
+                }
+
+                if ($freightGrossTarget > 0 && $freightTaxPercent > 0) {
+                    // Reconciled approach: TaxAmount fills the gap to the
+                    // freight gross Omniful billed, so the combined gross is
+                    // the same 2-dp figure regardless of any net-side
+                    // precision loss when Path C divided gross by (1 + rate).
+                    $taxAmount = round($freightGrossTarget - $lineTotal, 2);
+                } elseif ($freightTaxPercent > 0) {
+                    $taxAmount = round($lineTotal * ($freightTaxPercent / 100), 2);
+                } else {
+                    continue;
+                }
+
+                if ($taxAmount < 0) {
+                    continue;
+                }
+                $body['DocumentAdditionalExpenses'][$index]['TaxAmount'] = $taxAmount;
+                // Only apply the gross-reconciliation absorption once: the
+                // freight expense line usually has a single entry, but for
+                // unusual multi-expense docs we re-derive freightGrossTarget
+                // from per-line net to keep the next iteration tax-aware.
+                $freightGrossTarget = max($freightGrossTarget - ($lineTotal + $taxAmount), 0.0);
+            }
+        }
+
+        return $body;
+    }
+
+    /**
      * Bump the last taxed merchandise DocumentLine.LineTotal by ($difference
      * / (1 + line tax %)) so the gross moves by exactly $difference. Uses
      * 4-dp precision because SAP stores DocumentLines.LineTotal at currency
@@ -4297,6 +4424,14 @@ trait HandlesSapPurchaseAndProducts
                 continue;
             }
 
+            // If we have already stamped an explicit 2-dp TaxAmount on the
+            // line (applyTwoDecimalTaxAmounts), trust it — it overrides
+            // SAP's per-line VAT computation.
+            if (isset($line['TaxAmount']) && is_numeric($line['TaxAmount'])) {
+                $merchandiseGross += $lineNet + (float) $line['TaxAmount'];
+                continue;
+            }
+
             $itemCode = trim((string) ($line['ItemCode'] ?? ''));
             $taxPercent = 0.0;
             if ($itemCode !== '' && isset($taxByItemCode[$itemCode])) {
@@ -4324,6 +4459,13 @@ trait HandlesSapPurchaseAndProducts
         foreach ($expenses as $expense) {
             $freightNet = (float) ($expense['LineTotal'] ?? 0);
             if ($freightNet <= 0) {
+                continue;
+            }
+            // Same TaxAmount-first rule as merchandise: an explicit stamped
+            // value short-circuits SAP's VatGroup recomputation in our
+            // estimate.
+            if (isset($expense['TaxAmount']) && is_numeric($expense['TaxAmount'])) {
+                $freightGross += $freightNet + (float) $expense['TaxAmount'];
                 continue;
             }
             $freightTaxPercent = $this->extractOrderFreightTaxPercent($data);
