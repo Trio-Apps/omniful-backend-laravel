@@ -1270,9 +1270,18 @@ trait HandlesSapPurchaseAndProducts
         $escapedReference = str_replace("'", "''", $reference);
         $escapedJournalReference = str_replace("'", "''", $journalReference !== '' ? $journalReference : 'CARD_FEE');
 
+        // Multiple fallback strategies — older invoices may have been posted
+        // with a different combination of Reference / Reference2 / memo
+        // (e.g. before we standardised the CARD_FEE tag, or when payments
+        // were retried with a tweaked memo). We try strict matches first,
+        // then loosen to a memo-substring lookup that catches "Card fee
+        // from Omniful order <id>" entries regardless of reference layout.
         $filters = [
             "Reference2 eq '{$escapedReference}' and Reference eq '{$escapedJournalReference}'",
             "Reference2 eq '{$escapedReference}'",
+            "Reference eq '{$escapedReference}'",
+            "contains(Memo,'Omniful order {$escapedReference}') and contains(Memo,'Card fee')",
+            "contains(Memo,'{$escapedReference}') and contains(Memo,'Card fee')",
         ];
 
         foreach ($filters as $filterExpression) {
@@ -1783,12 +1792,66 @@ trait HandlesSapPurchaseAndProducts
             $body['Reference3'] = $reference;
         }
 
+        // Pre-POST idempotency: a previous worker may have created this COGS
+        // journal entry successfully but failed to persist TransId locally.
+        $existingCogsJournal = $this->findExistingCogsJournalForDelivery(
+            $reference,
+            (string) ($delivery['DocNum'] ?? ''),
+            $deliveryDocEntry,
+        );
+        if (is_array($existingCogsJournal) && !empty($existingCogsJournal['TransId'])) {
+            $existingCogsJournal['ignored'] = false;
+            $existingCogsJournal['reused_existing'] = true;
+            $existingCogsJournal['request_body'] = $body;
+            return $existingCogsJournal;
+        }
+
         $response = $this->post('/JournalEntries', $body);
         if (!$response->successful()) {
+            $responseBody = (string) $response->body();
+
+            // Recovery: "(1000) JE Cogs Debit already integrated" or similar
+            // duplicate signal -> SAP refused because the COGS entry was
+            // already posted. Pull the matching JE so we rebind locally
+            // instead of escalating to failed.
+            if ($this->isSapJournalAlreadyIntegratedError($responseBody)
+                || $this->isSapCogsAlreadyIntegratedError($responseBody)) {
+                $recovered = $this->findExistingCogsJournalForDelivery(
+                    $reference,
+                    (string) ($delivery['DocNum'] ?? ''),
+                    $deliveryDocEntry,
+                );
+                if (is_array($recovered) && !empty($recovered['TransId'])) {
+                    $recovered['ignored'] = false;
+                    $recovered['already_integrated'] = true;
+                    $recovered['reused_existing'] = true;
+                    $recovered['recovered_after_duplicate_error'] = true;
+                    $recovered['sap_duplicate_error'] = $responseBody;
+                    $recovered['request_body'] = $body;
+                    return $recovered;
+                }
+
+                Log::warning('SAP COGS journal "already integrated" but no matching JE could be located', [
+                    'reference' => $reference,
+                    'delivery_doc_num' => $delivery['DocNum'] ?? null,
+                    'delivery_doc_entry' => $deliveryDocEntry,
+                    'response_body' => $responseBody,
+                ]);
+
+                return [
+                    'ignored' => true,
+                    'already_integrated' => true,
+                    'reason' => 'SAP refused the COGS journal as already integrated, but the matching JE could not be located by Reference/Reference2. Review in SAP and link manually if needed.',
+                    'request_body' => $body,
+                    'error_response_body' => $responseBody,
+                    'status_code' => $response->status(),
+                ];
+            }
+
             throw new SapRequestException(
-                'SAP COGS journal create failed: ' . $response->status() . ' ' . $response->body(),
+                'SAP COGS journal create failed: ' . $response->status() . ' ' . $responseBody,
                 $body,
-                (string) $response->body(),
+                $responseBody,
                 $response->status(),
             );
         }
@@ -1798,6 +1861,69 @@ trait HandlesSapPurchaseAndProducts
         $payload['request_body'] = $body;
 
         return $payload;
+    }
+
+    /**
+     * Locate an existing COGS Journal Entry in SAP linked to a delivery.
+     * Tries the merchant-set Reference (NumAtCard / external_id),
+     * Reference2 (delivery DocNum), Reference3, and a delivery DocEntry
+     * memo substring as fallbacks. Used both for pre-POST idempotency
+     * and recovery from "JE already integrated" / -1116 errors.
+     */
+    public function findExistingCogsJournalForDelivery(string $reference, string $deliveryDocNum, int $deliveryDocEntry): ?array
+    {
+        $reference = trim($reference);
+        $deliveryDocNum = trim($deliveryDocNum);
+
+        $filters = [];
+        if ($reference !== '') {
+            $escapedRef = str_replace("'", "''", $reference);
+            $filters[] = "Reference eq '{$escapedRef}'";
+        }
+        if ($deliveryDocNum !== '') {
+            $escapedDocNum = str_replace("'", "''", $deliveryDocNum);
+            $filters[] = "Reference2 eq '{$escapedDocNum}'";
+            $filters[] = "Reference3 eq '{$escapedDocNum}'";
+        }
+        if ($deliveryDocEntry > 0) {
+            // Memo includes the DocEntry as a last-resort fallback so we can
+            // still find the JE even when references were stripped or
+            // localized by SAP.
+            $filters[] = "contains(Memo,'Delivery " . $deliveryDocEntry . "')";
+        }
+
+        foreach ($filters as $filterExpression) {
+            $filter = rawurlencode($filterExpression);
+            $response = $this->get("/JournalEntries?\$filter={$filter}&\$orderby=TransId desc&\$top=1");
+            if (!$response->successful()) {
+                Log::warning('SAP COGS journal lookup failed', [
+                    'filter' => $filterExpression,
+                    'status' => $response->status(),
+                    'body' => $response->body(),
+                ]);
+                continue;
+            }
+
+            $rows = (array) ($response->json('value') ?? []);
+            $journal = $rows[0] ?? null;
+            if (is_array($journal) && !empty($journal['TransId'])) {
+                if (!isset($journal['Number']) && isset($journal['JdtNum'])) {
+                    $journal['Number'] = $journal['JdtNum'];
+                }
+                return $journal;
+            }
+        }
+
+        return null;
+    }
+
+    private function isSapCogsAlreadyIntegratedError(string $body): bool
+    {
+        $normalized = preg_replace('/\s+/', ' ', strtolower($body)) ?? strtolower($body);
+
+        return str_contains($normalized, 'je cogs debit already integrated')
+            || str_contains($normalized, 'cogs debit already integrated')
+            || (str_contains($normalized, 'cogs') && str_contains($normalized, 'already integrated'));
     }
 
     public function createArCreditMemoFromReturnOrder(array $data, array $options = []): array
