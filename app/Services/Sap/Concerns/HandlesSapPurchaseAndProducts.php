@@ -296,10 +296,18 @@ trait HandlesSapPurchaseAndProducts
         $escapedField = str_replace("'", "''", $field);
         $escapedValue = str_replace("'", "''", $value);
         $filter = rawurlencode("{$escapedField} eq '{$escapedValue}'");
-        $select = 'DocEntry,DocNum,CardCode,DocDate,DocTotal,DocStatus,ReserveInvoice,NumAtCard,Comments,U_omo,U_ZidId,U_SallaOrderId';
-        $response = $this->get("/Invoices?\$select={$select}&\$filter={$filter}&\$orderby=DocEntry desc&\$top=1");
+        // Do NOT pin a $select that lists UDFs explicitly: when a UDF such as
+        // U_ZidId or U_SallaOrderId is not defined in this SAP company, the
+        // Service Layer returns 400 ("Property U_xxx is not defined") for the
+        // entire query and ownership recovery silently collapses to ownership=none.
+        // Fetching all fields keeps the lookup resilient across SAP schemas.
+        $response = $this->get("/Invoices?\$filter={$filter}&\$orderby=DocEntry desc&\$top=1");
 
         if (!$response->successful()) {
+            // A 400 here typically means the *filter* field (the UDF being searched)
+            // does not exist in this SAP company. That is expected for channel UDFs
+            // like U_ZidId / U_SallaOrderId on tenants without those channels — the
+            // caller iterates other fields, so we keep this at warning level only.
             Log::warning('SAP existing AR reserve invoice lookup failed', [
                 'field' => $field,
                 'status' => $response->status(),
@@ -325,7 +333,6 @@ trait HandlesSapPurchaseAndProducts
             return null;
         }
 
-        $select = 'DocEntry,DocNum,CardCode,DocDate,DocTotal,DocStatus,ReserveInvoice,NumAtCard,Comments,U_omo,U_ZidId,U_SallaOrderId';
         $escapedValue = str_replace("'", "''", $reference);
         $filters = ["NumAtCard eq '{$escapedValue}'"];
 
@@ -335,7 +342,8 @@ trait HandlesSapPurchaseAndProducts
 
         foreach ($filters as $filterExpression) {
             $filter = rawurlencode($filterExpression);
-            $response = $this->get("/Invoices?\$select={$select}&\$filter={$filter}&\$orderby=DocEntry desc&\$top=1");
+            // No $select: see findArReserveInvoiceByFieldValue() for rationale.
+            $response = $this->get("/Invoices?\$filter={$filter}&\$orderby=DocEntry desc&\$top=1");
 
             if (!$response->successful()) {
                 Log::warning('SAP existing AR invoice document-reference lookup failed', [
@@ -367,8 +375,8 @@ trait HandlesSapPurchaseAndProducts
 
         $escapedValue = str_replace("'", "''", $reference);
         $filter = rawurlencode("contains(Comments,'{$escapedValue}')");
-        $select = 'DocEntry,DocNum,CardCode,DocDate,DocTotal,DocStatus,ReserveInvoice,NumAtCard,Comments,U_omo,U_ZidId,U_SallaOrderId';
-        $response = $this->get("/Invoices?\$select={$select}&\$filter={$filter}&\$orderby=DocEntry desc&\$top=1");
+        // No $select: see findArReserveInvoiceByFieldValue() for rationale.
+        $response = $this->get("/Invoices?\$filter={$filter}&\$orderby=DocEntry desc&\$top=1");
 
         if (!$response->successful()) {
             Log::warning('SAP existing AR reserve invoice comments lookup failed', [
