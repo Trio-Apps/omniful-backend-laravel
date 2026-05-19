@@ -3877,6 +3877,8 @@ trait HandlesSapPurchaseAndProducts
 
     private function extractOrderFreightTaxPercent(array $data): float
     {
+        // 1) Explicit shipping tax percent: highest priority, treat 0 as
+        //    intentional (e.g. merchant configured zero-rated shipping).
         $explicitPercentPaths = [
             'invoice.shipping_tax_percent',
             'invoice.delivery_tax_percent',
@@ -3891,6 +3893,7 @@ trait HandlesSapPurchaseAndProducts
             }
         }
 
+        // 2) tax_percentage on a shipping/freight additional_charges line.
         $charges = (array) data_get($data, 'invoice.additional_charges', data_get($data, 'additional_charges', []));
         foreach ($charges as $charge) {
             $type = strtolower(trim((string) data_get($charge, 'type', '')));
@@ -3904,6 +3907,7 @@ trait HandlesSapPurchaseAndProducts
             }
         }
 
+        // 3) Inferred from a positive tax amount Omniful provided.
         $explicitTaxAmountPaths = [
             'invoice.shipping_tax',
             'invoice.delivery_tax',
@@ -3913,8 +3917,8 @@ trait HandlesSapPurchaseAndProducts
 
         foreach ($explicitTaxAmountPaths as $path) {
             $candidate = data_get($data, $path);
-            if (is_numeric($candidate)) {
-                return (float) $candidate > 0 ? $this->inferFreightTaxPercentFromAmount($data, (float) $candidate) : 0.0;
+            if (is_numeric($candidate) && (float) $candidate > 0) {
+                return $this->inferFreightTaxPercentFromAmount($data, (float) $candidate);
             }
         }
 
@@ -3925,11 +3929,18 @@ trait HandlesSapPurchaseAndProducts
             }
 
             $taxAmount = data_get($charge, 'tax_amount');
-            if (is_numeric($taxAmount)) {
-                return (float) $taxAmount > 0 ? $this->inferFreightTaxPercentFromAmount($data, (float) $taxAmount) : 0.0;
+            if (is_numeric($taxAmount) && (float) $taxAmount > 0) {
+                return $this->inferFreightTaxPercentFromAmount($data, (float) $taxAmount);
             }
         }
 
+        // 4) Fallback: follow the order items' VAT rate. Omniful frequently
+        //    omits shipping_tax or sends it as 0 even on domestic 15% orders;
+        //    SAP previously stamped EOV (0%) on the freight expense line while
+        //    the merchandise lines carried SOV (15%), leaving the invoice in
+        //    an inconsistent mixed-VAT state. Mirroring the line tax keeps
+        //    freight aligned with the rest of the invoice and matches the
+        //    BRS expectation that shipping follows the merchandise VAT rate.
         $lineItems = (array) data_get($data, 'items', data_get($data, 'order_items', []));
         foreach ($lineItems as $item) {
             $taxPercent = $this->extractOrderLineTaxPercent((array) $item);
