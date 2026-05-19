@@ -97,6 +97,16 @@ return [
                     'statuses' => ['cancelled', 'canceled'],
                     'sap_status' => 'cancel_logged',
                 ],
+                [
+                    // Omniful fires purchase_order.close.event once a PO has
+                    // been fully GRN'd and put away. SAP B1 auto-closes the
+                    // PO when all lines are received via GRPO, so this is
+                    // purely informational — we just log the close.
+                    'name' => 'closed',
+                    'event_contains' => ['close', 'closed'],
+                    'statuses' => ['closed', 'completed', 'fully_received'],
+                    'sap_status' => 'closed_logged',
+                ],
             ],
             'default_sap_status' => 'logged',
         ],
@@ -239,6 +249,15 @@ return [
         'ksa_taxable_code' => 'SOV',
         'ksa_zero_tax_code' => 'EOV',
         'foreign_code' => 'EOV',
+    ],
+    // Purchase Orders / GRPO use INPUT VAT codes, not the OUTPUT VAT codes
+    // configured above for sales. Leave any of these blank to fall back to
+    // the SAP Item Master "Tax Group" default (recommended on tenants where
+    // the item master is already configured correctly).
+    'purchase_tax' => [
+        'ksa_taxable_code' => env('OMNIFUL_PURCHASE_TAX_KSA_TAXABLE_CODE', ''),
+        'ksa_zero_tax_code' => env('OMNIFUL_PURCHASE_TAX_KSA_ZERO_CODE', ''),
+        'foreign_code' => env('OMNIFUL_PURCHASE_TAX_FOREIGN_CODE', ''),
     ],
     'order_freight' => [
         'expense_code' => 1,

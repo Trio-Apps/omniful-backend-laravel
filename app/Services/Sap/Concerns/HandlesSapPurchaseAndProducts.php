@@ -2005,9 +2005,15 @@ trait HandlesSapPurchaseAndProducts
                 'UnitPrice' => $this->roundSapAmount($this->resolvePurchaseOrderLineUnitPrice((array) $item)),
             ];
 
-            $taxCode = $this->resolveSapTaxCodeForOrderLine($data, (array) $item);
-            if ($taxCode !== '') {
-                $line['VatGroup'] = $taxCode;
+            // Purchase documents use INPUT VAT codes (e.g. SIV / EIV), not the
+            // OUTPUT codes used on sales (SOV / EOV). SAP rejects a sales VAT
+            // code stamped on a PO line with -10 "Invalid VAT Group".
+            // Only attach VatGroup when an explicit purchase tax code is
+            // configured (omniful.purchase_tax.* / IntegrationSetting); fall
+            // back to SAP's item-default tax group otherwise.
+            $purchaseTaxCode = $this->resolveSapTaxCodeForPurchaseOrderLine($data, (array) $item);
+            if ($purchaseTaxCode !== '') {
+                $line['VatGroup'] = $purchaseTaxCode;
             }
 
             if ($hubCode) {
@@ -4597,6 +4603,79 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return ($taxAmount / $freightNet) * 100;
+    }
+
+    /**
+     * Resolve the SAP VatGroup for a Purchase Order line. Purchase documents
+     * use INPUT VAT codes (SIV / EIV / IVS / IVZ ...) which differ from the
+     * sales OUTPUT codes (SOV / EOV ...). Returns the configured code, or an
+     * empty string to let SAP fall back to the Item's default Purchase tax
+     * group rather than rejecting the POST with -10 "Invalid VAT Group".
+     */
+    private function resolveSapTaxCodeForPurchaseOrderLine(array $data, array $item): string
+    {
+        $taxPercent = $this->extractOrderLineTaxPercent($item);
+
+        if ($this->isLocalPurchaseSupplier($data)) {
+            return $this->resolveConfiguredSapTaxCode(
+                $taxPercent > 0 ? 'purchase_tax_code_ksa_taxable' : 'purchase_tax_code_ksa_zero',
+                $taxPercent > 0 ? 'omniful.purchase_tax.ksa_taxable_code' : 'omniful.purchase_tax.ksa_zero_tax_code',
+                '',
+            );
+        }
+
+        return $this->resolveConfiguredSapTaxCode(
+            'purchase_tax_code_foreign',
+            'omniful.purchase_tax.foreign_code',
+            '',
+        );
+    }
+
+    /**
+     * Detect whether the Purchase Order supplier is local (KSA) so we can
+     * choose between domestic-taxable / domestic-zero / foreign input VAT
+     * codes. Falls back to country tokens (config local_country_tokens) and
+     * phone-prefix heuristics on the supplier payload.
+     */
+    private function isLocalPurchaseSupplier(array $data): bool
+    {
+        $countryCandidates = [
+            data_get($data, 'supplier.country'),
+            data_get($data, 'supplier.country_code'),
+            data_get($data, 'supplier.address.country'),
+            data_get($data, 'supplier.address.country_code'),
+        ];
+
+        $localTokens = array_map(
+            fn ($value) => strtoupper(trim((string) $value)),
+            (array) config('omniful.order_customer_mapping.local_country_tokens', ['SA', 'SAU', 'KSA', 'SAUDI ARABIA'])
+        );
+
+        foreach ($countryCandidates as $candidate) {
+            $normalized = strtoupper(trim((string) ($candidate ?? '')));
+            if ($normalized !== '' && in_array($normalized, $localTokens, true)) {
+                return true;
+            }
+        }
+
+        $phoneCandidates = [
+            data_get($data, 'supplier.phone'),
+            data_get($data, 'supplier.mobile'),
+        ];
+
+        foreach ($phoneCandidates as $candidate) {
+            $digits = preg_replace('/\D+/', '', (string) ($candidate ?? '')) ?? '';
+            if ($digits === '') {
+                continue;
+            }
+            if (str_starts_with($digits, '966')) {
+                return true;
+            }
+        }
+
+        // Default to local — most Saudi tenants ship via local suppliers, so
+        // assume KSA when nothing in the payload tells us otherwise.
+        return true;
     }
 
     private function resolveSapTaxCodeForOrderLine(array $data, array $item): string
