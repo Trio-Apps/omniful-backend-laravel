@@ -845,18 +845,39 @@ trait HandlesSapPurchaseAndProducts
         $body = $this->appendOmnifulDocumentUdfs($body, $data, $reference);
 
         if ($paymentCreditCard !== null) {
-            // Pin CreditSum to the authoritative SumApplied so the credit
-            // card line balances the PaymentInvoice line to the same
-            // sub-cent precision. buildIncomingPaymentCreditCardLine
-            // rounds to 2 dp from $data['sum_applied'], which can drift
-            // by 0.001 SAR from the SAP DocTotal-derived SumApplied and
-            // leave a tiny Balance Due that prevents invoice closure.
-            $paymentCreditCard['CreditSum'] = $sumApplied;
+            // PaymentCreditCards.CreditSum lives in the credit-card / transfer
+            // account's currency, which on KSA SAP B1 setups is the *local*
+            // currency (SAR). When the invoice is in a foreign currency
+            // (QAR/AED/etc.), sending the document-currency SumApplied
+            // verbatim as CreditSum makes SAP think the customer paid
+            // <sumApplied> SAR while the invoice was actually worth
+            // <sumApplied * DocRate> SAR — producing the "Unbalanced
+            // Transaction" (-5012) error. Multiply by DocRate so the credit
+            // line lands on the same local-currency amount SAP recorded for
+            // the invoice.
+            $companyCurrency = strtoupper(trim((string) data_get($data, 'invoice.exchange_rate.store_currency', '')));
+            $documentCurrency = strtoupper($invoiceCurrency);
+            $creditSum = $sumApplied;
+            if ($documentCurrency !== '' && $companyCurrency !== '' && $documentCurrency !== $companyCurrency && $invoiceRate > 0) {
+                $creditSum = $this->roundSapAmount($sumApplied * $invoiceRate);
+            }
+            $paymentCreditCard['CreditSum'] = $creditSum;
             $body['PaymentCreditCards'] = [$paymentCreditCard];
         } else {
             $body['TransferAccount'] = $transferAccount;
             $body['TransferDate'] = $transferDate;
-            $body['TransferSum'] = $sumApplied;
+            // Same FX-aware conversion for TransferSum: the configured
+            // transfer account is denominated in local currency on KSA
+            // setups, so we convert the foreign-currency SumApplied to the
+            // SAR figure SAP needs to balance against the invoice's LC
+            // amount.
+            $companyCurrency = strtoupper(trim((string) data_get($data, 'invoice.exchange_rate.store_currency', '')));
+            $documentCurrency = strtoupper($invoiceCurrency);
+            $transferSum = $sumApplied;
+            if ($documentCurrency !== '' && $companyCurrency !== '' && $documentCurrency !== $companyCurrency && $invoiceRate > 0) {
+                $transferSum = $this->roundSapAmount($sumApplied * $invoiceRate);
+            }
+            $body['TransferSum'] = $transferSum;
         }
 
         $externalId = trim((string) ($data['external_id'] ?? $data['reference'] ?? ''));
