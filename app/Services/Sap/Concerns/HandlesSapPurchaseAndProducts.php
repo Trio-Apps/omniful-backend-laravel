@@ -3998,16 +3998,15 @@ trait HandlesSapPurchaseAndProducts
         // top of an already gross figure and the AR reserve invoice's grand
         // total exceeds Omniful's order total — preventing the Incoming
         // Payment from settling the invoice cleanly.
-        //
-        // Strategy (point 6 of the BRS):
-        // - If Omniful already reports a shipping tax amount, subtract it.
-        // - Else if shipping is flagged tax_inclusive, divide by (1 + rate).
-        // - Else (freight is already net) return the amount as-is.
+
+        // Path A: Explicit positive shipping tax amount → freight gross
+        // already includes that tax. Subtract it to get net.
         $shippingTax = data_get($data, 'invoice.shipping_tax');
         if (is_numeric($shippingTax) && (float) $shippingTax > 0) {
             return $this->roundSapAmount(max($grossAmount - (float) $shippingTax, 0.0));
         }
 
+        // Path B: Explicit tax-inclusive flag with a known rate → divide by (1+rate).
         $taxInclusive = filter_var(
             data_get($data, 'invoice.shipping_tax_inclusive', false),
             FILTER_VALIDATE_BOOL,
@@ -4016,6 +4015,36 @@ trait HandlesSapPurchaseAndProducts
             $taxPercent = $this->extractOrderFreightTaxPercent($data);
             if ($taxPercent > 0) {
                 return $this->roundSapAmount($grossAmount / (1 + ($taxPercent / 100)));
+            }
+        }
+
+        // Path C: Omniful frequently sends shipping_tax = 0 even on domestic
+        // Saudi orders where shipping is implicitly tax-inclusive. The freight
+        // gross from Omniful already represents what the customer paid, with
+        // VAT baked in (the merchant doesn't add VAT on top of the displayed
+        // shipping price). If we will end up taxing the freight (because items
+        // carry a positive VAT rate that the freight fallback inherits) AND
+        // Omniful's invoice.total reconciles WITHOUT a separately-added
+        // freight VAT (subtotal + items_tax + freight_gross - discount ==
+        // invoice.total), divide by (1 + rate) so SAP's net + auto-VAT
+        // reconstructs exactly the freight gross Omniful billed.
+        $taxPercent = $this->extractOrderFreightTaxPercent($data);
+        if ($taxPercent > 0) {
+            $omnifulTotal = data_get($data, 'invoice.total');
+            $subtotal = data_get($data, 'invoice.subtotal');
+            $itemsTax = data_get($data, 'invoice.tax');
+            $discountRaw = data_get($data, 'invoice.discount');
+            $discount = is_numeric($discountRaw) ? (float) $discountRaw : 0.0;
+
+            if (is_numeric($omnifulTotal) && is_numeric($subtotal) && is_numeric($itemsTax)) {
+                $expectedWithoutExtraFreightVat = (float) $subtotal
+                    + (float) $itemsTax
+                    + $grossAmount
+                    - $discount;
+
+                if (abs((float) $omnifulTotal - $expectedWithoutExtraFreightVat) < 0.05) {
+                    return $this->roundSapAmount($grossAmount / (1 + ($taxPercent / 100)));
+                }
             }
         }
 
