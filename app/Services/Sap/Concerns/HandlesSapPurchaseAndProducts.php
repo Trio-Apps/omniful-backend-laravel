@@ -711,7 +711,31 @@ trait HandlesSapPurchaseAndProducts
             throw new \RuntimeException('Missing CardCode for incoming payment');
         }
 
-        $sumApplied = $this->roundSapAmount((float) ($data['sum_applied'] ?? ($salesDoc['DocTotal'] ?? 0)));
+        // Authoritative settlement amount: use SAP's stored DocTotal verbatim
+        // (no re-rounding) so the payment matches the invoice to the last
+        // decimal SAP records internally. Omniful's order total is rounded
+        // to 2 dp; SAP's DocTotal can carry 3-4 dp because tax is computed
+        // line-by-line at the company's currency precision (e.g. 15% of
+        // 96.74 = 14.511, total 125.251). Rounding the payment back to
+        // 125.25 leaves a 0.001 SAR Balance Due and prevents the invoice
+        // from closing. The unrounded SAP DocTotal makes the settlement
+        // exact and the balance hit zero.
+        $invoiceDocTotal = is_numeric($salesDoc['DocTotal'] ?? null) ? (float) $salesDoc['DocTotal'] : 0.0;
+        $requestedAmount = is_numeric($data['sum_applied'] ?? null) ? (float) $data['sum_applied'] : 0.0;
+
+        if ($invoiceDocTotal > 0
+            && ($requestedAmount <= 0 || abs($invoiceDocTotal - $requestedAmount) < 0.05)
+        ) {
+            // Full-settlement intent (Omniful asked for the full total or
+            // didn't specify): always use SAP's exact DocTotal so any
+            // tax-rounding tail closes the invoice cleanly.
+            $sumApplied = $invoiceDocTotal;
+        } else {
+            // Partial / mismatched payment intent: honor the caller's
+            // request, still rounded to SAP's 2-dp service precision.
+            $sumApplied = $this->roundSapAmount($requestedAmount > 0 ? $requestedAmount : $invoiceDocTotal);
+        }
+
         if ($sumApplied <= 0) {
             return [
                 'ignored' => true,
@@ -764,6 +788,13 @@ trait HandlesSapPurchaseAndProducts
         $body = $this->appendOmnifulDocumentUdfs($body, $data, $reference);
 
         if ($paymentCreditCard !== null) {
+            // Pin CreditSum to the authoritative SumApplied so the credit
+            // card line balances the PaymentInvoice line to the same
+            // sub-cent precision. buildIncomingPaymentCreditCardLine
+            // rounds to 2 dp from $data['sum_applied'], which can drift
+            // by 0.001 SAR from the SAP DocTotal-derived SumApplied and
+            // leave a tiny Balance Due that prevents invoice closure.
+            $paymentCreditCard['CreditSum'] = $sumApplied;
             $body['PaymentCreditCards'] = [$paymentCreditCard];
         } else {
             $body['TransferAccount'] = $transferAccount;
