@@ -5108,9 +5108,10 @@ trait HandlesSapPurchaseAndProducts
     {
         foreach ($paths as $path) {
             $value = data_get($data, $path);
-            if ($value !== null && trim((string) $value) !== '') {
-                return $this->formatDate((string) $value);
+            if (!$this->isReasonablePayloadDate($value)) {
+                continue;
             }
+            return $this->formatDate((string) $value);
         }
 
         return $this->formatDate(now()->format('Y-m-d'));
@@ -5120,12 +5121,47 @@ trait HandlesSapPurchaseAndProducts
     {
         foreach ($paths as $path) {
             $value = data_get($data, $path);
-            if ($value !== null && trim((string) $value) !== '') {
-                return $this->formatDate((string) $value);
+            if (!$this->isReasonablePayloadDate($value)) {
+                continue;
             }
+            return $this->formatDate((string) $value);
         }
 
         return $docDate;
+    }
+
+    /**
+     * Reject zero / pre-2000 / way-in-the-future payload dates.
+     *
+     * Omniful sometimes emits "0001-01-01T00:00:00Z" (Go's zero time) when a
+     * sub-record was never populated — for example return-order payloads
+     * carry zero created_at/updated_at when no shipment timeline exists yet.
+     * If we forward that to SAP as TaxDate the service layer fails to match
+     * any tax code's effective-from range and surfaces a mangled
+     * "tax code 'ÿ½'" error (SAP's missing-tax-code placeholder rendered as
+     * garbage bytes). Falling through to the next candidate path (and
+     * ultimately today's date) keeps the credit memo posting on a real day.
+     */
+    private function isReasonablePayloadDate(mixed $value): bool
+    {
+        if ($value === null) {
+            return false;
+        }
+
+        $value = trim((string) $value);
+        if ($value === '') {
+            return false;
+        }
+
+        try {
+            $parsed = \Carbon\Carbon::parse($value);
+        } catch (\Throwable) {
+            return false;
+        }
+
+        $year = (int) $parsed->format('Y');
+
+        return $year >= 2000 && $year <= 2099;
     }
 
     private function buildFallbackCustomerPhone(string $cardCode, string $externalId, int $attempt = 0): string
@@ -5952,6 +5988,20 @@ trait HandlesSapPurchaseAndProducts
                 continue;
             }
 
+            // Preserve the per-item tax percent from the Omniful payload so
+            // downstream credit-memo line builders can resolve the correct
+            // SAP VatGroup (SOV vs EOV). Without this, the grouped array
+            // drops to tax_percent=null -> resolveSapTaxCodeForOrderLine
+            // treats the line as zero-rated and stamps EOV on a taxable
+            // return, which can collide with SAP's tax-code validation.
+            $itemTaxPercent = data_get($item, 'tax_percent');
+            if ($itemTaxPercent === null) {
+                $itemTaxPercent = data_get($item, 'vat_percent');
+            }
+            if ($itemTaxPercent === null) {
+                $itemTaxPercent = data_get($item, 'tax_percentage');
+            }
+
             $qty = data_get($item, 'return_quantity');
             if ($qty === null) {
                 $qty = data_get($item, 'returned_quantity');
@@ -6000,6 +6050,7 @@ trait HandlesSapPurchaseAndProducts
                     'item_code' => $itemCode,
                     'quantity' => 0.0,
                     'unit_price' => 0.0,
+                    'tax_percent' => null,
                 ];
             }
 
@@ -6008,6 +6059,10 @@ trait HandlesSapPurchaseAndProducts
             $resolvedPrice = (float) ($unitPrice ?? 0);
             if ($resolvedPrice > 0 && (float) $grouped[$itemCode]['unit_price'] <= 0) {
                 $grouped[$itemCode]['unit_price'] = $resolvedPrice;
+            }
+
+            if ($grouped[$itemCode]['tax_percent'] === null && is_numeric($itemTaxPercent)) {
+                $grouped[$itemCode]['tax_percent'] = (float) $itemTaxPercent;
             }
         }
 
