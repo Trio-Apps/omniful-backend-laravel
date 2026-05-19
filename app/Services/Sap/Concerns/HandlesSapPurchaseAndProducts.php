@@ -4457,11 +4457,19 @@ trait HandlesSapPurchaseAndProducts
     }
 
     /**
-     * Bump the last taxed merchandise DocumentLine.LineTotal by ($difference
-     * / (1 + line tax %)) so the gross moves by exactly $difference. Uses
-     * 4-dp precision because SAP stores DocumentLines.LineTotal at currency
-     * precision (typically 4 dp in KSA). Returns the body unchanged if no
-     * suitable line is found.
+     * Bump the last taxed merchandise DocumentLine by the precision needed to
+     * shift the document gross total by exactly ($difference).
+     *
+     * - If the line is driven by PriceAfterVAT, adjust PriceAfterVAT directly
+     *   so qty * PriceAfterVAT moves by $difference at the gross level. This
+     *   is needed when freight is the residual source — items have an exact
+     *   gross sum and we need to absorb the freight 3-dp tail somewhere.
+     * - Otherwise adjust LineTotal at the net level by ($difference /
+     *   (1 + line tax %)) so the gross moves by $difference after SAP's
+     *   per-line VAT computation.
+     *
+     * Both adjustments use 4-dp precision because SAP stores DocumentLines
+     * fields at currency precision (typically 4 dp in KSA).
      */
     private function nudgeLastMerchandiseLineForRounding(array $body, array $data, float $difference): array
     {
@@ -4492,6 +4500,21 @@ trait HandlesSapPurchaseAndProducts
             $taxMultiplier = 1 + ($taxPercent / 100);
             if ($taxMultiplier <= 0) {
                 continue;
+            }
+
+            $qty = (float) ($line['Quantity'] ?? 0);
+
+            // PriceAfterVAT path: change gross-per-unit so qty * PriceAfterVAT
+            // moves by the desired $difference at the gross level.
+            if (isset($line['PriceAfterVAT']) && is_numeric($line['PriceAfterVAT']) && $qty > 0) {
+                $currentPriceAfterVat = (float) $line['PriceAfterVAT'];
+                $newPriceAfterVat = round($currentPriceAfterVat + ($difference / $qty), 4);
+                if ($newPriceAfterVat <= 0) {
+                    continue;
+                }
+                $body['DocumentLines'][$index]['PriceAfterVAT'] = $newPriceAfterVat;
+
+                return $body;
             }
 
             $currentLineNet = $this->extractSapLineMerchandiseTotal($line);
