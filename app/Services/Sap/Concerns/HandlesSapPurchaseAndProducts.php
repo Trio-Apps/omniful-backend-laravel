@@ -81,6 +81,18 @@ trait HandlesSapPurchaseAndProducts
                 }
             }
 
+            // Per-unit gross from Omniful (line.total / qty). When this is a
+            // clean 2-dp number we'll later submit it via PriceAfterVAT so
+            // SAP back-computes UnitPrice / tax to land the line gross
+            // exactly on Omniful's 2-dp figure. This is the only way to keep
+            // the per-line tax math from drifting onto 3-dp values
+            // (the root cause of the Balance Due tail we kept fighting).
+            $omnifulLineGross = null;
+            $rawLineTotal = data_get($item, 'total');
+            if (is_numeric($rawLineTotal) && $qty > 0 && (float) $rawLineTotal > 0) {
+                $omnifulLineGross = (float) $rawLineTotal / $qty;
+            }
+
             $line = [
                 'ItemCode' => $itemCode,
                 'Quantity' => $this->roundSapQuantity($qty),
@@ -92,12 +104,25 @@ trait HandlesSapPurchaseAndProducts
                 $line['VatGroup'] = $taxCode;
             }
 
+            $linePerUnitTaxPercent = (float) $this->extractOrderLineTaxPercent((array) $item);
+
+            // Switch to PriceAfterVAT when Omniful provides a positive 2-dp
+            // gross line total AND the line is taxable. SAP back-computes
+            // UnitPrice = PriceAfterVAT / (1 + rate) (4 dp), then stores
+            // the line gross at exactly PriceAfterVAT * qty — which is the
+            // gross Omniful billed. Without this, 15 % VAT on a 2-dp net
+            // always produces 3-dp values and the document never matches
+            // Omniful's invoice.total.
+            if ($omnifulLineGross !== null && $linePerUnitTaxPercent > 0) {
+                $line['PriceAfterVAT'] = $this->roundSapAmount($omnifulLineGross);
+            }
+
             if ($hubCode) {
                 $line['WarehouseCode'] = (string) $hubCode;
             }
 
             $lines[] = $line;
-            $lineTaxPercents[] = $this->extractOrderLineTaxPercent((array) $item);
+            $lineTaxPercents[] = $linePerUnitTaxPercent;
         }
 
         if ($lines === []) {
@@ -107,14 +132,19 @@ trait HandlesSapPurchaseAndProducts
                 'request_body' => null,
             ];
         }
-        // Always rebalance lines to the target merchandise subtotal. Previously
-        // we computed a DiscountPercent and let SAP redistribute; that produced
-        // 4-decimal totals (e.g. 107.5916 SAR) that drift from Omniful's
-        // 2-decimal totals (107.59) and leave the AR Reserve Invoice with a
-        // tiny non-zero Balance Due even after payment. Pre-rebalancing the
-        // lines so the merchandise subtotal already equals the target lets
-        // SAP compute the document at the precision we want.
-        $lines = $this->rebalanceOrderLinesForInvoiceTotals($lines, $data, $lineTaxPercents);
+        // Rebalance lines to the target merchandise subtotal — unless we already
+        // pinned each line's gross via PriceAfterVAT above, in which case the
+        // line gross is the source of truth and rebalancing the net would only
+        // re-introduce the 3-dp tax drift we are explicitly trying to avoid.
+        $allLinesUsePriceAfterVat = $lines !== [] && array_reduce(
+            $lines,
+            fn (bool $carry, array $line) => $carry && isset($line['PriceAfterVAT']),
+            true,
+        );
+
+        if (!$allLinesUsePriceAfterVat) {
+            $lines = $this->rebalanceOrderLinesForInvoiceTotals($lines, $data, $lineTaxPercents);
+        }
         $documentDiscountPercent = 0.0;
 
         $lines = $this->normalizeSapDocumentLines(
@@ -4516,6 +4546,16 @@ trait HandlesSapPurchaseAndProducts
 
         $merchandiseGross = 0.0;
         foreach ($lines as $index => $line) {
+            // PriceAfterVAT wins when present: SAP will use it to back-compute
+            // UnitPrice / tax and the resulting gross is exactly qty * PriceAfterVAT.
+            if (isset($line['PriceAfterVAT']) && is_numeric($line['PriceAfterVAT'])) {
+                $qty = (float) ($line['Quantity'] ?? 0);
+                if ($qty > 0) {
+                    $merchandiseGross += $qty * (float) $line['PriceAfterVAT'];
+                    continue;
+                }
+            }
+
             $lineNet = $this->extractSapLineMerchandiseTotal((array) $line);
             if ($lineNet <= 0) {
                 continue;
