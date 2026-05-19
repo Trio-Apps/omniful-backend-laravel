@@ -3843,6 +3843,11 @@ trait HandlesSapPurchaseAndProducts
      *   + Σ freight expense LineTotal × (1 + freight VAT %)
      *   − document-level DiscountPercent applied to the subtotal.
      * Returns null when essential inputs are missing.
+     *
+     * SAP DocumentLines carry a VatGroup code (e.g. "SOV", "EOV") rather
+     * than a percentage. We read the tax percent from the matching Omniful
+     * source item (by sku_code -> ItemCode, falling back to index) so the
+     * estimate reflects what SAP will actually compute from the VatGroup.
      */
     private function estimateInvoiceGrossTotalFromBody(array $body, array $data): ?float
     {
@@ -3851,15 +3856,38 @@ trait HandlesSapPurchaseAndProducts
             return null;
         }
 
+        $items = (array) data_get($data, 'order_items', data_get($data, 'items', []));
+        $taxByItemCode = [];
+        $taxByIndex = [];
+        foreach ($items as $index => $item) {
+            $taxPercent = (float) $this->extractOrderLineTaxPercent((array) $item);
+            $taxByIndex[$index] = $taxPercent;
+            $itemCode = trim((string) (
+                data_get($item, 'sku_code')
+                ?? data_get($item, 'seller_sku_code')
+                ?? data_get($item, 'seller_sku.seller_sku_code')
+                ?? ''
+            ));
+            if ($itemCode !== '' && !isset($taxByItemCode[$itemCode])) {
+                $taxByItemCode[$itemCode] = $taxPercent;
+            }
+        }
+
         $merchandiseGross = 0.0;
-        $merchandiseNet = 0.0;
-        foreach ($lines as $line) {
+        foreach ($lines as $index => $line) {
             $lineNet = $this->extractSapLineMerchandiseTotal((array) $line);
             if ($lineNet <= 0) {
                 continue;
             }
-            $taxPercent = (float) $this->extractOrderLineTaxPercent((array) $line);
-            $merchandiseNet += $lineNet;
+
+            $itemCode = trim((string) ($line['ItemCode'] ?? ''));
+            $taxPercent = 0.0;
+            if ($itemCode !== '' && isset($taxByItemCode[$itemCode])) {
+                $taxPercent = $taxByItemCode[$itemCode];
+            } elseif (isset($taxByIndex[$index])) {
+                $taxPercent = $taxByIndex[$index];
+            }
+
             $merchandiseGross += $lineNet * (1 + ($taxPercent / 100));
         }
 
