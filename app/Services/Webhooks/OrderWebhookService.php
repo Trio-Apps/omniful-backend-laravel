@@ -236,14 +236,47 @@ class OrderWebhookService
                 try {
                     $invoiceResult = $client->createArReserveInvoiceFromOmnifulOrder($data, $externalId);
                 } catch (SapRequestException $e) {
-                    $order->sap_order_response = [
-                        'ignored' => false,
-                        'request_body' => $e->requestBody,
-                        'error_response_body' => $e->responseBody,
-                        'status_code' => $e->statusCode,
-                    ];
-                    $order->save();
-                    throw $e;
+                    // Last-chance recovery: SAP rejected the POST with "already exists"
+                    // (or another duplicate signal). Try to pull the matching invoice
+                    // from SAP one more time and rebind locally. This rescues orders
+                    // whose AR reserve invoice exists in SAP but never made it into
+                    // our DB (worker crash between POST and save, queue restart, or
+                    // local truncate via Reset Orders & Queue).
+                    $rescued = null;
+                    if ($e->responseBody !== '' && method_exists($client, 'recoverArReserveInvoiceForOmnifulOrder')) {
+                        try {
+                            $rescued = $client->recoverArReserveInvoiceForOmnifulOrder(
+                                (string) $e->responseBody,
+                                $data,
+                                $externalId,
+                            );
+                        } catch (\Throwable $rescueError) {
+                            $rescued = null;
+                        }
+                    }
+
+                    if (is_array($rescued) && !empty($rescued['DocEntry'])) {
+                        $order->sap_status = 'created';
+                        $order->sap_doc_entry = (string) ($rescued['DocEntry'] ?? '');
+                        $order->sap_doc_num = (string) ($rescued['DocNum'] ?? '');
+                        $order->sap_error = null;
+                        $rescued['ignored'] = false;
+                        $rescued['reused_existing'] = true;
+                        $rescued['recovered_after_duplicate_error'] = true;
+                        $order->sap_order_response = $rescued;
+                        $order->save();
+
+                        $invoiceResult = $rescued;
+                    } else {
+                        $order->sap_order_response = [
+                            'ignored' => false,
+                            'request_body' => $e->requestBody,
+                            'error_response_body' => $e->responseBody,
+                            'status_code' => $e->statusCode,
+                        ];
+                        $order->save();
+                        throw $e;
+                    }
                 }
                 if (($invoiceResult['ignored'] ?? false) === true) {
                     $order->sap_status = 'ignored';

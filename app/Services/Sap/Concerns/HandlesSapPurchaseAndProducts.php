@@ -156,13 +156,23 @@ trait HandlesSapPurchaseAndProducts
             $responseBody = (string) $response->body();
             if ($this->isSapArInvoiceAlreadyExistsError($responseBody)) {
                 $existingInvoice = $this->findExistingArReserveInvoiceForOmnifulOrder($body, $data, $externalId, $responseBody);
-                if ($existingInvoice !== null) {
+                if ($existingInvoice !== null && $this->arInvoiceMatchesOmnifulOrder($existingInvoice, $externalId, $data)) {
                     $existingInvoice['ignored'] = false;
                     $existingInvoice['reused_existing'] = true;
                     $existingInvoice['request_body'] = $body;
                     $existingInvoice['sap_duplicate_error'] = $responseBody;
 
                     return $existingInvoice;
+                }
+
+                if ($existingInvoice !== null) {
+                    Log::error('SAP AR invoice "already exists" recovery rejected: conflicting invoice belongs to a different order — SAP numbering series may have been rolled back', [
+                        'external_id' => $externalId,
+                        'candidate_doc_entry' => $existingInvoice['DocEntry'] ?? null,
+                        'candidate_doc_num' => $existingInvoice['DocNum'] ?? null,
+                        'candidate_u_omo' => $existingInvoice['U_omo'] ?? null,
+                        'candidate_u_zid_id' => $existingInvoice['U_ZidId'] ?? null,
+                    ]);
                 }
             }
 
@@ -286,7 +296,7 @@ trait HandlesSapPurchaseAndProducts
         $escapedField = str_replace("'", "''", $field);
         $escapedValue = str_replace("'", "''", $value);
         $filter = rawurlencode("{$escapedField} eq '{$escapedValue}'");
-        $select = 'DocEntry,DocNum,CardCode,DocDate,DocTotal,DocStatus,ReserveInvoice,NumAtCard,Comments';
+        $select = 'DocEntry,DocNum,CardCode,DocDate,DocTotal,DocStatus,ReserveInvoice,NumAtCard,Comments,U_omo,U_ZidId,U_SallaOrderId';
         $response = $this->get("/Invoices?\$select={$select}&\$filter={$filter}&\$orderby=DocEntry desc&\$top=1");
 
         if (!$response->successful()) {
@@ -315,7 +325,7 @@ trait HandlesSapPurchaseAndProducts
             return null;
         }
 
-        $select = 'DocEntry,DocNum,CardCode,DocDate,DocTotal,DocStatus,ReserveInvoice,NumAtCard,Comments';
+        $select = 'DocEntry,DocNum,CardCode,DocDate,DocTotal,DocStatus,ReserveInvoice,NumAtCard,Comments,U_omo,U_ZidId,U_SallaOrderId';
         $escapedValue = str_replace("'", "''", $reference);
         $filters = ["NumAtCard eq '{$escapedValue}'"];
 
@@ -357,7 +367,7 @@ trait HandlesSapPurchaseAndProducts
 
         $escapedValue = str_replace("'", "''", $reference);
         $filter = rawurlencode("contains(Comments,'{$escapedValue}')");
-        $select = 'DocEntry,DocNum,CardCode,DocDate,DocTotal,DocStatus,ReserveInvoice,NumAtCard,Comments';
+        $select = 'DocEntry,DocNum,CardCode,DocDate,DocTotal,DocStatus,ReserveInvoice,NumAtCard,Comments,U_omo,U_ZidId,U_SallaOrderId';
         $response = $this->get("/Invoices?\$select={$select}&\$filter={$filter}&\$orderby=DocEntry desc&\$top=1");
 
         if (!$response->successful()) {
@@ -456,6 +466,95 @@ trait HandlesSapPurchaseAndProducts
         }
 
         $invoice['ignored'] = false;
+        return $invoice;
+    }
+
+    /**
+     * Verify that an AR invoice fetched from SAP actually belongs to the Omniful
+     * order we are processing. Protects against SAP numbering-series rollbacks
+     * where DocNum X was already used for a *different* order and SAP raises
+     * "(10002) X AR invoice already exists" for the new order we tried to create.
+     */
+    private function arInvoiceMatchesOmnifulOrder(array $invoice, string $externalId, array $data = []): bool
+    {
+        $externalId = trim($externalId);
+        if ($externalId === '') {
+            return false;
+        }
+
+        $candidates = [
+            (string) ($invoice['U_omo'] ?? ''),
+            (string) ($invoice['U_ZidId'] ?? ''),
+            (string) ($invoice['U_SallaOrderId'] ?? ''),
+            (string) ($invoice['NumAtCard'] ?? ''),
+        ];
+        foreach ($candidates as $candidate) {
+            if (trim($candidate) === '') {
+                continue;
+            }
+            if (trim($candidate) === $externalId) {
+                return true;
+            }
+        }
+
+        $comments = trim((string) ($invoice['Comments'] ?? ''));
+        if ($comments !== '' && str_contains($comments, $externalId)) {
+            return true;
+        }
+
+        // Optional: also accept Omniful internal id when the channel order
+        // reference differs from the externalId we received.
+        $orderReference = $this->resolveOmnifulOrderReferenceForSap($data, $externalId);
+        if ($orderReference !== '' && $orderReference !== $externalId) {
+            foreach ($candidates as $candidate) {
+                if (trim($candidate) === $orderReference) {
+                    return true;
+                }
+            }
+            if ($comments !== '' && str_contains($comments, $orderReference)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Public recovery helper used when SAP rejects a create POST with
+     * "AR invoice already exists". Pulls the conflicting invoice from SAP and
+     * validates it belongs to the given Omniful order before returning it.
+     * Returns null if no matching invoice can be located, or if the conflicting
+     * DocNum belongs to a *different* order (true SAP series counter conflict).
+     */
+    public function recoverArReserveInvoiceForOmnifulOrder(string $responseBody, array $data, string $externalId): ?array
+    {
+        $invoice = $this->findExistingArReserveInvoiceForOmnifulOrder([], $data, $externalId, $responseBody);
+        if (!is_array($invoice) || empty($invoice['DocEntry'])) {
+            Log::warning('SAP AR invoice duplicate-error recovery found no candidate', [
+                'external_id' => $externalId,
+                'response_body' => $responseBody,
+            ]);
+            return null;
+        }
+
+        if (!$this->arInvoiceMatchesOmnifulOrder($invoice, $externalId, $data)) {
+            Log::error('SAP AR invoice duplicate-error recovery found a foreign invoice — possible SAP numbering series rollback', [
+                'external_id' => $externalId,
+                'response_body' => $responseBody,
+                'candidate_doc_entry' => $invoice['DocEntry'] ?? null,
+                'candidate_doc_num' => $invoice['DocNum'] ?? null,
+                'candidate_u_omo' => $invoice['U_omo'] ?? null,
+                'candidate_u_zid_id' => $invoice['U_ZidId'] ?? null,
+                'candidate_num_at_card' => $invoice['NumAtCard'] ?? null,
+            ]);
+            return null;
+        }
+
+        $invoice['ignored'] = false;
+        $invoice['reused_existing'] = true;
+        $invoice['recovered_after_duplicate_error'] = true;
+        $invoice['sap_duplicate_error'] = $responseBody;
+
         return $invoice;
     }
 
