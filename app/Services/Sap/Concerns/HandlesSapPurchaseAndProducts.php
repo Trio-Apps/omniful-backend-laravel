@@ -1375,12 +1375,48 @@ trait HandlesSapPurchaseAndProducts
         $body = $this->appendOmnifulDocumentUdfs($body, $data, $externalId);
         $body = $this->appendFreightToMarketingDocument($body, $data);
 
+        // Idempotency: when a previous worker already shipped this order in
+        // SAP but failed to persist sap_delivery_doc_entry locally (or the
+        // local DB was reset), the AR reserve invoice is closed and a fresh
+        // POST will fail with -5002 "base document already closed". Pull the
+        // existing delivery first so we rebind instead of double-shipping.
+        if ($externalId !== '') {
+            $existingDelivery = $this->findExistingDeliveryForOmnifulOrder($data, $externalId, $orderDocEntry);
+            if (is_array($existingDelivery)
+                && !empty($existingDelivery['DocEntry'])
+                && $this->deliveryMatchesOmnifulOrder($existingDelivery, $externalId, $data, $orderDocEntry)) {
+                $existingDelivery['ignored'] = false;
+                $existingDelivery['reused_existing'] = true;
+                $existingDelivery['request_body'] = $body;
+                return $existingDelivery;
+            }
+        }
+
         $response = $this->post('/DeliveryNotes', $body);
         if (!$response->successful()) {
+            $responseBody = (string) $response->body();
+
+            // "Base document already closed" / "Cannot create more than ..." →
+            // the AR reserve invoice has been delivered already. Rebind the
+            // existing delivery rather than escalating to failed.
+            if ($externalId !== '' && $this->isSapDeliveryBaseAlreadyClosedError($responseBody)) {
+                $existingDelivery = $this->findExistingDeliveryForOmnifulOrder($data, $externalId, $orderDocEntry);
+                if (is_array($existingDelivery)
+                    && !empty($existingDelivery['DocEntry'])
+                    && $this->deliveryMatchesOmnifulOrder($existingDelivery, $externalId, $data, $orderDocEntry)) {
+                    $existingDelivery['ignored'] = false;
+                    $existingDelivery['reused_existing'] = true;
+                    $existingDelivery['recovered_after_duplicate_error'] = true;
+                    $existingDelivery['sap_duplicate_error'] = $responseBody;
+                    $existingDelivery['request_body'] = $body;
+                    return $existingDelivery;
+                }
+            }
+
             throw new SapRequestException(
-                'SAP delivery create failed: ' . $response->status() . ' ' . $response->body(),
+                'SAP delivery create failed: ' . $response->status() . ' ' . $responseBody,
                 $body,
-                (string) $response->body(),
+                $responseBody,
                 $response->status(),
             );
         }
@@ -1390,6 +1426,122 @@ trait HandlesSapPurchaseAndProducts
         $payload['request_body'] = $body;
 
         return $payload;
+    }
+
+    /**
+     * Look up an existing Delivery Note in SAP that belongs to this Omniful
+     * order. Searches by UDFs (U_omo / U_ZidId / U_SallaOrderId), then by
+     * BaseEntry on document lines (delivery referencing the AR Reserve
+     * Invoice DocEntry). Used both for pre-POST idempotency and to recover
+     * from the "-5002 base document already closed" error path.
+     */
+    public function findExistingDeliveryForOmnifulOrder(array $data, string $externalId, int $invoiceDocEntry = 0): ?array
+    {
+        $externalId = trim($externalId);
+
+        $fields = array_values(array_unique(array_filter([
+            trim((string) config('omniful.order_sync.order_number_udf_field', 'U_omo')),
+            'U_ZidId',
+            'U_SallaOrderId',
+        ], fn ($field) => is_string($field) && trim($field) !== '')));
+
+        if ($externalId !== '') {
+            $escapedValue = str_replace("'", "''", $externalId);
+            foreach ($fields as $field) {
+                $escapedField = str_replace("'", "''", $field);
+                $filter = rawurlencode("{$escapedField} eq '{$escapedValue}'");
+                // No $select: missing UDFs on this tenant would collapse the
+                // query. Fetch all fields and read them defensively.
+                $response = $this->get("/DeliveryNotes?\$filter={$filter}&\$orderby=DocEntry desc&\$top=1");
+                if (!$response->successful()) {
+                    Log::warning('SAP delivery UDF lookup failed', [
+                        'field' => $field,
+                        'status' => $response->status(),
+                        'body' => $response->body(),
+                    ]);
+                    continue;
+                }
+                $rows = (array) ($response->json('value') ?? []);
+                $delivery = $rows[0] ?? null;
+                if (is_array($delivery) && !empty($delivery['DocEntry'])) {
+                    return $delivery;
+                }
+            }
+        }
+
+        // Fallback: deliveries from an AR Reserve Invoice carry
+        // DocumentLines[].BaseType=13 + BaseEntry=<invoiceDocEntry>. Hit
+        // the OData filter on the navigation property.
+        if ($invoiceDocEntry > 0) {
+            $filter = rawurlencode("DocumentLines/any(d: d/BaseType eq 13 and d/BaseEntry eq {$invoiceDocEntry})");
+            $response = $this->get("/DeliveryNotes?\$filter={$filter}&\$orderby=DocEntry desc&\$top=1");
+            if ($response->successful()) {
+                $rows = (array) ($response->json('value') ?? []);
+                $delivery = $rows[0] ?? null;
+                if (is_array($delivery) && !empty($delivery['DocEntry'])) {
+                    return $delivery;
+                }
+            } else {
+                Log::warning('SAP delivery BaseEntry lookup failed', [
+                    'invoice_doc_entry' => $invoiceDocEntry,
+                    'status' => $response->status(),
+                    'body' => $response->body(),
+                ]);
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Verify that an existing Delivery Note in SAP actually belongs to this
+     * Omniful order. Matches against UDFs first, then against BaseEntry on
+     * the document lines (the delivery must reference our AR reserve invoice
+     * DocEntry). Guards against rebinding a foreign delivery onto our order.
+     */
+    private function deliveryMatchesOmnifulOrder(array $delivery, string $externalId, array $data, int $invoiceDocEntry = 0): bool
+    {
+        $externalId = trim($externalId);
+
+        if ($externalId !== '') {
+            foreach (['U_omo', 'U_ZidId', 'U_SallaOrderId'] as $field) {
+                if (trim((string) ($delivery[$field] ?? '')) === $externalId) {
+                    return true;
+                }
+            }
+
+            $numAtCard = trim((string) ($delivery['NumAtCard'] ?? ''));
+            if ($numAtCard === $externalId) {
+                return true;
+            }
+
+            $comments = trim((string) ($delivery['Comments'] ?? ''));
+            if ($comments !== '' && str_contains($comments, $externalId)) {
+                return true;
+            }
+        }
+
+        if ($invoiceDocEntry > 0) {
+            foreach ((array) ($delivery['DocumentLines'] ?? []) as $line) {
+                if ((int) ($line['BaseType'] ?? 0) === 13
+                    && (int) ($line['BaseEntry'] ?? 0) === $invoiceDocEntry) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private function isSapDeliveryBaseAlreadyClosedError(string $body): bool
+    {
+        $normalized = strtolower($body);
+
+        return str_contains($normalized, 'base document') && str_contains($normalized, 'closed')
+            || str_contains($normalized, 'cannot create document') && str_contains($normalized, 'closed')
+            || str_contains($normalized, 'one of the base documents has already been closed')
+            || str_contains($normalized, '"-5002"')
+            || str_contains($normalized, ': -5002,');
     }
 
     private function buildDeliveryLinesFromRequestedItems(array $salesDoc, array $orderItems, int $orderDocEntry, string $hubCode): array

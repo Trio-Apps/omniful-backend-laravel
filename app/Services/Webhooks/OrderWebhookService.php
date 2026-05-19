@@ -1162,6 +1162,36 @@ class OrderWebhookService
                 'order_items' => (array) data_get($data, 'order_items', []),
             ]);
         } catch (SapRequestException $e) {
+            // Last-chance recovery for "-5002 base document already closed" and
+            // similar duplicate signals — try to rebind the existing delivery
+            // rather than escalating to failed.
+            $rescued = null;
+            if (method_exists($client, 'findExistingDeliveryForOmnifulOrder')) {
+                try {
+                    $rescued = $client->findExistingDeliveryForOmnifulOrder(
+                        $data,
+                        (string) ($order->external_id ?? ''),
+                        $invoiceDocEntry,
+                    );
+                } catch (\Throwable $rescueError) {
+                    $rescued = null;
+                }
+            }
+
+            if (is_array($rescued) && !empty($rescued['DocEntry'])) {
+                $order->sap_delivery_status = 'created';
+                $order->sap_delivery_doc_entry = (string) ($rescued['DocEntry'] ?? '');
+                $order->sap_delivery_doc_num = (string) ($rescued['DocNum'] ?? '');
+                $order->sap_delivery_error = null;
+                $rescued['ignored'] = false;
+                $rescued['reused_existing'] = true;
+                $rescued['recovered_after_duplicate_error'] = true;
+                $order->sap_delivery_response = $rescued;
+                $order->save();
+
+                return;
+            }
+
             $order->sap_delivery_status = 'failed';
             $order->sap_delivery_error = $e->getMessage();
             $order->sap_delivery_response = [
