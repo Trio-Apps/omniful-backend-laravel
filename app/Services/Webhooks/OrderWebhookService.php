@@ -618,16 +618,78 @@ class OrderWebhookService
                 'store_name' => data_get($data, 'store_name'),
             ]);
         } catch (SapRequestException $e) {
-            $order->sap_payment_status = 'failed';
-            $order->sap_payment_error = $e->getMessage();
-            $order->sap_payment_response = [
-                'ignored' => false,
-                'request_body' => $e->requestBody,
-                'error_response_body' => $e->responseBody,
-                'status_code' => $e->statusCode,
-            ];
-            $order->save();
-            throw $e;
+            // Classify "Invoice is already closed or blocked" and friends as a
+            // recoverable duplicate-payment scenario: rebind if a matching
+            // payment is found in SAP, block (not fail) if it belongs to a
+            // different order, fail only when nothing can be located.
+            $inspection = null;
+            if ($e->responseBody !== '' && method_exists($client, 'inspectIncomingPaymentDuplicate')) {
+                try {
+                    $inspection = $client->inspectIncomingPaymentDuplicate(
+                        (string) $e->responseBody,
+                        (int) $invoiceDocEntry,
+                        $data,
+                        (string) ($order->external_id ?? ''),
+                    );
+                } catch (\Throwable $inspectError) {
+                    $inspection = null;
+                }
+            }
+
+            $ownership = (string) ($inspection['ownership'] ?? 'none');
+            $candidatePayment = is_array($inspection['payment'] ?? null) ? $inspection['payment'] : null;
+
+            if ($ownership === 'match' && is_array($candidatePayment) && !empty($candidatePayment['DocEntry'])) {
+                $candidatePayment['ignored'] = false;
+                $candidatePayment['reused_existing'] = true;
+                $candidatePayment['recovered_after_duplicate_error'] = true;
+                $result = $candidatePayment;
+            } elseif ($ownership === 'foreign' && is_array($candidatePayment)) {
+                $order->sap_payment_status = 'blocked';
+                $order->sap_payment_error = sprintf(
+                    'SAP incoming payment conflict: payment DocEntry %s on invoice %s belongs to a different order. Manual review required in SAP.',
+                    (string) ($candidatePayment['DocEntry'] ?? '?'),
+                    (string) $invoiceDocEntry,
+                );
+                $order->sap_payment_response = [
+                    'ignored' => false,
+                    'request_body' => $e->requestBody,
+                    'error_response_body' => $e->responseBody,
+                    'status_code' => $e->statusCode,
+                    'duplicate_inspection' => $inspection,
+                ];
+                $order->save();
+                return;
+            } elseif ($ownership === 'orphan' && is_array($candidatePayment)) {
+                $order->sap_payment_status = 'blocked';
+                $order->sap_payment_error = sprintf(
+                    'SAP invoice %s is already closed by payment DocEntry %s but that payment has no UDF/Remarks ownership markers. Review in SAP and set U_omo=%s if it belongs to this order, then retry.',
+                    (string) $invoiceDocEntry,
+                    (string) ($candidatePayment['DocEntry'] ?? '?'),
+                    (string) ($order->external_id ?? ''),
+                );
+                $order->sap_payment_response = [
+                    'ignored' => false,
+                    'request_body' => $e->requestBody,
+                    'error_response_body' => $e->responseBody,
+                    'status_code' => $e->statusCode,
+                    'duplicate_inspection' => $inspection,
+                ];
+                $order->save();
+                return;
+            } else {
+                $order->sap_payment_status = 'failed';
+                $order->sap_payment_error = $e->getMessage();
+                $order->sap_payment_response = [
+                    'ignored' => false,
+                    'request_body' => $e->requestBody,
+                    'error_response_body' => $e->responseBody,
+                    'status_code' => $e->statusCode,
+                    'duplicate_inspection' => $inspection,
+                ];
+                $order->save();
+                throw $e;
+            }
         }
 
         if (($result['ignored'] ?? false) === true) {

@@ -731,12 +731,47 @@ trait HandlesSapPurchaseAndProducts
             $body['TransferSum'] = $sumApplied;
         }
 
+        $externalId = trim((string) ($data['external_id'] ?? $data['reference'] ?? ''));
+
+        // Idempotency: before POST, look in SAP for an existing incoming payment
+        // owned by this Omniful order. Rescues retries where an earlier worker
+        // posted the payment successfully but failed to persist DocEntry locally.
+        if ($externalId !== '') {
+            $existingPayment = $this->findExistingIncomingPaymentForOmnifulOrder($data, $externalId, $invoiceDocEntry);
+            if (is_array($existingPayment) && !empty($existingPayment['DocEntry'])
+                && $this->incomingPaymentMatchesOmnifulOrder($existingPayment, $externalId, $data)) {
+                $existingPayment['ignored'] = false;
+                $existingPayment['reused_existing'] = true;
+                $existingPayment['request_body'] = $body;
+                return $existingPayment;
+            }
+        }
+
         $response = $this->post('/IncomingPayments', $body);
         if (!$response->successful()) {
+            $responseBody = (string) $response->body();
+
+            // "Invoice is already closed or blocked" / generic duplicate signal —
+            // try to recover the matching payment from SAP and bind it locally
+            // instead of failing the order outright.
+            if ($externalId !== '' && $this->isSapIncomingPaymentInvoiceClosedError($responseBody)) {
+                $inspection = $this->inspectIncomingPaymentDuplicate($responseBody, $invoiceDocEntry, $data, $externalId);
+                $candidate = $inspection['payment'] ?? null;
+                if (($inspection['ownership'] ?? '') === 'match'
+                    && is_array($candidate) && !empty($candidate['DocEntry'])) {
+                    $candidate['ignored'] = false;
+                    $candidate['reused_existing'] = true;
+                    $candidate['recovered_after_duplicate_error'] = true;
+                    $candidate['sap_duplicate_error'] = $responseBody;
+                    $candidate['request_body'] = $body;
+                    return $candidate;
+                }
+            }
+
             throw new SapRequestException(
                 'SAP incoming payment create failed: ' . $response->status() . ' ' . $response->body(),
                 $body,
-                (string) $response->body(),
+                $responseBody,
                 $response->status(),
             );
         }
@@ -746,6 +781,171 @@ trait HandlesSapPurchaseAndProducts
         $payload['request_body'] = $body;
 
         return $payload;
+    }
+
+    /**
+     * Search SAP for an Incoming Payment tied to the given Omniful order, by
+     * UDFs first (U_omo / U_ZidId / U_SallaOrderId), then by Remarks. Used to
+     * rebind successful-but-unsaved payments and to recover from "Invoice is
+     * already closed or blocked" errors.
+     */
+    public function findExistingIncomingPaymentForOmnifulOrder(array $data, string $externalId, int $invoiceDocEntry = 0): ?array
+    {
+        $externalId = trim($externalId);
+        if ($externalId === '') {
+            return null;
+        }
+
+        $escapedValue = str_replace("'", "''", $externalId);
+        $fields = array_values(array_unique(array_filter([
+            trim((string) config('omniful.order_sync.order_number_udf_field', 'U_omo')),
+            'U_ZidId',
+            'U_SallaOrderId',
+        ], fn ($field) => is_string($field) && trim($field) !== '')));
+
+        foreach ($fields as $field) {
+            $escapedField = str_replace("'", "''", $field);
+            $filter = rawurlencode("{$escapedField} eq '{$escapedValue}' and DocType eq 'rCustomer'");
+            // No $select: SAP UDFs may not exist on this tenant; fetch all fields.
+            $response = $this->get("/IncomingPayments?\$filter={$filter}&\$orderby=DocEntry desc&\$top=1");
+
+            if (!$response->successful()) {
+                Log::warning('SAP incoming payment UDF lookup failed', [
+                    'field' => $field,
+                    'status' => $response->status(),
+                    'body' => $response->body(),
+                ]);
+                continue;
+            }
+
+            $rows = (array) ($response->json('value') ?? []);
+            $payment = $rows[0] ?? null;
+            if (is_array($payment) && !empty($payment['DocEntry'])) {
+                return $payment;
+            }
+        }
+
+        // Fallback: search Remarks for the standard "order=<externalId>" tag.
+        $remarksFilter = rawurlencode("contains(Remarks,'order={$escapedValue}') and DocType eq 'rCustomer'");
+        $response = $this->get("/IncomingPayments?\$filter={$remarksFilter}&\$orderby=DocEntry desc&\$top=1");
+        if ($response->successful()) {
+            $rows = (array) ($response->json('value') ?? []);
+            $payment = $rows[0] ?? null;
+            if (is_array($payment) && !empty($payment['DocEntry'])) {
+                return $payment;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Classify a SAP "Invoice is already closed or blocked" (or similar)
+     * incoming payment error: match / orphan / foreign / none.
+     */
+    public function inspectIncomingPaymentDuplicate(string $responseBody, int $invoiceDocEntry, array $data, string $externalId): array
+    {
+        $payment = $this->findExistingIncomingPaymentForOmnifulOrder($data, $externalId, $invoiceDocEntry);
+        if (!is_array($payment) || empty($payment['DocEntry'])) {
+            Log::warning('SAP incoming payment duplicate-error recovery found no candidate', [
+                'external_id' => $externalId,
+                'invoice_doc_entry' => $invoiceDocEntry,
+                'response_body' => $responseBody,
+            ]);
+
+            return [
+                'payment' => null,
+                'ownership' => 'none',
+                'reason' => 'No incoming payment located in SAP for this Omniful order',
+            ];
+        }
+
+        if ($this->incomingPaymentMatchesOmnifulOrder($payment, $externalId, $data)) {
+            return [
+                'payment' => $payment,
+                'ownership' => 'match',
+                'reason' => 'Incoming payment ownership matches the Omniful order',
+            ];
+        }
+
+        if ($this->incomingPaymentHasNoOwnershipMarkers($payment)) {
+            Log::warning('SAP incoming payment duplicate-error recovery found an orphan payment', [
+                'external_id' => $externalId,
+                'candidate_doc_entry' => $payment['DocEntry'] ?? null,
+                'candidate_doc_num' => $payment['DocNum'] ?? null,
+            ]);
+
+            return [
+                'payment' => $payment,
+                'ownership' => 'orphan',
+                'reason' => 'Incoming payment has no UDF/Remarks ownership markers',
+            ];
+        }
+
+        Log::error('SAP incoming payment duplicate-error recovery found a foreign payment', [
+            'external_id' => $externalId,
+            'candidate_doc_entry' => $payment['DocEntry'] ?? null,
+            'candidate_doc_num' => $payment['DocNum'] ?? null,
+            'candidate_u_omo' => $payment['U_omo'] ?? null,
+            'candidate_u_zid_id' => $payment['U_ZidId'] ?? null,
+            'candidate_remarks' => $payment['Remarks'] ?? null,
+        ]);
+
+        return [
+            'payment' => $payment,
+            'ownership' => 'foreign',
+            'reason' => 'Conflicting incoming payment belongs to a different order',
+        ];
+    }
+
+    private function isSapIncomingPaymentInvoiceClosedError(string $body): bool
+    {
+        $normalized = strtolower($body);
+
+        return str_contains($normalized, 'already closed or blocked')
+            || str_contains($normalized, 'invoice is already closed')
+            || str_contains($normalized, 'invoice is already blocked')
+            || str_contains($normalized, 'is closed or cancelled');
+    }
+
+    private function incomingPaymentMatchesOmnifulOrder(array $payment, string $externalId, array $data = []): bool
+    {
+        $externalId = trim($externalId);
+        if ($externalId === '') {
+            return false;
+        }
+
+        foreach (['U_omo', 'U_ZidId', 'U_SallaOrderId'] as $field) {
+            if (trim((string) ($payment[$field] ?? '')) === $externalId) {
+                return true;
+            }
+        }
+
+        $remarks = trim((string) ($payment['Remarks'] ?? ''));
+        if ($remarks !== '' && (
+            str_contains($remarks, 'order=' . $externalId)
+            || str_contains($remarks, $externalId)
+        )) {
+            return true;
+        }
+
+        return false;
+    }
+
+    private function incomingPaymentHasNoOwnershipMarkers(array $payment): bool
+    {
+        foreach (['U_omo', 'U_ZidId', 'U_SallaOrderId'] as $field) {
+            if (trim((string) ($payment[$field] ?? '')) !== '') {
+                return false;
+            }
+        }
+
+        $remarks = trim((string) ($payment['Remarks'] ?? ''));
+        if ($remarks === '') {
+            return true;
+        }
+
+        return !preg_match('/order\s*=\s*\S+/i', $remarks);
     }
 
     private function buildIncomingPaymentCreditCardLine(string $paymentMethod, string $configuredAccount, array $data): ?array
