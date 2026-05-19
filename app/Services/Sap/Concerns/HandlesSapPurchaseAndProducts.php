@@ -100,10 +100,15 @@ trait HandlesSapPurchaseAndProducts
                 'request_body' => null,
             ];
         }
-        $documentDiscountPercent = $this->resolveOrderDocumentDiscountPercent($data, $lines);
-        if ($documentDiscountPercent <= 0) {
-            $lines = $this->rebalanceOrderLinesForInvoiceTotals($lines, $data, $lineTaxPercents);
-        }
+        // Always rebalance lines to the target merchandise subtotal. Previously
+        // we computed a DiscountPercent and let SAP redistribute; that produced
+        // 4-decimal totals (e.g. 107.5916 SAR) that drift from Omniful's
+        // 2-decimal totals (107.59) and leave the AR Reserve Invoice with a
+        // tiny non-zero Balance Due even after payment. Pre-rebalancing the
+        // lines so the merchandise subtotal already equals the target lets
+        // SAP compute the document at the precision we want.
+        $lines = $this->rebalanceOrderLinesForInvoiceTotals($lines, $data, $lineTaxPercents);
+        $documentDiscountPercent = 0.0;
 
         $lines = $this->normalizeSapDocumentLines(
             $this->applyDefaultCostCentersToLines($lines)
@@ -132,6 +137,24 @@ trait HandlesSapPurchaseAndProducts
 
         if ($currency) {
             $body['DocCurrency'] = $currency;
+
+            // When the order is in a foreign currency, pin the exchange rate
+            // from Omniful's payload so the AR reserve invoice and the
+            // downstream incoming payment both use the same rate. Without an
+            // explicit DocRate SAP picks the system rate at posting time and
+            // a small drift between the two postings produces the
+            // "Unbalanced Transaction" (-5012) error.
+            $orderRate = data_get($data, 'invoice.exchange_rate.rate');
+            if (is_numeric($orderRate) && (float) $orderRate > 0) {
+                $localCurrency = trim((string) data_get($data, 'invoice.exchange_rate.store_currency', ''));
+                $orderCurrency = trim((string) data_get($data, 'invoice.exchange_rate.order_currency', $currency));
+                // Only set DocRate when the rate maps from order currency to a
+                // *different* local currency. SAP rejects DocRate when the
+                // document and company currencies match.
+                if ($localCurrency !== '' && strtoupper($localCurrency) !== strtoupper($orderCurrency)) {
+                    $body['DocRate'] = (float) $orderRate;
+                }
+            }
         }
 
         $body = $this->appendOmnifulDocumentUdfs($body, $data, $externalId);
@@ -720,6 +743,23 @@ trait HandlesSapPurchaseAndProducts
             ],
             'Remarks' => $remarks,
         ];
+
+        // CRITICAL for multi-currency: when the invoice was posted in a foreign
+        // currency (e.g. order priced in AED while the SAP company is SAR),
+        // SAP defaults the payment's DocCurrency to the local currency unless
+        // we set it explicitly. That makes SumApplied 139.46 mean 139.46 SAR
+        // applied to an invoice worth 139.46 AED ~= 142.50 SAR — producing the
+        // "Unbalanced Transaction" (-5012) error. Inherit the invoice's
+        // DocCurrency / DocRate so the payment lands at the exact same
+        // local-currency amount the invoice reserved.
+        $invoiceCurrency = trim((string) ($salesDoc['DocCurrency'] ?? ''));
+        $invoiceRate = is_numeric($salesDoc['DocRate'] ?? null) ? (float) $salesDoc['DocRate'] : 0.0;
+        if ($invoiceCurrency !== '') {
+            $body['DocCurrency'] = $invoiceCurrency;
+        }
+        if ($invoiceRate > 0) {
+            $body['DocRate'] = $invoiceRate;
+        }
 
         $body = $this->appendOmnifulDocumentUdfs($body, $data, $reference);
 
@@ -3726,7 +3766,32 @@ trait HandlesSapPurchaseAndProducts
             return 0.0;
         }
 
-        // Freight is sent as the full charge amount. SAP calculates tax from VatGroup.
+        // SAP recomputes tax on the freight expense line from VatGroup, so we
+        // must hand SAP the *net* freight (pre-tax). Otherwise SAP adds VAT on
+        // top of an already gross figure and the AR reserve invoice's grand
+        // total exceeds Omniful's order total — preventing the Incoming
+        // Payment from settling the invoice cleanly.
+        //
+        // Strategy (point 6 of the BRS):
+        // - If Omniful already reports a shipping tax amount, subtract it.
+        // - Else if shipping is flagged tax_inclusive, divide by (1 + rate).
+        // - Else (freight is already net) return the amount as-is.
+        $shippingTax = data_get($data, 'invoice.shipping_tax');
+        if (is_numeric($shippingTax) && (float) $shippingTax > 0) {
+            return $this->roundSapAmount(max($grossAmount - (float) $shippingTax, 0.0));
+        }
+
+        $taxInclusive = filter_var(
+            data_get($data, 'invoice.shipping_tax_inclusive', false),
+            FILTER_VALIDATE_BOOL,
+        );
+        if ($taxInclusive) {
+            $taxPercent = $this->extractOrderFreightTaxPercent($data);
+            if ($taxPercent > 0) {
+                return $this->roundSapAmount($grossAmount / (1 + ($taxPercent / 100)));
+            }
+        }
+
         return $this->roundSapAmount($grossAmount);
     }
 
