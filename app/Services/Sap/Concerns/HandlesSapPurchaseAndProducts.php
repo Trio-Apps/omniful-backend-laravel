@@ -1271,7 +1271,7 @@ trait HandlesSapPurchaseAndProducts
         // Idempotency: look for an existing card-fee journal entry first so a
         // crash between POST and local save does not produce a duplicate.
         $existingJournal = $this->findExistingCardFeeJournalForOrder($reference, $journalReference);
-        if (is_array($existingJournal) && !empty($existingJournal['TransId'])) {
+        if ($this->journalHasIdentifier($existingJournal)) {
             $existingJournal['ignored'] = false;
             $existingJournal['reused_existing'] = true;
             $existingJournal['request_body'] = $body;
@@ -1285,7 +1285,7 @@ trait HandlesSapPurchaseAndProducts
                 // Resolve the actual TransId/Number from SAP rather than storing
                 // the literal "already_integrated" string in the local DB.
                 $recovered = $this->findExistingCardFeeJournalForOrder($reference, $journalReference);
-                if (is_array($recovered) && !empty($recovered['TransId'])) {
+                if ($this->journalHasIdentifier($recovered)) {
                     $recovered['ignored'] = false;
                     $recovered['already_integrated'] = true;
                     $recovered['reused_existing'] = true;
@@ -1323,7 +1323,7 @@ trait HandlesSapPurchaseAndProducts
             );
         }
 
-        $payload = $response->json() ?? [];
+        $payload = $this->normalizeFoundJournalEntry((array) ($response->json() ?? []));
         $payload['ignored'] = false;
         $payload['request_body'] = $body;
 
@@ -1344,6 +1344,55 @@ trait HandlesSapPurchaseAndProducts
      * the AR invoice / payment / delivery). Tagging Ref2 with the JE purpose
      * keeps each integration JE unique while remaining searchable.
      */
+    /**
+     * A located journal entry is valid if SAP returned any of its identifier
+     * fields. The Service Layer JournalEntries entity keys on JdtNum; TransId
+     * is the internal OJDT column and may or may not be projected. Accept any
+     * of them so a found JE is never discarded just because one field name
+     * differs across SAP versions.
+     */
+    private function journalHasIdentifier(mixed $journal): bool
+    {
+        if (!is_array($journal)) {
+            return false;
+        }
+
+        foreach (['TransId', 'JdtNum', 'Number'] as $key) {
+            if (isset($journal[$key]) && trim((string) $journal[$key]) !== '') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Normalize a located journal entry so downstream code that reads
+     * TransId / Number always has a value, regardless of which identifier
+     * field the Service Layer returned.
+     */
+    private function normalizeFoundJournalEntry(array $journal): array
+    {
+        $id = null;
+        foreach (['TransId', 'JdtNum', 'Number'] as $key) {
+            if (isset($journal[$key]) && trim((string) $journal[$key]) !== '') {
+                $id = (string) $journal[$key];
+                break;
+            }
+        }
+
+        if ($id !== null) {
+            if (!isset($journal['TransId']) || trim((string) $journal['TransId']) === '') {
+                $journal['TransId'] = $id;
+            }
+            if (!isset($journal['Number']) || trim((string) $journal['Number']) === '') {
+                $journal['Number'] = $journal['JdtNum'] ?? $id;
+            }
+        }
+
+        return $journal;
+    }
+
     private function buildJournalRef2(string $tag, string $reference): string
     {
         $reference = trim($reference);
@@ -1383,7 +1432,12 @@ trait HandlesSapPurchaseAndProducts
             $filter = rawurlencode($filterExpression);
             // No $select: tenants may extend JournalEntries with UDFs that fail
             // to project together; fetch the full record instead.
-            $response = $this->get("/JournalEntries?\$filter={$filter}&\$orderby=TransId desc&\$top=1");
+            // Order by JdtNum (the Service Layer key) — "TransId" is the
+            // internal OJDT column and is NOT a valid Service Layer orderby
+            // property, so $orderby=TransId would 400 the whole query and
+            // make every lookup fall through to null (the JE then shows
+            // "ignored" even though it exists).
+            $response = $this->get("/JournalEntries?\$filter={$filter}&\$orderby=JdtNum desc&\$top=1");
             if (!$response->successful()) {
                 Log::warning('SAP card-fee journal lookup failed', [
                     'reference' => $reference,
@@ -1396,11 +1450,8 @@ trait HandlesSapPurchaseAndProducts
 
             $rows = (array) ($response->json('value') ?? []);
             $journal = $rows[0] ?? null;
-            if (is_array($journal) && !empty($journal['TransId'])) {
-                if (!isset($journal['Number']) && isset($journal['JdtNum'])) {
-                    $journal['Number'] = $journal['JdtNum'];
-                }
-                return $journal;
+            if ($this->journalHasIdentifier($journal)) {
+                return $this->normalizeFoundJournalEntry($journal);
             }
         }
 
@@ -1905,7 +1956,7 @@ trait HandlesSapPurchaseAndProducts
             (string) ($delivery['DocNum'] ?? ''),
             $deliveryDocEntry,
         );
-        if (is_array($existingCogsJournal) && !empty($existingCogsJournal['TransId'])) {
+        if ($this->journalHasIdentifier($existingCogsJournal)) {
             $existingCogsJournal['ignored'] = false;
             $existingCogsJournal['reused_existing'] = true;
             $existingCogsJournal['request_body'] = $body;
@@ -1927,7 +1978,7 @@ trait HandlesSapPurchaseAndProducts
                     (string) ($delivery['DocNum'] ?? ''),
                     $deliveryDocEntry,
                 );
-                if (is_array($recovered) && !empty($recovered['TransId'])) {
+                if ($this->journalHasIdentifier($recovered)) {
                     $recovered['ignored'] = false;
                     $recovered['already_integrated'] = true;
                     $recovered['reused_existing'] = true;
@@ -1962,7 +2013,7 @@ trait HandlesSapPurchaseAndProducts
             );
         }
 
-        $payload = $response->json() ?? [];
+        $payload = $this->normalizeFoundJournalEntry((array) ($response->json() ?? []));
         $payload['ignored'] = false;
         $payload['request_body'] = $body;
 
@@ -2004,7 +2055,8 @@ trait HandlesSapPurchaseAndProducts
 
         foreach ($filters as $filterExpression) {
             $filter = rawurlencode($filterExpression);
-            $response = $this->get("/JournalEntries?\$filter={$filter}&\$orderby=TransId desc&\$top=1");
+            // orderby JdtNum (SL key) — TransId is not a valid SL property.
+            $response = $this->get("/JournalEntries?\$filter={$filter}&\$orderby=JdtNum desc&\$top=1");
             if (!$response->successful()) {
                 Log::warning('SAP COGS journal lookup failed', [
                     'filter' => $filterExpression,
@@ -2016,11 +2068,8 @@ trait HandlesSapPurchaseAndProducts
 
             $rows = (array) ($response->json('value') ?? []);
             $journal = $rows[0] ?? null;
-            if (is_array($journal) && !empty($journal['TransId'])) {
-                if (!isset($journal['Number']) && isset($journal['JdtNum'])) {
-                    $journal['Number'] = $journal['JdtNum'];
-                }
-                return $journal;
+            if ($this->journalHasIdentifier($journal)) {
+                return $this->normalizeFoundJournalEntry($journal);
             }
         }
 
