@@ -112,6 +112,19 @@ class IntegrationControlSettings extends Page implements HasForms
                             ->placeholder('1')
                             ->helperText('Used when shipping or delivery fee exists in Omniful payload.'),
                     ]),
+                Section::make('Purchase Order Tax')
+                    ->description('Input VAT codes for Purchase Orders / GRPO. Leave blank to use each SAP Item\'s default purchase tax group. Purchase documents need INPUT VAT codes (e.g. SIV/EIV), not the sales OUTPUT codes above.')
+                    ->schema([
+                        TextInput::make('purchase_tax_code_ksa_taxable')
+                            ->label('KSA Taxable Purchase Tax Code')
+                            ->placeholder('e.g. SIV (leave blank for item default)'),
+                        TextInput::make('purchase_tax_code_ksa_zero')
+                            ->label('KSA Zero Purchase Tax Code')
+                            ->placeholder('e.g. EIV (leave blank for item default)'),
+                        TextInput::make('purchase_tax_code_foreign')
+                            ->label('Foreign Purchase Tax Code')
+                            ->placeholder('e.g. EIV (leave blank for item default)'),
+                    ]),
                 Section::make('Order Journal Entries')
                     ->description('Configure SAP journal entries created after payment and delivery.')
                     ->schema([
@@ -131,6 +144,15 @@ class IntegrationControlSettings extends Page implements HasForms
                             ->numeric()
                             ->placeholder('Example: 2.5')
                             ->helperText('Fallback only when no payment-method fee percent is configured.'),
+                        TextInput::make('order_card_fee_vat_percent')
+                            ->label('Card Fee VAT Percent')
+                            ->numeric()
+                            ->placeholder('15')
+                            ->helperText('VAT charged by the payment gateway on the card fee (ZATCA standard 15%).'),
+                        TextInput::make('order_card_fee_vat_recoverable_account')
+                            ->label('Card Fee Input VAT Account')
+                            ->placeholder('Input VAT recoverable G/L account')
+                            ->helperText('When set, the card-fee journal splits gross into expense + input VAT (3 lines). Leave blank for the legacy 2-line journal.'),
                         Textarea::make('order_card_fee_method_percent_map')
                             ->label('Card Fee by Payment Method')
                             ->rows(8)
@@ -170,10 +192,15 @@ class IntegrationControlSettings extends Page implements HasForms
                 'order_tax_code_ksa_zero' => $state['order_tax_code_ksa_zero'] ?? null,
                 'order_tax_code_foreign' => $state['order_tax_code_foreign'] ?? null,
                 'order_freight_expense_code' => $state['order_freight_expense_code'] ?? null,
+                'purchase_tax_code_ksa_taxable' => $state['purchase_tax_code_ksa_taxable'] ?? null,
+                'purchase_tax_code_ksa_zero' => $state['purchase_tax_code_ksa_zero'] ?? null,
+                'purchase_tax_code_foreign' => $state['purchase_tax_code_foreign'] ?? null,
                 'order_card_fee_journal_enabled' => (bool) ($state['order_card_fee_journal_enabled'] ?? false),
                 'order_card_fee_expense_account' => $state['order_card_fee_expense_account'] ?? null,
                 'order_card_fee_offset_account' => $state['order_card_fee_offset_account'] ?? null,
                 'order_card_fee_percent' => $state['order_card_fee_percent'] ?? null,
+                'order_card_fee_vat_percent' => $state['order_card_fee_vat_percent'] ?? null,
+                'order_card_fee_vat_recoverable_account' => $state['order_card_fee_vat_recoverable_account'] ?? null,
                 'order_card_fee_method_percent_map' => $state['order_card_fee_method_percent_map'] ?? null,
                 'order_cogs_journal_enabled' => (bool) ($state['order_cogs_journal_enabled'] ?? false),
                 'order_cogs_expense_account' => $state['order_cogs_expense_account'] ?? null,
