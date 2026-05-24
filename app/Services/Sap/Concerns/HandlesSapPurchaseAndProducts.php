@@ -1196,13 +1196,20 @@ trait HandlesSapPurchaseAndProducts
             $vatAmount = $this->roundSapAmount($grossAmount - $netAmount);
         }
 
+        // SAP copies the journal LINE Ref2 (JDT1.Ref2) up to the header
+        // OJDT.Ref2, so the line-level Reference2 must also carry the unique
+        // "CARDFEE-<order>" tag — otherwise OJDT.Ref2 ends up as the bare
+        // order id and the SP_TransactionNotification duplicate check trips
+        // against the AR-invoice / payment auto-JEs again.
+        $taggedRef2 = $this->buildJournalRef2('CARDFEE', $reference);
+
         $journalLineSpecs = [
             [
                 'AccountCode' => $expenseAccount,
                 'Debit' => $netAmount,
                 'LineMemo' => $this->truncateSapText($memo, 254),
                 'Reference1' => $journalReference,
-                'Reference2' => $reference,
+                'Reference2' => $taggedRef2,
                 'AdditionalReference' => $this->truncateSapText($reference, 100),
             ],
         ];
@@ -1216,7 +1223,7 @@ trait HandlesSapPurchaseAndProducts
                     254,
                 ),
                 'Reference1' => $journalReference,
-                'Reference2' => $reference,
+                'Reference2' => $taggedRef2,
                 'AdditionalReference' => $this->truncateSapText($reference, 100),
             ];
         }
@@ -1226,7 +1233,7 @@ trait HandlesSapPurchaseAndProducts
             'Credit' => $grossAmount,
             'LineMemo' => $this->truncateSapText($memo, 254),
             'Reference1' => $journalReference,
-            'Reference2' => $reference,
+            'Reference2' => $taggedRef2,
             'AdditionalReference' => $this->truncateSapText($reference, 100),
         ];
 
@@ -1847,13 +1854,20 @@ trait HandlesSapPurchaseAndProducts
         $referenceDate = $this->formatDate((string) (($delivery['DocDate'] ?? null) ?: now()->format('Y-m-d')));
         $memo = trim((string) ($data['memo'] ?? ('COGS journal for Delivery ' . ($delivery['DocNum'] ?? $deliveryDocEntry))));
 
+        // SAP copies the journal LINE Ref2 up to OJDT.Ref2, which the
+        // SP_TransactionNotification duplicate check reads. Use the unique
+        // "COGS-<order>" tag on the lines (not the delivery DocNum, which can
+        // collide with the delivery's own auto-generated JE) so the check
+        // passes.
+        $cogsRef2 = $this->buildJournalRef2('COGS', $reference !== '' ? $reference : (string) ($delivery['DocNum'] ?? $deliveryDocEntry));
+
         $journalLines = $this->applyDefaultCostCentersToJournalLines([
             [
                 'AccountCode' => $expenseAccount,
                 'Debit' => $this->roundSapAmount($amount),
                 'LineMemo' => $this->truncateSapText($memo, 254),
                 'Reference1' => $reference,
-                'Reference2' => (string) ($delivery['DocNum'] ?? ''),
+                'Reference2' => $cogsRef2,
                 'AdditionalReference' => $this->truncateSapText($reference, 100),
             ],
             [
@@ -1861,7 +1875,7 @@ trait HandlesSapPurchaseAndProducts
                 'Credit' => $this->roundSapAmount($amount),
                 'LineMemo' => $this->truncateSapText($memo, 254),
                 'Reference1' => $reference,
-                'Reference2' => (string) ($delivery['DocNum'] ?? ''),
+                'Reference2' => $cogsRef2,
                 'AdditionalReference' => $this->truncateSapText($reference, 100),
             ],
         ], $this->resolveWarehouseCodeFromDocumentLines($delivery));
