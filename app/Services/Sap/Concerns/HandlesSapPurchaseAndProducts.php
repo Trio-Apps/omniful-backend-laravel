@@ -1244,15 +1244,18 @@ trait HandlesSapPurchaseAndProducts
         ];
 
         if ($reference !== '') {
-            // Header Reference MUST be unique per order. Previously this was
-            // the constant "CARD_FEE" tag, which made SAP reject every
-            // card-fee JE after the first with "JE already integrated" (SAP
-            // de-duplicates / blocks repeated header references). Use the
-            // order id for the header reference (unique) and keep the
-            // CARD_FEE tag in Reference3 + the line Reference1 + Memo for
-            // identification and lookup.
+            // The customer's SBO_SP_TransactionNotification blocks any new JE
+            // (object_type 30) whose OJDT.Ref2 already exists on another JE:
+            //   IF count(OJDT where Ref2 = thisRef2 and TransId <> this) > 0
+            //       -> error 1000 'JE already integrated'
+            // The AR Reserve Invoice and Incoming Payment auto-generate their
+            // own OJDT rows carrying Ref2 = the order id, so a card-fee JE
+            // that also used Ref2 = order id collided with them and was
+            // rejected. Make Ref2 globally unique by tagging it with the JE
+            // purpose: "CARDFEE-<order>". Ref1 keeps the bare order id and
+            // Ref3 keeps the CARD_FEE tag for lookups / reporting.
             $body['Reference'] = $reference;
-            $body['Reference2'] = $reference;
+            $body['Reference2'] = $this->buildJournalRef2('CARDFEE', $reference);
             if ($journalReference !== '') {
                 $body['Reference3'] = $journalReference;
             }
@@ -1327,6 +1330,23 @@ trait HandlesSapPurchaseAndProducts
      * with "JE already integrated" — replacing the previous behavior of
      * persisting the literal string "already_integrated" as a journal id.
      */
+    /**
+     * Build a globally-unique OJDT.Ref2 for an integration journal entry.
+     * The customer's transaction-notification SP rejects any JE whose Ref2
+     * collides with an existing JE (including the auto-generated JEs behind
+     * the AR invoice / payment / delivery). Tagging Ref2 with the JE purpose
+     * keeps each integration JE unique while remaining searchable.
+     */
+    private function buildJournalRef2(string $tag, string $reference): string
+    {
+        $reference = trim($reference);
+        if ($reference === '') {
+            return $tag;
+        }
+        // OJDT.Ref2 is 27 chars in SAP B1 — keep the tag short.
+        return mb_substr($tag . '-' . $reference, 0, 27);
+    }
+
     public function findExistingCardFeeJournalForOrder(string $reference, string $journalReference = 'CARD_FEE'): ?array
     {
         $reference = trim($reference);
@@ -1336,14 +1356,15 @@ trait HandlesSapPurchaseAndProducts
 
         $escapedReference = str_replace("'", "''", $reference);
         $escapedJournalReference = str_replace("'", "''", $journalReference !== '' ? $journalReference : 'CARD_FEE');
+        $escapedTaggedRef2 = str_replace("'", "''", $this->buildJournalRef2('CARDFEE', $reference));
 
-        // Multiple fallback strategies — older invoices may have been posted
-        // with a different combination of Reference / Reference2 / memo
-        // (e.g. before we standardised the CARD_FEE tag, or when payments
-        // were retried with a tweaked memo). We try strict matches first,
-        // then loosen to a memo-substring lookup that catches "Card fee
-        // from Omniful order <id>" entries regardless of reference layout.
+        // Multiple fallback strategies. The current format stamps Ref2 as
+        // "CARDFEE-<order>" (globally unique to clear the SP duplicate check);
+        // older JEs used Ref2 = <order> or Reference = CARD_FEE. We try the
+        // tagged Ref2 first, then the legacy layouts, then a memo substring.
         $filters = [
+            "Reference2 eq '{$escapedTaggedRef2}'",
+            "Reference3 eq '{$escapedJournalReference}' and Reference eq '{$escapedReference}'",
             "Reference2 eq '{$escapedReference}' and Reference eq '{$escapedJournalReference}'",
             "Reference2 eq '{$escapedReference}'",
             "Reference eq '{$escapedReference}'",
@@ -1854,9 +1875,13 @@ trait HandlesSapPurchaseAndProducts
         ];
 
         if ($reference !== '') {
+            // Same SBO_SP_TransactionNotification Ref2-uniqueness rule as the
+            // card-fee JE: tag Ref2 with "COGS-<order>" so it never collides
+            // with the marketing documents' auto-generated OJDT rows (which
+            // carry the bare order id) or with the card-fee JE.
             $body['Reference'] = $reference;
-            $body['Reference2'] = (string) ($delivery['DocNum'] ?? $reference);
-            $body['Reference3'] = $reference;
+            $body['Reference2'] = $this->buildJournalRef2('COGS', $reference);
+            $body['Reference3'] = (string) ($delivery['DocNum'] ?? $reference);
         }
 
         // Pre-POST idempotency: a previous worker may have created this COGS
@@ -1945,6 +1970,10 @@ trait HandlesSapPurchaseAndProducts
         $filters = [];
         if ($reference !== '') {
             $escapedRef = str_replace("'", "''", $reference);
+            // Current format: Ref2 = "COGS-<order>" (globally unique for the
+            // SP duplicate check). Try it first, then the legacy layouts.
+            $escapedTaggedRef2 = str_replace("'", "''", $this->buildJournalRef2('COGS', $reference));
+            $filters[] = "Reference2 eq '{$escapedTaggedRef2}'";
             $filters[] = "Reference eq '{$escapedRef}'";
         }
         if ($deliveryDocNum !== '') {
