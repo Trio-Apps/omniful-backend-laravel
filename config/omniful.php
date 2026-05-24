@@ -259,6 +259,13 @@ return [
         'ksa_zero_tax_code' => env('OMNIFUL_PURCHASE_TAX_KSA_ZERO_CODE', ''),
         'foreign_code' => env('OMNIFUL_PURCHASE_TAX_FOREIGN_CODE', ''),
     ],
+    'order_rounding' => [
+        // Send Rounding=tYES on AR Reserve Invoices so SAP rounds the stored
+        // DocTotal to the company currency precision and the Incoming Payment
+        // settles to zero. Requires the SAP Rounding G/L Account to be
+        // configured first; enable from the dashboard toggle after that.
+        'enabled' => (bool) env('OMNIFUL_ORDER_ROUNDING_ENABLED', false),
+    ],
     'order_freight' => [
         'expense_code' => 1,
         // When set, freight is posted as a DocumentLines item line (not as a

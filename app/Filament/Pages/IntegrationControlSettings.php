@@ -111,6 +111,10 @@ class IntegrationControlSettings extends Page implements HasForms
                             ->label('Freight Expense Code')
                             ->placeholder('1')
                             ->helperText('Used when shipping or delivery fee exists in Omniful payload.'),
+                        Toggle::make('order_rounding_enabled')
+                            ->label('Enable SAP Document Rounding')
+                            ->default(false)
+                            ->helperText('Sends Rounding=tYES so SAP rounds the invoice total to a clean 2-dp figure (eliminates the sub-cent freight VAT tail / Payment-on-Account). REQUIRES the SAP Rounding G/L Account to be configured first (Administration → Setup → Financials → G/L Account Determination → Sales → General → Rounding Account). Leave OFF until that account is set, otherwise SAP rejects the invoice.'),
                     ]),
                 Section::make('Purchase Order Tax')
                     ->description('Input VAT codes for Purchase Orders / GRPO. Leave blank to use each SAP Item\'s default purchase tax group. Purchase documents need INPUT VAT codes (e.g. SIV/EIV), not the sales OUTPUT codes above.')
@@ -192,6 +196,7 @@ class IntegrationControlSettings extends Page implements HasForms
                 'order_tax_code_ksa_zero' => $state['order_tax_code_ksa_zero'] ?? null,
                 'order_tax_code_foreign' => $state['order_tax_code_foreign'] ?? null,
                 'order_freight_expense_code' => $state['order_freight_expense_code'] ?? null,
+                'order_rounding_enabled' => (bool) ($state['order_rounding_enabled'] ?? false),
                 'purchase_tax_code_ksa_taxable' => $state['purchase_tax_code_ksa_taxable'] ?? null,
                 'purchase_tax_code_ksa_zero' => $state['purchase_tax_code_ksa_zero'] ?? null,
                 'purchase_tax_code_foreign' => $state['purchase_tax_code_foreign'] ?? null,

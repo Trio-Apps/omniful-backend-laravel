@@ -44,6 +44,7 @@ class IntegrationSetting extends Model
         'order_tax_code_ksa_zero',
         'order_tax_code_foreign',
         'order_freight_expense_code',
+        'order_rounding_enabled',
         'purchase_tax_code_ksa_taxable',
         'purchase_tax_code_ksa_zero',
         'purchase_tax_code_foreign',

@@ -4356,12 +4356,27 @@ trait HandlesSapPurchaseAndProducts
             }
         }
 
-        // Tier 3: fall back to SAP document rounding (admin must configure the
-        // Rounding G/L Account). RoundingValue is the explicit adjustment SAP
-        // should post to the rounding account so the stored DocTotal lands on
-        // the target without inflating any individual line.
-        $body['Rounding'] = 'tYES';
-        $body['RoundingValue'] = round($difference, 3);
+        // Tier 3: SAP document rounding. ONLY when explicitly enabled in the
+        // dashboard (order_rounding_enabled), because Rounding=tYES requires
+        // the SAP Rounding G/L Account to be configured
+        // (Administration -> Setup -> Financials -> G/L Account Determination
+        //  -> Sales -> General -> Rounding Account). If the account is not
+        // set, SAP rejects the POST — so we must not send the flag blindly or
+        // we would break invoice creation for tenants that have not set it up.
+        //
+        // When disabled (default), we leave the sub-cent residual: the
+        // invoice still posts and the Incoming Payment settles it (any
+        // fractional remainder lands as a harmless Payment-on-Account
+        // credit, not a Balance Due). Enabling the toggle after configuring
+        // SAP gives a perfectly clean DocTotal.
+        $roundingEnabled = (bool) (
+            $this->getIntegrationSettingValue('order_rounding_enabled')
+            ?? config('omniful.order_rounding.enabled', false)
+        );
+        if ($roundingEnabled) {
+            $body['Rounding'] = 'tYES';
+            $body['RoundingValue'] = round($difference, 3);
+        }
 
         return $body;
     }
@@ -4655,8 +4670,17 @@ trait HandlesSapPurchaseAndProducts
                 $freightGross += $freightNet + (float) $expense['TaxAmount'];
                 continue;
             }
+            // CRITICAL: mirror SAP's behavior. SAP rounds
+            // DocumentAdditionalExpenses.LineTotal to 2-dp on input before
+            // applying VAT. If we estimate using the 4-dp net we send, our
+            // estimate sees a clean gross (e.g. 12.1739 * 1.15 = 14.00) and
+            // wrongly concludes no rounding is needed — while SAP actually
+            // stores 12.17 and computes 13.9955, leaving the tail. Round to
+            // 2-dp here so the estimate matches what SAP will really store
+            // and the Rounding tier fires for the residual.
             $freightTaxPercent = $this->extractOrderFreightTaxPercent($data);
-            $freightGross += $freightNet * (1 + ($freightTaxPercent / 100));
+            $freightNetAsStoredBySap = round($freightNet, 2);
+            $freightGross += $freightNetAsStoredBySap * (1 + ($freightTaxPercent / 100));
         }
 
         return round($merchandiseGross + $freightGross, 4);
