@@ -1244,8 +1244,18 @@ trait HandlesSapPurchaseAndProducts
         ];
 
         if ($reference !== '') {
-            $body['Reference'] = $journalReference !== '' ? $journalReference : $reference;
+            // Header Reference MUST be unique per order. Previously this was
+            // the constant "CARD_FEE" tag, which made SAP reject every
+            // card-fee JE after the first with "JE already integrated" (SAP
+            // de-duplicates / blocks repeated header references). Use the
+            // order id for the header reference (unique) and keep the
+            // CARD_FEE tag in Reference3 + the line Reference1 + Memo for
+            // identification and lookup.
+            $body['Reference'] = $reference;
             $body['Reference2'] = $reference;
+            if ($journalReference !== '') {
+                $body['Reference3'] = $journalReference;
+            }
         }
 
         // Idempotency: look for an existing card-fee journal entry first so a
