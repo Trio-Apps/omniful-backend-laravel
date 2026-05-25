@@ -853,8 +853,10 @@ trait HandlesSapPurchaseAndProducts
                 break;
             }
         }
+        $docCurrencyIsSet = false;
         if ($invoiceCurrency !== '') {
             $body['DocCurrency'] = $invoiceCurrency;
+            $docCurrencyIsSet = true;
         }
         if ($invoiceRate > 0) {
             $body['DocRate'] = $invoiceRate;
@@ -862,45 +864,46 @@ trait HandlesSapPurchaseAndProducts
 
         $body = $this->appendOmnifulDocumentUdfs($body, $data, $reference);
 
+        // FX rule for the cash-side line (PaymentCreditCards.CreditSum /
+        // TransferSum):
+        //
+        //   * When we explicitly set the payment's DocCurrency to the foreign
+        //     invoice currency (the normal path for AED/QAR/etc. orders), SAP
+        //     interprets BOTH SumApplied and the cash-side sum in that
+        //     document currency and converts to local itself via DocRate. So
+        //     the cash-side sum must equal $sumApplied (document currency) —
+        //     NOT the local (SAR) total. Sending the local total here makes
+        //     SAP read e.g. 269.75 SAR as 269.75 AED, over-collecting by the
+        //     FX spread and leaving the remainder as a Payment-on-Account
+        //     credit (the invoice still shows settled, but the deposit is
+        //     inflated and a phantom on-account balance is created).
+        //
+        //   * Only when DocCurrency is NOT set (payment defaults to local
+        //     currency) do we express the cash-side sum in local currency,
+        //     using SAP's stored DocTotalSys so it matches the invoice's LC
+        //     amount to the cent and avoids the "Unbalanced Transaction"
+        //     (-5012) error.
+        $companyCurrency = strtoupper(trim((string) data_get($data, 'invoice.exchange_rate.store_currency', '')));
+        $documentCurrency = strtoupper($invoiceCurrency);
+        $needsLocalConversion = !$docCurrencyIsSet
+            && $documentCurrency !== ''
+            && $companyCurrency !== ''
+            && $documentCurrency !== $companyCurrency;
+
+        $cashSideSum = $sumApplied;
+        if ($needsLocalConversion) {
+            $cashSideSum = $invoiceLocalTotal > 0
+                ? $this->roundSapAmount($invoiceLocalTotal)
+                : ($invoiceRate > 0 ? $this->roundSapAmount($sumApplied * $invoiceRate) : $sumApplied);
+        }
+
         if ($paymentCreditCard !== null) {
-            // PaymentCreditCards.CreditSum lives in the credit-card / transfer
-            // account's currency, which on KSA SAP B1 setups is the *local*
-            // currency (SAR). When the invoice is in a foreign currency
-            // (QAR/AED/etc.), sending the document-currency SumApplied
-            // verbatim as CreditSum makes SAP think the customer paid
-            // <sumApplied> SAR while the invoice was actually worth
-            // <sumApplied * DocRate> SAR — producing the "Unbalanced
-            // Transaction" (-5012) error. Multiply by DocRate so the credit
-            // line lands on the same local-currency amount SAP recorded for
-            // the invoice.
-            $companyCurrency = strtoupper(trim((string) data_get($data, 'invoice.exchange_rate.store_currency', '')));
-            $documentCurrency = strtoupper($invoiceCurrency);
-            $creditSum = $sumApplied;
-            if ($documentCurrency !== '' && $companyCurrency !== '' && $documentCurrency !== $companyCurrency) {
-                // Prefer SAP's stored local-currency total (DocTotalSys) so the
-                // credit line matches the invoice's LC amount to the cent.
-                // Fall back to sumApplied * rate only when DocTotalSys is
-                // unavailable.
-                $creditSum = $invoiceLocalTotal > 0
-                    ? $this->roundSapAmount($invoiceLocalTotal)
-                    : ($invoiceRate > 0 ? $this->roundSapAmount($sumApplied * $invoiceRate) : $sumApplied);
-            }
-            $paymentCreditCard['CreditSum'] = $creditSum;
+            $paymentCreditCard['CreditSum'] = $cashSideSum;
             $body['PaymentCreditCards'] = [$paymentCreditCard];
         } else {
             $body['TransferAccount'] = $transferAccount;
             $body['TransferDate'] = $transferDate;
-            // Same FX-aware conversion for TransferSum, preferring SAP's
-            // stored local-currency total (DocTotalSys).
-            $companyCurrency = strtoupper(trim((string) data_get($data, 'invoice.exchange_rate.store_currency', '')));
-            $documentCurrency = strtoupper($invoiceCurrency);
-            $transferSum = $sumApplied;
-            if ($documentCurrency !== '' && $companyCurrency !== '' && $documentCurrency !== $companyCurrency) {
-                $transferSum = $invoiceLocalTotal > 0
-                    ? $this->roundSapAmount($invoiceLocalTotal)
-                    : ($invoiceRate > 0 ? $this->roundSapAmount($sumApplied * $invoiceRate) : $sumApplied);
-            }
-            $body['TransferSum'] = $transferSum;
+            $body['TransferSum'] = $cashSideSum;
         }
 
         $externalId = trim((string) ($data['external_id'] ?? $data['reference'] ?? ''));
