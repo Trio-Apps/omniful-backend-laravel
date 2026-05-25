@@ -1560,7 +1560,14 @@ trait HandlesSapPurchaseAndProducts
         ];
 
         $body = $this->appendOmnifulDocumentUdfs($body, $data, $externalId);
-        $body = $this->appendFreightToMarketingDocument($body, $data);
+        // Copy the freight from the base AR Reserve Invoice so the Delivery
+        // total matches the Invoice total (client requirement). The delivery
+        // lines are base-referenced (BaseType 13 / BaseEntry = invoice), so a
+        // fresh standalone freight expense is ignored by SAP — the freight
+        // must be base-referenced to the invoice's own expense line to carry
+        // over. Falls back to the standalone freight only when the invoice
+        // has no expense to reference.
+        $body = $this->appendFreightFromBaseInvoiceToDelivery($body, $data, $salesDoc, $orderDocEntry);
 
         // Idempotency: when a previous worker already shipped this order in
         // SAP but failed to persist sap_delivery_doc_entry locally (or the
@@ -4847,6 +4854,58 @@ trait HandlesSapPurchaseAndProducts
         }
 
         $body['DocumentAdditionalExpenses'] = [$expenseLine];
+
+        return $body;
+    }
+
+    /**
+     * Carry the AR Reserve Invoice's freight expense onto the Delivery Note
+     * so the delivery total matches the invoice total (client requirement).
+     *
+     * Because the delivery's DocumentLines are base-referenced to the invoice
+     * (BaseType 13 / BaseEntry = invoice DocEntry), SAP ignores a fresh
+     * standalone freight expense. The expense must be base-referenced to the
+     * invoice's own DocumentAdditionalExpenses line (BaseDocType / BaseDocEntry
+     * / BaseDocLine) for SAP to copy it across. We read the invoice's expense
+     * lines from the already-fetched sales document and mirror them, pinning
+     * the base references. Falls back to the standalone freight when the
+     * invoice carries no expense to reference.
+     */
+    private function appendFreightFromBaseInvoiceToDelivery(array $body, array $data, array $salesDoc, int $invoiceDocEntry): array
+    {
+        $invoiceExpenses = array_values(array_filter(
+            (array) ($salesDoc['DocumentAdditionalExpenses'] ?? []),
+            static fn ($expense) => is_array($expense)
+                && is_numeric($expense['LineTotal'] ?? null)
+                && (float) $expense['LineTotal'] > 0,
+        ));
+
+        if ($invoiceExpenses === [] || $invoiceDocEntry <= 0) {
+            // No invoice freight to copy — fall back to the standalone path
+            // (covers deliveries created without a base invoice expense).
+            return $this->appendFreightToMarketingDocument($body, $data);
+        }
+
+        $expenses = [];
+        foreach ($invoiceExpenses as $expense) {
+            $line = [
+                'ExpenseCode' => $expense['ExpenseCode'] ?? null,
+                'LineTotal' => (float) $expense['LineTotal'],
+                // Base-reference the invoice's expense so SAP copies it and
+                // the delivery total equals the invoice total.
+                'BaseDocType' => 13, // oInvoices / AR Reserve Invoice
+                'BaseDocEntry' => $invoiceDocEntry,
+                'BaseDocLine' => (int) ($expense['LineNum'] ?? 0),
+            ];
+            if (isset($expense['VatGroup']) && trim((string) $expense['VatGroup']) !== '') {
+                $line['VatGroup'] = $expense['VatGroup'];
+            }
+            $expenses[] = $line;
+        }
+
+        if ($expenses !== []) {
+            $body['DocumentAdditionalExpenses'] = $expenses;
+        }
 
         return $body;
     }
