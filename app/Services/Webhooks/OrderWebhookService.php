@@ -284,13 +284,17 @@ class OrderWebhookService
         if (($invoiceEligibility['eligible'] ?? false) || !empty($order->sap_doc_entry)) {
             $this->createIncomingPaymentIfEligible($order, $data, $invoiceResult);
             $this->createCardFeeJournalIfEligible($order, $data);
+            // COGS is posted at the invoice/payment stage (client's "2 JEs"),
+            // reading item cost from the Item Master — it does NOT wait for
+            // shipment. SAP does not auto-post COGS on the delivery here, so
+            // there is no double-posting risk.
+            $this->createCogsJournalAtInvoiceIfEligible($order, $data);
         }
 
         if (($deliveryEligibility['eligible'] ?? false)) {
             $this->createDeliveryIfEligible($order, $data);
         }
 
-        $this->createCogsJournalIfEligible($order);
         if (($creditEligibility['eligible'] ?? false)) {
             $this->createCreditNoteIfEligible($order, $data);
         }
@@ -1282,6 +1286,80 @@ class OrderWebhookService
         $order->save();
 
         $this->createCancelCogsReversalIfEligible($order);
+    }
+
+    /**
+     * Post the COGS journal at the AR Invoice + Payment stage (client's
+     * "2 JEs" alongside Card Fee). Reads item cost from the Item Master, so
+     * it does not need a delivery. Replaces the old delivery-stage COGS.
+     */
+    private function createCogsJournalAtInvoiceIfEligible(OmnifulOrder $order, array $data): void
+    {
+        if (!$this->isCogsJournalEnabled()) {
+            if ((string) ($order->sap_cogs_journal_entry ?? '') === '') {
+                $order->sap_cogs_status = 'ignored';
+                $order->sap_cogs_error = 'COGS journal disabled from integration settings';
+                $order->sap_cogs_response = [
+                    'ignored' => true,
+                    'reason' => 'COGS journal disabled from integration settings',
+                ];
+                $order->save();
+            }
+
+            return;
+        }
+
+        // Already posted, or no invoice yet → nothing to do.
+        if (!empty($order->sap_cogs_journal_entry)) {
+            if ((string) $order->sap_cogs_status === '') {
+                $order->sap_cogs_status = 'created';
+                $order->save();
+            }
+            return;
+        }
+        if (empty($order->sap_doc_entry)) {
+            return;
+        }
+
+        $client = app(SapServiceLayerClient::class);
+        try {
+            $result = $client->createCogsJournalForOmnifulOrder([
+                'reference' => (string) ($order->external_id ?? ''),
+                'external_id' => (string) ($order->external_id ?? ''),
+                'order_items' => (array) data_get($data, 'order_items', data_get($data, 'items', [])),
+                'hub_code' => (string) ($order->hub_code ?? data_get($data, 'hub_code', '')),
+                'posting_date' => data_get($data, 'order_created_at') ?? data_get($data, 'created_at'),
+                'memo' => 'COGS journal from Omniful order ' . (string) ($order->external_id ?? ''),
+                'expense_account' => $this->resolveIntegrationSettingValue('order_cogs_expense_account', config('omniful.order_accounting.cogs_expense_account')),
+                'offset_account' => $this->resolveIntegrationSettingValue('order_cogs_inventory_offset_account', config('omniful.order_accounting.inventory_offset_account')),
+            ]);
+        } catch (SapRequestException $e) {
+            $order->sap_cogs_status = 'failed';
+            $order->sap_cogs_error = $e->getMessage();
+            $order->sap_cogs_response = [
+                'ignored' => false,
+                'request_body' => $e->requestBody,
+                'error_response_body' => $e->responseBody,
+                'status_code' => $e->statusCode,
+            ];
+            $order->save();
+            throw $e;
+        }
+
+        if (($result['ignored'] ?? false) === true) {
+            $order->sap_cogs_status = 'ignored';
+            $order->sap_cogs_error = (string) ($result['reason'] ?? 'COGS journal ignored');
+            $order->sap_cogs_response = $result;
+            $order->save();
+            return;
+        }
+
+        $order->sap_cogs_status = 'created';
+        $order->sap_cogs_journal_entry = (string) ($result['TransId'] ?? $result['JdtNum'] ?? '');
+        $order->sap_cogs_journal_num = (string) ($result['Number'] ?? $result['JdtNum'] ?? '');
+        $order->sap_cogs_error = null;
+        $order->sap_cogs_response = $result;
+        $order->save();
     }
 
     private function createCogsJournalIfEligible(OmnifulOrder $order): void

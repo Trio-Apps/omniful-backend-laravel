@@ -1483,6 +1483,186 @@ trait HandlesSapPurchaseAndProducts
             || (str_contains($normalized, 'je') && str_contains($normalized, 'already integrated'));
     }
 
+    /**
+     * Create the COGS journal at the AR Invoice + Payment stage (the client's
+     * "2 JEs" = Card Fee + COGS, both posted when the invoice/payment are
+     * made — NOT at shipment). SAP does NOT auto-post COGS on the delivery in
+     * this tenant, so we post it manually here from the item inventory cost
+     * (OITM.AvgPrice via the Service Layer's AvgStdPrice). No delivery is
+     * required because the cost is read straight from the item master.
+     *
+     * Expects: reference (order id), expense_account, offset_account,
+     * order_items, hub_code, posting_date.
+     */
+    public function createCogsJournalForOmnifulOrder(array $data): array
+    {
+        $reference = trim((string) ($data['reference'] ?? $data['external_id'] ?? ''));
+        $expenseAccount = trim((string) ($data['expense_account'] ?? config('omniful.order_accounting.cogs_expense_account', '')));
+        $offsetAccount = trim((string) ($data['offset_account'] ?? config('omniful.order_accounting.inventory_offset_account', '')));
+        if ($expenseAccount === '' || $offsetAccount === '') {
+            return [
+                'ignored' => true,
+                'reason' => 'Missing COGS journal accounts',
+                'request_body' => null,
+            ];
+        }
+
+        // Cost = Σ (qty × item average inventory cost). Bundles / non-stock
+        // items return 0 cost and simply contribute nothing.
+        $amount = $this->computeCogsAmountFromOrderItems($data);
+        if ($amount <= 0 && $reference !== '') {
+            // Fallback to the tenant's custom CogsSP by order reference.
+            $amount = $this->fetchCogsAmountByOrderReference($reference);
+        }
+        if ($amount <= 0) {
+            return [
+                'ignored' => true,
+                'reason' => 'COGS amount is zero (order items have no inventory cost in SAP)',
+                'request_body' => null,
+            ];
+        }
+
+        $referenceDate = $this->formatDate((string) ($data['posting_date'] ?? now()->format('Y-m-d')));
+        $memo = trim((string) ($data['memo'] ?? ('COGS journal for Omniful order ' . $reference)));
+        $cogsRef2 = $this->buildJournalRef2('COGS', $reference !== '' ? $reference : (string) now()->timestamp);
+
+        $journalLines = $this->applyDefaultCostCentersToJournalLines([
+            [
+                'AccountCode' => $expenseAccount,
+                'Debit' => $this->roundSapAmount($amount),
+                'LineMemo' => $this->truncateSapText($memo, 254),
+                'Reference1' => $reference,
+                'Reference2' => $cogsRef2,
+                'AdditionalReference' => $this->truncateSapText($reference, 100),
+            ],
+            [
+                'AccountCode' => $offsetAccount,
+                'Credit' => $this->roundSapAmount($amount),
+                'LineMemo' => $this->truncateSapText($memo, 254),
+                'Reference1' => $reference,
+                'Reference2' => $cogsRef2,
+                'AdditionalReference' => $this->truncateSapText($reference, 100),
+            ],
+        ], $this->resolveOrderWarehouseCode(data_get($data, 'hub_code')));
+
+        $body = [
+            'ReferenceDate' => $referenceDate,
+            'DueDate' => $referenceDate,
+            'TaxDate' => $referenceDate,
+            'Memo' => $this->truncateSapText($memo, 254),
+            'JournalEntryLines' => $journalLines,
+        ];
+        if ($reference !== '') {
+            $body['Reference'] = $reference;
+            $body['Reference2'] = $cogsRef2;
+            $body['Reference3'] = $reference;
+        }
+
+        // Idempotency: reuse the COGS lookup (searches Ref2 = "COGS-<order>").
+        $existing = $this->findExistingCogsJournalForDelivery($reference, '', 0);
+        if ($this->journalHasIdentifier($existing)) {
+            $existing['ignored'] = false;
+            $existing['reused_existing'] = true;
+            $existing['request_body'] = $body;
+            return $existing;
+        }
+
+        $response = $this->post('/JournalEntries', $body);
+        if (!$response->successful()) {
+            $responseBody = (string) $response->body();
+            if ($this->isSapJournalAlreadyIntegratedError($responseBody)
+                || $this->isSapCogsAlreadyIntegratedError($responseBody)) {
+                $recovered = $this->findExistingCogsJournalForDelivery($reference, '', 0);
+                if ($this->journalHasIdentifier($recovered)) {
+                    $recovered['ignored'] = false;
+                    $recovered['reused_existing'] = true;
+                    $recovered['recovered_after_duplicate_error'] = true;
+                    $recovered['sap_duplicate_error'] = $responseBody;
+                    $recovered['request_body'] = $body;
+                    return $recovered;
+                }
+
+                return [
+                    'ignored' => true,
+                    'already_integrated' => true,
+                    'reason' => 'SAP refused the COGS journal as already integrated, but the matching JE could not be located. Review in SAP.',
+                    'request_body' => $body,
+                    'error_response_body' => $responseBody,
+                    'status_code' => $response->status(),
+                ];
+            }
+
+            throw new SapRequestException(
+                'SAP COGS journal create failed: ' . $response->status() . ' ' . $responseBody,
+                $body,
+                $responseBody,
+                $response->status(),
+            );
+        }
+
+        $payload = $this->normalizeFoundJournalEntry((array) ($response->json() ?? []));
+        $payload['ignored'] = false;
+        $payload['request_body'] = $body;
+
+        return $payload;
+    }
+
+    /**
+     * Sum the inventory cost of an order's items: Σ (qty × OITM.AvgPrice).
+     * Reads each item's average cost from the Service Layer (AvgStdPrice).
+     * Non-stock / bundle items (cost 0) contribute nothing.
+     */
+    private function computeCogsAmountFromOrderItems(array $data): float
+    {
+        $items = (array) data_get($data, 'order_items', data_get($data, 'items', []));
+        $costByItem = [];
+        $total = 0.0;
+
+        foreach ($items as $item) {
+            $itemCode = trim((string) (
+                data_get($item, 'sku_code')
+                ?? data_get($item, 'seller_sku_code')
+                ?? data_get($item, 'seller_sku.seller_sku_code')
+                ?? ''
+            ));
+            if ($itemCode === '') {
+                continue;
+            }
+
+            $qty = (float) (data_get($item, 'quantity') ?? data_get($item, 'packed_quantity') ?? 0);
+            if ($qty <= 0) {
+                continue;
+            }
+
+            if (!array_key_exists($itemCode, $costByItem)) {
+                $costByItem[$itemCode] = $this->fetchItemAverageCost($itemCode);
+            }
+
+            $total += $qty * $costByItem[$itemCode];
+        }
+
+        return $this->roundSapAmount($total);
+    }
+
+    private function fetchItemAverageCost(string $itemCode): float
+    {
+        $encoded = str_replace("'", "''", $itemCode);
+        $response = $this->get("/Items('{$encoded}')?\$select=ItemCode,AvgStdPrice");
+        if (!$response->successful()) {
+            Log::warning('SAP item average-cost lookup failed', [
+                'item_code' => $itemCode,
+                'status' => $response->status(),
+                'body' => $response->body(),
+            ]);
+
+            return 0.0;
+        }
+
+        $avg = data_get($response->json(), 'AvgStdPrice');
+
+        return is_numeric($avg) && (float) $avg > 0 ? (float) $avg : 0.0;
+    }
+
     public function createDeliveryFromReserveOrder(array $data): array
     {
         $orderDocEntry = (int) ($data['order_doc_entry'] ?? 0);
