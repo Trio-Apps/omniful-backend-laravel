@@ -108,9 +108,13 @@ class IntegrationControlSettings extends Page implements HasForms
                             ->label('Foreign Tax Code')
                             ->placeholder('EOV'),
                         TextInput::make('order_freight_expense_code')
-                            ->label('Freight Expense Code')
+                            ->label('Freight Expense Code (Domestic)')
                             ->placeholder('1')
-                            ->helperText('Used when shipping or delivery fee exists in Omniful payload.'),
+                            ->helperText('SAP freight ExpenseCode for DOMESTIC (KSA) customers. Used when shipping or delivery fee exists in Omniful payload.'),
+                        TextInput::make('order_freight_expense_code_foreign')
+                            ->label('Freight Expense Code (Foreign)')
+                            ->placeholder('2')
+                            ->helperText('SAP freight ExpenseCode for FOREIGN customers. Falls back to the domestic code when empty.'),
                         Toggle::make('order_rounding_enabled')
                             ->label('Enable SAP Document Rounding')
                             ->default(false)
@@ -196,6 +200,7 @@ class IntegrationControlSettings extends Page implements HasForms
                 'order_tax_code_ksa_zero' => $state['order_tax_code_ksa_zero'] ?? null,
                 'order_tax_code_foreign' => $state['order_tax_code_foreign'] ?? null,
                 'order_freight_expense_code' => $state['order_freight_expense_code'] ?? null,
+                'order_freight_expense_code_foreign' => $state['order_freight_expense_code_foreign'] ?? null,
                 'order_rounding_enabled' => (bool) ($state['order_rounding_enabled'] ?? false),
                 'purchase_tax_code_ksa_taxable' => $state['purchase_tax_code_ksa_taxable'] ?? null,
                 'purchase_tax_code_ksa_zero' => $state['purchase_tax_code_ksa_zero'] ?? null,

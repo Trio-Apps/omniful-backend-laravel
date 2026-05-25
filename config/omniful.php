@@ -267,7 +267,13 @@ return [
         'enabled' => (bool) env('OMNIFUL_ORDER_ROUNDING_ENABLED', false),
     ],
     'order_freight' => [
+        // Freight expense (DocumentAdditionalExpenses.ExpenseCode) for
+        // DOMESTIC (KSA) customers. SAP often keeps separate freight expense
+        // definitions per local/foreign tax treatment.
         'expense_code' => 1,
+        // Freight expense code for FOREIGN customers. Falls back to the
+        // domestic code above when left empty.
+        'expense_code_foreign' => (int) env('OMNIFUL_FREIGHT_EXPENSE_CODE_FOREIGN', 2),
         // When set, freight is posted as a DocumentLines item line (not as a
         // DocumentAdditionalExpense) using PriceAfterVAT = freight_gross. This
         // is the only way to land freight on a clean 2-dp gross on tenants

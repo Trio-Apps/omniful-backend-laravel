@@ -4968,6 +4968,14 @@ trait HandlesSapPurchaseAndProducts
         $freightGross = 0.0;
         $expenses = (array) ($body['DocumentAdditionalExpenses'] ?? []);
         foreach ($expenses as $expense) {
+            // LineGross path: when we send the tax-inclusive freight gross,
+            // SAP pins the total to exactly that figure, so the estimate uses
+            // it verbatim (no net->gross VAT recomputation tail).
+            if (isset($expense['LineGross']) && is_numeric($expense['LineGross'])) {
+                $freightGross += (float) $expense['LineGross'];
+                continue;
+            }
+
             $freightNet = (float) ($expense['LineTotal'] ?? 0);
             if ($freightNet <= 0) {
                 continue;
@@ -5009,27 +5017,38 @@ trait HandlesSapPurchaseAndProducts
             'tax_percent' => $freightTaxPercent,
         ]);
 
-        $expenseCode = (int) (
+        // Expense code differs per customer type: SAP keeps a separate freight
+        // expense definition for DOMESTIC (KSA) vs FOREIGN customers. Mirror
+        // the same local/foreign classification we use to pick the customer
+        // (C00046 vs C00047).
+        $domesticExpenseCode = (int) (
             $this->getIntegrationSettingValue('order_freight_expense_code')
             ?? config('omniful.order_freight.expense_code', 0)
         );
+        $foreignExpenseCode = (int) (
+            $this->getIntegrationSettingValue('order_freight_expense_code_foreign')
+            ?? config('omniful.order_freight.expense_code_foreign', 0)
+        );
+        $expenseCode = $this->isLocalOrderCustomer($data)
+            ? $domesticExpenseCode
+            : ($foreignExpenseCode > 0 ? $foreignExpenseCode : $domesticExpenseCode);
 
-        if ($freightTaxPercent > 0) {
-            $freightGrossTarget = $this->extractOrderFreightGrossAmount($data);
-            $freightAmount = $freightGrossTarget > 0
-                ? round($freightGrossTarget / (1 + ($freightTaxPercent / 100)), 4)
-                : $this->extractOrderFreightNetAmount($data);
-        } else {
-            $freightAmount = $this->extractOrderFreightNetAmount($data);
-        }
+        // Send the freight GROSS (tax-inclusive) in DocumentAdditionalExpenses
+        // .LineGross. SAP back-computes the net LineTotal and the VAT from this
+        // gross — pinning the freight total to the exact 2-dp figure Omniful
+        // billed. This eliminates the sub-cent tail that the previous net-only
+        // path produced (SAP rounded our net to 2-dp, then re-added VAT,
+        // landing e.g. 13.9955 instead of 14.00). Requires the freight expense
+        // to accept gross entry on the SAP side (configured by the SAP admin).
+        $freightGross = $this->roundSapAmount($this->extractOrderFreightGrossAmount($data));
 
-        if ($freightAmount <= 0 || $expenseCode <= 0) {
+        if ($freightGross <= 0 || $expenseCode <= 0) {
             return $body;
         }
 
         $expenseLine = [
             'ExpenseCode' => $expenseCode,
-            'LineTotal' => $freightAmount,
+            'LineGross' => $freightGross,
         ];
 
         if ($freightTaxCode !== '') {
