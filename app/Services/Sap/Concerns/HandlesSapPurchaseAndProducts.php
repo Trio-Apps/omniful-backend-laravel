@@ -783,19 +783,38 @@ trait HandlesSapPurchaseAndProducts
         // 125.25 leaves a 0.001 SAR Balance Due and prevents the invoice
         // from closing. The unrounded SAP DocTotal makes the settlement
         // exact and the balance hit zero.
+        // Authoritative settlement amount is the invoice's DocTotal in its OWN
+        // document currency (KWD/AED/etc.). SAP's PaymentInvoices.SumApplied
+        // for a payment that inherits the invoice's DocCurrency must also be in
+        // that document currency.
         $invoiceDocTotal = is_numeric($salesDoc['DocTotal'] ?? null) ? (float) $salesDoc['DocTotal'] : 0.0;
         $requestedAmount = is_numeric($data['sum_applied'] ?? null) ? (float) $data['sum_applied'] : 0.0;
 
-        if ($invoiceDocTotal > 0
-            && ($requestedAmount <= 0 || abs($invoiceDocTotal - $requestedAmount) < 0.05)
-        ) {
-            // Full-settlement intent (Omniful asked for the full total or
-            // didn't specify): always use SAP's exact DocTotal so any
-            // tax-rounding tail closes the invoice cleanly.
+        // The caller's requested amount can arrive contaminated with the
+        // LOCAL-currency total (e.g. resolveIncomingPaymentAmount picked the
+        // created invoice's local DocTotal). On a foreign-currency order that
+        // value equals invoiceDocTotal * DocRate, NOT invoiceDocTotal. If we
+        // blindly trusted it we would apply ~12x the real amount (KWD) and
+        // dump the excess to Payment-on-Account. Detect that case and treat it
+        // as a full settlement in document currency.
+        $invoiceRateForSettlement = is_numeric($salesDoc['DocRate'] ?? null) ? (float) $salesDoc['DocRate'] : 0.0;
+        $localEquivalent = $invoiceRateForSettlement > 0
+            ? $invoiceDocTotal * $invoiceRateForSettlement
+            : 0.0;
+        $matchesDocTotal = $invoiceDocTotal > 0 && abs($invoiceDocTotal - $requestedAmount) < 0.05;
+        $matchesLocalTotal = $localEquivalent > 0
+            && abs($localEquivalent - $requestedAmount) < max(0.05, $localEquivalent * 0.001);
+
+        if ($invoiceDocTotal > 0 && ($requestedAmount <= 0 || $matchesDocTotal || $matchesLocalTotal)) {
+            // Full-settlement intent (Omniful asked for the full total, didn't
+            // specify, or the request was the local-currency equivalent):
+            // always use SAP's exact document-currency DocTotal so any
+            // tax-rounding tail closes the invoice cleanly and the payment
+            // stays in the right currency.
             $sumApplied = $invoiceDocTotal;
         } else {
-            // Partial / mismatched payment intent: honor the caller's
-            // request, still rounded to SAP's 2-dp service precision.
+            // Genuine partial / mismatched payment in document currency: honor
+            // the caller's request, rounded to SAP's 2-dp service precision.
             $sumApplied = $this->roundSapAmount($requestedAmount > 0 ? $requestedAmount : $invoiceDocTotal);
         }
 
@@ -921,24 +940,6 @@ trait HandlesSapPurchaseAndProducts
                 return $existingPayment;
             }
         }
-
-        // TEMP DIAGNOSTIC: prove which build of this method is executing and
-        // what cash-side amount it computed for FX payments. Remove once the
-        // FX double-conversion fix is confirmed live on the workers.
-        Log::info('SAP incoming payment FX diagnostic', [
-            'fix_marker' => 'cashSideSum=sumApplied@v2',
-            'order' => $externalId,
-            'invoice_doc_currency' => $invoiceCurrency,
-            'invoice_doc_total' => $invoiceDocTotal,
-            'invoice_local_total' => $invoiceLocalTotal,
-            'doc_currency_is_set' => $docCurrencyIsSet,
-            'needs_local_conversion' => $needsLocalConversion,
-            'sum_applied' => $sumApplied,
-            'cash_side_sum' => $cashSideSum,
-            'credit_card_path' => $paymentCreditCard !== null,
-            'credit_sum' => $paymentCreditCard['CreditSum'] ?? null,
-            'transfer_sum' => $body['TransferSum'] ?? null,
-        ]);
 
         $response = $this->post('/IncomingPayments', $body);
         if (!$response->successful()) {
