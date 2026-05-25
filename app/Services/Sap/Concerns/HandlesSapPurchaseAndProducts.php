@@ -922,6 +922,24 @@ trait HandlesSapPurchaseAndProducts
             }
         }
 
+        // TEMP DIAGNOSTIC: prove which build of this method is executing and
+        // what cash-side amount it computed for FX payments. Remove once the
+        // FX double-conversion fix is confirmed live on the workers.
+        Log::info('SAP incoming payment FX diagnostic', [
+            'fix_marker' => 'cashSideSum=sumApplied@v2',
+            'order' => $externalId,
+            'invoice_doc_currency' => $invoiceCurrency,
+            'invoice_doc_total' => $invoiceDocTotal,
+            'invoice_local_total' => $invoiceLocalTotal,
+            'doc_currency_is_set' => $docCurrencyIsSet,
+            'needs_local_conversion' => $needsLocalConversion,
+            'sum_applied' => $sumApplied,
+            'cash_side_sum' => $cashSideSum,
+            'credit_card_path' => $paymentCreditCard !== null,
+            'credit_sum' => $paymentCreditCard['CreditSum'] ?? null,
+            'transfer_sum' => $body['TransferSum'] ?? null,
+        ]);
+
         $response = $this->post('/IncomingPayments', $body);
         if (!$response->successful()) {
             $responseBody = (string) $response->body();
