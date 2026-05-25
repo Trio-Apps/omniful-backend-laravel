@@ -785,38 +785,41 @@ trait HandlesSapPurchaseAndProducts
         // exact and the balance hit zero.
         // Authoritative settlement amount is the invoice's DocTotal in its OWN
         // document currency (KWD/AED/etc.). SAP's PaymentInvoices.SumApplied
-        // for a payment that inherits the invoice's DocCurrency must also be in
-        // that document currency.
+        // (and the cash-side CreditSum/TransferSum) for a payment that inherits
+        // the invoice's DocCurrency MUST be in that document currency.
+        //
+        // Every payment we create here settles a fully-prepaid Omniful order
+        // (payment_method = prepaid, total_paid == total), so it is always a
+        // FULL settlement of the invoice. We therefore use the invoice's own
+        // DocTotal verbatim and deliberately IGNORE $data['sum_applied'] for
+        // the amount: that value frequently arrives contaminated with the
+        // LOCAL-currency total (DocTotal * DocRate — e.g. 111.26 SAR for a
+        // 109.25 AED invoice, or 742.06 SAR for a 61.45 KWD invoice). Trusting
+        // it made SAP over-collect by the FX spread and dump the remainder to
+        // Payment-on-Account. Using DocTotal removes any dependency on the
+        // requested amount or on re-deriving the rate.
         $invoiceDocTotal = is_numeric($salesDoc['DocTotal'] ?? null) ? (float) $salesDoc['DocTotal'] : 0.0;
         $requestedAmount = is_numeric($data['sum_applied'] ?? null) ? (float) $data['sum_applied'] : 0.0;
 
-        // The caller's requested amount can arrive contaminated with the
-        // LOCAL-currency total (e.g. resolveIncomingPaymentAmount picked the
-        // created invoice's local DocTotal). On a foreign-currency order that
-        // value equals invoiceDocTotal * DocRate, NOT invoiceDocTotal. If we
-        // blindly trusted it we would apply ~12x the real amount (KWD) and
-        // dump the excess to Payment-on-Account. Detect that case and treat it
-        // as a full settlement in document currency.
-        $invoiceRateForSettlement = is_numeric($salesDoc['DocRate'] ?? null) ? (float) $salesDoc['DocRate'] : 0.0;
-        $localEquivalent = $invoiceRateForSettlement > 0
-            ? $invoiceDocTotal * $invoiceRateForSettlement
-            : 0.0;
-        $matchesDocTotal = $invoiceDocTotal > 0 && abs($invoiceDocTotal - $requestedAmount) < 0.05;
-        $matchesLocalTotal = $localEquivalent > 0
-            && abs($localEquivalent - $requestedAmount) < max(0.05, $localEquivalent * 0.001);
-
-        if ($invoiceDocTotal > 0 && ($requestedAmount <= 0 || $matchesDocTotal || $matchesLocalTotal)) {
-            // Full-settlement intent (Omniful asked for the full total, didn't
-            // specify, or the request was the local-currency equivalent):
-            // always use SAP's exact document-currency DocTotal so any
-            // tax-rounding tail closes the invoice cleanly and the payment
-            // stays in the right currency.
+        if ($invoiceDocTotal > 0) {
+            // Full settlement in document currency (the only case for prepaid
+            // orders). SAP's exact DocTotal also closes any tax-rounding tail.
             $sumApplied = $invoiceDocTotal;
         } else {
-            // Genuine partial / mismatched payment in document currency: honor
-            // the caller's request, rounded to SAP's 2-dp service precision.
-            $sumApplied = $this->roundSapAmount($requestedAmount > 0 ? $requestedAmount : $invoiceDocTotal);
+            // Defensive fallback only when SAP did not return a DocTotal.
+            $sumApplied = $this->roundSapAmount($requestedAmount);
         }
+
+        Log::info('SAP incoming payment settlement amount', [
+            'fix_marker' => 'sumApplied=DocTotal@v3',
+            'order' => trim((string) ($data['external_id'] ?? $data['reference'] ?? '')),
+            'invoice_doc_currency' => trim((string) ($salesDoc['DocCurrency'] ?? '')),
+            'invoice_doc_total' => $invoiceDocTotal,
+            'invoice_doc_rate' => $salesDoc['DocRate'] ?? null,
+            'invoice_doc_total_sys' => $salesDoc['DocTotalSys'] ?? null,
+            'requested_amount_in' => $requestedAmount,
+            'sum_applied_used' => $sumApplied,
+        ]);
 
         if ($sumApplied <= 0) {
             return [
