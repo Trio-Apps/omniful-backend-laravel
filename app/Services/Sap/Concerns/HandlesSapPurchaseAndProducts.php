@@ -841,6 +841,18 @@ trait HandlesSapPurchaseAndProducts
         // local-currency amount the invoice reserved.
         $invoiceCurrency = trim((string) ($salesDoc['DocCurrency'] ?? ''));
         $invoiceRate = is_numeric($salesDoc['DocRate'] ?? null) ? (float) $salesDoc['DocRate'] : 0.0;
+        // The invoice's total already converted to the company (local)
+        // currency by SAP. Use this verbatim for the credit-card / transfer
+        // sum instead of recomputing sumApplied * rate, which drifts by a
+        // sub-cent against SAP's stored conversion and re-triggers the
+        // "Unbalanced Transaction" (-5012) error on FX payments.
+        $invoiceLocalTotal = 0.0;
+        foreach (['DocTotalSys', 'DocTotalFc'] as $localTotalField) {
+            if (is_numeric($salesDoc[$localTotalField] ?? null) && (float) $salesDoc[$localTotalField] > 0) {
+                $invoiceLocalTotal = (float) $salesDoc[$localTotalField];
+                break;
+            }
+        }
         if ($invoiceCurrency !== '') {
             $body['DocCurrency'] = $invoiceCurrency;
         }
@@ -864,24 +876,29 @@ trait HandlesSapPurchaseAndProducts
             $companyCurrency = strtoupper(trim((string) data_get($data, 'invoice.exchange_rate.store_currency', '')));
             $documentCurrency = strtoupper($invoiceCurrency);
             $creditSum = $sumApplied;
-            if ($documentCurrency !== '' && $companyCurrency !== '' && $documentCurrency !== $companyCurrency && $invoiceRate > 0) {
-                $creditSum = $this->roundSapAmount($sumApplied * $invoiceRate);
+            if ($documentCurrency !== '' && $companyCurrency !== '' && $documentCurrency !== $companyCurrency) {
+                // Prefer SAP's stored local-currency total (DocTotalSys) so the
+                // credit line matches the invoice's LC amount to the cent.
+                // Fall back to sumApplied * rate only when DocTotalSys is
+                // unavailable.
+                $creditSum = $invoiceLocalTotal > 0
+                    ? $this->roundSapAmount($invoiceLocalTotal)
+                    : ($invoiceRate > 0 ? $this->roundSapAmount($sumApplied * $invoiceRate) : $sumApplied);
             }
             $paymentCreditCard['CreditSum'] = $creditSum;
             $body['PaymentCreditCards'] = [$paymentCreditCard];
         } else {
             $body['TransferAccount'] = $transferAccount;
             $body['TransferDate'] = $transferDate;
-            // Same FX-aware conversion for TransferSum: the configured
-            // transfer account is denominated in local currency on KSA
-            // setups, so we convert the foreign-currency SumApplied to the
-            // SAR figure SAP needs to balance against the invoice's LC
-            // amount.
+            // Same FX-aware conversion for TransferSum, preferring SAP's
+            // stored local-currency total (DocTotalSys).
             $companyCurrency = strtoupper(trim((string) data_get($data, 'invoice.exchange_rate.store_currency', '')));
             $documentCurrency = strtoupper($invoiceCurrency);
             $transferSum = $sumApplied;
-            if ($documentCurrency !== '' && $companyCurrency !== '' && $documentCurrency !== $companyCurrency && $invoiceRate > 0) {
-                $transferSum = $this->roundSapAmount($sumApplied * $invoiceRate);
+            if ($documentCurrency !== '' && $companyCurrency !== '' && $documentCurrency !== $companyCurrency) {
+                $transferSum = $invoiceLocalTotal > 0
+                    ? $this->roundSapAmount($invoiceLocalTotal)
+                    : ($invoiceRate > 0 ? $this->roundSapAmount($sumApplied * $invoiceRate) : $sumApplied);
             }
             $body['TransferSum'] = $transferSum;
         }
