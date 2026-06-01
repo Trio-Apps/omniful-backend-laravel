@@ -5100,8 +5100,10 @@ trait HandlesSapPurchaseAndProducts
         $invoiceExpenses = array_values(array_filter(
             (array) ($salesDoc['DocumentAdditionalExpenses'] ?? []),
             static fn ($expense) => is_array($expense)
-                && is_numeric($expense['LineTotal'] ?? null)
-                && (float) $expense['LineTotal'] > 0,
+                && (
+                    (is_numeric($expense['LineGross'] ?? null) && (float) $expense['LineGross'] > 0)
+                    || (is_numeric($expense['LineTotal'] ?? null) && (float) $expense['LineTotal'] > 0)
+                ),
         ));
 
         if ($invoiceExpenses === [] || $invoiceDocEntry <= 0) {
@@ -5112,11 +5114,34 @@ trait HandlesSapPurchaseAndProducts
 
         $expenses = [];
         foreach ($invoiceExpenses as $expense) {
+            // Mirror the invoice using LineGross — same technique that pinned
+            // the invoice freight to the exact 2-dp gross Omniful billed.
+            // Sending LineTotal (net) instead lets SAP round it to 2-dp on
+            // input and re-add VAT at currency precision, which lands the
+            // delivery total a sub-cent below the invoice (e.g. 117.4955 vs
+            // 117.5000). Prefer the stored LineGross; otherwise reconstruct
+            // gross from net + TaxSum, falling back to net × (1 + tax%).
+            $gross = 0.0;
+            if (is_numeric($expense['LineGross'] ?? null) && (float) $expense['LineGross'] > 0) {
+                $gross = (float) $expense['LineGross'];
+            } elseif (is_numeric($expense['LineTotal'] ?? null)) {
+                $net = (float) $expense['LineTotal'];
+                if (is_numeric($expense['TaxSum'] ?? null)) {
+                    $gross = $net + (float) $expense['TaxSum'];
+                } else {
+                    $taxPercent = (float) $this->extractOrderFreightTaxPercent($data);
+                    $gross = $net * (1 + ($taxPercent / 100));
+                }
+            }
+            if ($gross <= 0) {
+                continue;
+            }
+
             $line = [
                 'ExpenseCode' => $expense['ExpenseCode'] ?? null,
-                'LineTotal' => (float) $expense['LineTotal'],
-                // Base-reference the invoice's expense so SAP copies it and
-                // the delivery total equals the invoice total.
+                'LineGross' => $this->roundSapAmount($gross),
+                // Base-reference the invoice's expense so SAP links the
+                // delivery's expense to the invoice's.
                 'BaseDocType' => 13, // oInvoices / AR Reserve Invoice
                 'BaseDocEntry' => $invoiceDocEntry,
                 'BaseDocLine' => (int) ($expense['LineNum'] ?? 0),
