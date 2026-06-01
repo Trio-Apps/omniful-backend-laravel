@@ -2571,6 +2571,12 @@ trait HandlesSapPurchaseAndProducts
             $body['DocCurrency'] = $currency;
         }
 
+        // Stamp Omniful UDFs (U_omo / U_omChannel / U_ZidId / U_SallaOrderId)
+        // on the PO header so the source Omniful purchase order can be looked
+        // up from SAP, and so the downstream GRPO can propagate the same
+        // markers automatically. Requires the UDFs to exist on table OPOR.
+        $body = $this->appendOmnifulDocumentUdfs($body, $data, (string) ($displayId ?? ''));
+
         $response = $this->post('/PurchaseOrders', $body);
         if (!$response->successful() && $this->isSapInactiveVendorError((string) $response->body())) {
             $this->ensureSupplierIsActive($supplierCode, $data);
@@ -3932,6 +3938,16 @@ trait HandlesSapPurchaseAndProducts
             'DocumentLines' => $lines,
             'Comments' => $comments,
         ];
+
+        // Propagate the Omniful UDFs from the source PO so the GRPO is
+        // traceable back to the same Omniful purchase order. Requires the
+        // UDFs to exist on table OPDN.
+        foreach (['U_omo', 'U_omChannel', 'U_ZidId', 'U_SallaOrderId'] as $udfField) {
+            $value = trim((string) ($po[$udfField] ?? ''));
+            if ($value !== '') {
+                $body[$udfField] = $value;
+            }
+        }
 
         $response = $this->post('/PurchaseDeliveryNotes', $body);
 
