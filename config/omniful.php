@@ -344,6 +344,19 @@ return [
         'in_transit_enabled' => (bool) env('OMNIFUL_IN_TRANSIT_ENABLED', false),
         'in_transit_warehouse' => env('OMNIFUL_IN_TRANSIT_WAREHOUSE', ''),
         'force_in_transit' => (bool) env('OMNIFUL_IN_TRANSIT_FORCE', false),
+        // Stock Transfer Events monitor screen focuses on these two
+        // statuses by default (left the source warehouse / arrived at the
+        // target warehouse). All other statuses are still recorded and
+        // remain reachable from the Status filter, just hidden on first load.
+        'monitor_focus_statuses' => (function () {
+            $raw = trim((string) env('OMNIFUL_STOCK_TRANSFER_FOCUS_STATUSES', 'shipped,received'));
+            $parts = array_values(array_filter(array_map(
+                static fn ($s) => strtolower(trim((string) $s)),
+                explode(',', $raw)
+            )));
+
+            return $parts !== [] ? $parts : ['shipped', 'received'];
+        })(),
     ],
     'warehouse_resolution' => [
         'auto_create' => (bool) env('SAP_WAREHOUSE_AUTO_CREATE', false),

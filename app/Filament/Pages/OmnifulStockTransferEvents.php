@@ -11,6 +11,7 @@ use Filament\Pages\Page;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
+use Filament\Tables\Filters\SelectFilter;
 use Illuminate\Database\Eloquent\Builder;
 
 class OmnifulStockTransferEvents extends Page implements HasTable
@@ -78,6 +79,97 @@ class OmnifulStockTransferEvents extends Page implements HasTable
                 ->dateTime()
                 ->sortable(),
         ];
+    }
+
+    protected function getTableFilters(): array
+    {
+        $focus = $this->focusStatuses();
+        $focusLabel = 'Focus: ' . implode(' + ', array_map('ucfirst', $focus));
+
+        return [
+            SelectFilter::make('focus_status')
+                ->label('Status')
+                ->options([
+                    'focus' => $focusLabel . ' (default)',
+                    'shipped' => 'Shipped (left source warehouse)',
+                    'received' => 'Received (arrived at target warehouse)',
+                    'all' => 'All statuses',
+                ])
+                // Default the screen to the two states the team cares about.
+                // Selecting "All statuses" (or clearing) reveals the rest —
+                // every event is still stored, just hidden on first load.
+                ->default('focus')
+                ->query(function (Builder $query, array $data): Builder {
+                    $value = (string) ($data['value'] ?? 'focus');
+
+                    if ($value === '' || $value === 'all') {
+                        return $query;
+                    }
+
+                    $statuses = match ($value) {
+                        'shipped' => ['shipped'],
+                        'received' => ['received'],
+                        default => $this->focusStatuses(),
+                    };
+
+                    return $this->applyStatusScope($query, $statuses);
+                }),
+        ];
+    }
+
+    /**
+     * The two transfer states the monitor focuses on by default
+     * (left source warehouse / arrived at target warehouse).
+     *
+     * @return array<int,string>
+     */
+    private function focusStatuses(): array
+    {
+        $configured = (array) config('omniful.stock_transfer.monitor_focus_statuses', ['shipped', 'received']);
+        $configured = array_values(array_filter(array_map(
+            static fn ($s) => strtolower(trim((string) $s)),
+            $configured
+        )));
+
+        return $configured !== [] ? $configured : ['shipped', 'received'];
+    }
+
+    /**
+     * Restrict the query to events whose payload status matches one of the
+     * given statuses. The status lives in the JSON payload (data.status with
+     * fallbacks), so we match across the known paths. Case variants are
+     * included so a "Shipped"/"SHIPPED" payload is caught too.
+     *
+     * @param array<int,string> $statuses
+     */
+    private function applyStatusScope(Builder $query, array $statuses): Builder
+    {
+        $variants = [];
+        foreach ($statuses as $status) {
+            $status = strtolower(trim((string) $status));
+            if ($status === '') {
+                continue;
+            }
+            $variants[$status] = true;
+            $variants[ucfirst($status)] = true;
+            $variants[strtoupper($status)] = true;
+        }
+        $variants = array_keys($variants);
+
+        if ($variants === []) {
+            return $query;
+        }
+
+        return $query->where(function (Builder $inner) use ($variants): void {
+            foreach ([
+                'payload->data->status',
+                'payload->data->status_code',
+                'payload->status',
+                'payload->status_code',
+            ] as $path) {
+                $inner->orWhereIn($path, $variants);
+            }
+        });
     }
 
     protected function getTableActions(): array
