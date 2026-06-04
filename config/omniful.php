@@ -358,6 +358,21 @@ return [
             return $parts !== [] ? $parts : ['shipped', 'received'];
         })(),
     ],
+    'inventory_monitor' => [
+        // Inventory Events screen focuses on the "completed" status by
+        // default (counting / cycle-count completion). All other statuses
+        // are still recorded and reachable from the Status filter, just
+        // hidden on first load.
+        'monitor_focus_statuses' => (function () {
+            $raw = trim((string) env('OMNIFUL_INVENTORY_FOCUS_STATUSES', 'completed'));
+            $parts = array_values(array_filter(array_map(
+                static fn ($s) => strtolower(trim((string) $s)),
+                explode(',', $raw)
+            )));
+
+            return $parts !== [] ? $parts : ['completed'];
+        })(),
+    ],
     'warehouse_resolution' => [
         'auto_create' => (bool) env('SAP_WAREHOUSE_AUTO_CREATE', false),
         'map' => (function () {

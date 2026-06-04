@@ -11,6 +11,7 @@ use Filament\Pages\Page;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
+use Filament\Tables\Filters\SelectFilter;
 use Illuminate\Database\Eloquent\Builder;
 
 class OmnifulInventoryEvents extends Page implements HasTable
@@ -44,6 +45,7 @@ class OmnifulInventoryEvents extends Page implements HasTable
             ->selectRaw("JSON_UNQUOTE(JSON_EXTRACT(payload, '$.action')) as action_meta")
             ->selectRaw("JSON_UNQUOTE(JSON_EXTRACT(payload, '$.entity')) as entity_meta")
             ->selectRaw("JSON_UNQUOTE(JSON_EXTRACT(payload, '$.data.hub_code')) as hub_code_meta")
+            ->selectRaw("COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.data.status')), JSON_UNQUOTE(JSON_EXTRACT(payload, '$.data.status_code')), JSON_UNQUOTE(JSON_EXTRACT(payload, '$.status'))) as status_meta")
             ->selectRaw("COALESCE(JSON_LENGTH(JSON_EXTRACT(payload, '$.data.hub_inventory_items')), JSON_LENGTH(JSON_EXTRACT(payload, '$.data.items')), 0) as items_count_meta")
             ->orderByDesc('received_at');
     }
@@ -67,6 +69,12 @@ class OmnifulInventoryEvents extends Page implements HasTable
             TextColumn::make('entity')
                 ->label('Entity')
                 ->getStateUsing(fn ($record) => $record->entity_meta ?: '-')
+                ->toggleable(),
+            TextColumn::make('status')
+                ->label('Status')
+                ->badge()
+                ->color(fn ($state) => in_array(strtolower((string) $state), ['completed', 'complete'], true) ? 'success' : 'gray')
+                ->getStateUsing(fn ($record) => $record->status_meta ?: '-')
                 ->toggleable(),
             TextColumn::make('hub_code')
                 ->label('Hub')
@@ -97,6 +105,96 @@ class OmnifulInventoryEvents extends Page implements HasTable
                 ->dateTime()
                 ->sortable(),
         ];
+    }
+
+    protected function getTableFilters(): array
+    {
+        $focus = $this->focusStatuses();
+        $focusLabel = 'Focus: ' . implode(' + ', array_map('ucfirst', $focus));
+
+        return [
+            SelectFilter::make('focus_status')
+                ->label('Status')
+                ->options([
+                    'focus' => $focusLabel . ' (default)',
+                    'completed' => 'Completed (counting done)',
+                    'all' => 'All statuses',
+                ])
+                // Default the screen to the "completed" counting status; the
+                // rest stay recorded and reachable by switching to
+                // "All statuses".
+                ->default('focus')
+                ->query(function (Builder $query, array $data): Builder {
+                    $value = (string) ($data['value'] ?? 'focus');
+
+                    if ($value === '' || $value === 'all') {
+                        return $query;
+                    }
+
+                    $statuses = match ($value) {
+                        'completed' => ['completed'],
+                        default => $this->focusStatuses(),
+                    };
+
+                    return $this->applyStatusScope($query, $statuses);
+                }),
+        ];
+    }
+
+    /**
+     * The status the inventory monitor focuses on by default (counting
+     * completion). Configurable via
+     * omniful.inventory_monitor.monitor_focus_statuses.
+     *
+     * @return array<int,string>
+     */
+    private function focusStatuses(): array
+    {
+        $configured = (array) config('omniful.inventory_monitor.monitor_focus_statuses', ['completed']);
+        $configured = array_values(array_filter(array_map(
+            static fn ($s) => strtolower(trim((string) $s)),
+            $configured
+        )));
+
+        return $configured !== [] ? $configured : ['completed'];
+    }
+
+    /**
+     * Restrict the query to events whose payload status matches one of the
+     * given statuses. The status lives in the JSON payload (data.status with
+     * fallbacks). Case variants are included so "Completed"/"COMPLETED" are
+     * caught too.
+     *
+     * @param array<int,string> $statuses
+     */
+    private function applyStatusScope(Builder $query, array $statuses): Builder
+    {
+        $variants = [];
+        foreach ($statuses as $status) {
+            $status = strtolower(trim((string) $status));
+            if ($status === '') {
+                continue;
+            }
+            $variants[$status] = true;
+            $variants[ucfirst($status)] = true;
+            $variants[strtoupper($status)] = true;
+        }
+        $variants = array_keys($variants);
+
+        if ($variants === []) {
+            return $query;
+        }
+
+        return $query->where(function (Builder $inner) use ($variants): void {
+            foreach ([
+                'payload->data->status',
+                'payload->data->status_code',
+                'payload->status',
+                'payload->status_code',
+            ] as $path) {
+                $inner->orWhereIn($path, $variants);
+            }
+        });
     }
 
     protected function getTableActions(): array
