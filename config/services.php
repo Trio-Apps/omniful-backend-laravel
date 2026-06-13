@@ -44,7 +44,13 @@ return [
         'post_timeout' => (int) env('SAP_POST_TIMEOUT', 120),
         'login_timeout' => (int) env('SAP_LOGIN_TIMEOUT', 30),
         'logout_timeout' => (int) env('SAP_LOGOUT_TIMEOUT', 10),
-        'duplicate_invoice_scan_limit' => (int) env('SAP_DUPLICATE_INVOICE_SCAN_LIMIT', 2000),
+        // Last-resort duplicate AR-invoice payload scan depth. The scan pages
+        // through /Invoices (newest first) downloading full invoice objects —
+        // each page of 100 costs ~14s on this tenant. A duplicate we collide
+        // with is always recent, so it lives in the first page or two; scanning
+        // thousands deep saturates the SAP Service Layer and starves order
+        // workers for minutes. Keep this small (1-3 pages).
+        'duplicate_invoice_scan_limit' => (int) env('SAP_DUPLICATE_INVOICE_SCAN_LIMIT', 300),
     ],
 
 ];
