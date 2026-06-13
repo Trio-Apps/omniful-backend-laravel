@@ -21,6 +21,9 @@ use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
+use Throwable;
 
 class IntegrationControlSettings extends Page implements HasForms
 {
@@ -379,8 +382,130 @@ class IntegrationControlSettings extends Page implements HasForms
                 ->icon('heroicon-o-arrow-path')
                 ->color('gray')
                 ->action('syncSapCostCenters'),
+            Action::make('resetAllData')
+                ->label('Reset All Data')
+                ->icon('heroicon-o-trash')
+                ->color('danger')
+                ->requiresConfirmation()
+                ->modalHeading('Reset All Operational Data')
+                ->modalDescription(
+                    'Deletes ALL Omniful orders & every event type (order / return / purchase order / '
+                    . 'inwarding / inventory / product / stock-transfer), the SAP sync-event log, and the '
+                    . 'local master-data mirrors (items / suppliers / warehouses / cost centers), then clears '
+                    . 'queued & failed jobs and restarts workers. PRESERVED: SAP & Omniful connection keys, '
+                    . 'cost-center mapping settings, SAP reference catalogs (currencies, accounts, documents…), '
+                    . 'and user logins. This cannot be undone.'
+                )
+                ->modalSubmitActionLabel('Delete Everything')
+                ->form([
+                    TextInput::make('confirm_text')
+                        ->label('Type RESET to confirm')
+                        ->required()
+                        ->rules(['in:RESET']),
+                ])
+                ->action(fn () => $this->resetAllData()),
         ];
 
         return $actions;
+    }
+
+    /**
+     * Tables wiped by "Reset All Data". Operational event/order data + the
+     * SAP sync-event log + local master-data mirrors (all re-syncable).
+     *
+     * NEVER includes: integration_settings (keys/credentials/config),
+     * sap_cost_center_settings (mapping config), users/sessions, the queue
+     * batches table, or the SAP reference catalogs (treated as stable
+     * reference data that does not need deleting).
+     *
+     * @var array<int,string>
+     */
+    private array $resettableTables = [
+        // Omniful operational events + orders
+        'omniful_order_events',
+        'omniful_orders',
+        'omniful_return_order_events',
+        'omniful_purchase_order_events',
+        'omniful_inwarding_events',
+        'omniful_inventory_events',
+        'omniful_product_events',
+        'omniful_stock_transfer_events',
+        // SAP sync tracking
+        'sap_sync_events',
+        // Local master-data mirrors (re-syncable from SAP/Omniful)
+        'sap_items',
+        'sap_suppliers',
+        'sap_warehouses',
+        'sap_cost_centers',
+    ];
+
+    public function resetAllData(): void
+    {
+        try {
+            // Ask active workers to stop gracefully before cleanup.
+            Artisan::call('queue:restart');
+
+            $cleared = $this->wipeResettableTables();
+
+            // Clear pending + failed queue jobs across all queues.
+            if (DB::getSchemaBuilder()->hasTable('jobs')) {
+                DB::table('jobs')->delete();
+            }
+            if (DB::getSchemaBuilder()->hasTable('failed_jobs')) {
+                DB::table('failed_jobs')->delete();
+            }
+
+            // Trigger workers restart after cleanup (supervisor-managed).
+            Artisan::call('queue:restart');
+
+            Notification::make()
+                ->title('All operational data reset')
+                ->body(
+                    $cleared . ' table(s) cleared and the queue was flushed. '
+                    . 'Connection keys, cost-center settings, SAP reference catalogs and user logins were preserved. '
+                    . 'Workers received a restart signal.'
+                )
+                ->success()
+                ->send();
+        } catch (Throwable $e) {
+            Notification::make()
+                ->title('Reset failed')
+                ->body($e->getMessage())
+                ->danger()
+                ->send();
+        }
+    }
+
+    private function wipeResettableTables(): int
+    {
+        $schema = DB::getSchemaBuilder();
+        $driver = DB::getDriverName();
+        $isMysql = in_array($driver, ['mysql', 'mariadb'], true);
+
+        if ($isMysql) {
+            DB::statement('SET FOREIGN_KEY_CHECKS=0');
+        }
+
+        $cleared = 0;
+        try {
+            foreach ($this->resettableTables as $table) {
+                if (!$schema->hasTable($table)) {
+                    continue;
+                }
+
+                if ($isMysql) {
+                    DB::table($table)->truncate();
+                } else {
+                    DB::table($table)->delete();
+                }
+                $cleared++;
+            }
+        } finally {
+            if ($isMysql) {
+                DB::statement('SET FOREIGN_KEY_CHECKS=1');
+            }
+        }
+
+        return $cleared;
     }
 }
