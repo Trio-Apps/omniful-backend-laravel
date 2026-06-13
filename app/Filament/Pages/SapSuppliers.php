@@ -4,6 +4,7 @@ namespace App\Filament\Pages;
 
 use App\Models\SapSyncEvent;
 use App\Models\SapSupplier;
+use App\Services\IntegrationDirectionService;
 use App\Services\SapSupplierBackgroundSyncService;
 use Filament\Actions\Action;
 use Filament\Notifications\Notification;
@@ -26,6 +27,13 @@ class SapSuppliers extends Page implements HasTable
     protected static ?int $navigationSort = 20;
 
     protected string $view = 'filament.pages.sap-suppliers';
+
+    public static function shouldRegisterNavigation(): bool
+    {
+        // Supplier sync is stopped — hide the page from the menu. It reappears
+        // if the supplier sync is re-enabled (OMNIFUL_SYNC_SUPPLIERS_ENABLED).
+        return app(IntegrationDirectionService::class)->isDomainEnabled('suppliers');
+    }
 
     protected function getTableQuery(): Builder
     {

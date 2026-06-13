@@ -4,6 +4,7 @@ namespace App\Filament\Pages;
 
 use App\Models\SapWarehouse;
 use App\Models\SapSyncEvent;
+use App\Services\IntegrationDirectionService;
 use App\Services\SapWarehouseBackgroundSyncService;
 use Filament\Actions\Action;
 use Filament\Notifications\Notification;
@@ -97,8 +98,10 @@ class SapWarehouses extends Page implements HasTable
                 ->url(SapCatalogOverview::getUrl()),
         ];
 
+        $isOmnifulToSap = app(IntegrationDirectionService::class)->isOmnifulToSap('warehouses');
+
         $actions[] = Action::make('syncWarehouses')
-            ->label('Sync from SAP')
+            ->label($isOmnifulToSap ? 'Sync Omniful → SAP' : 'Sync from SAP')
             ->icon('heroicon-o-arrow-path')
             ->extraAttributes([
                 'wire:loading.attr' => 'disabled',

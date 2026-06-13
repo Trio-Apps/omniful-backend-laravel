@@ -4,6 +4,7 @@ namespace App\Filament\Pages;
 
 use App\Models\SapItem;
 use App\Models\SapSyncEvent;
+use App\Services\IntegrationDirectionService;
 use App\Services\SapItemBackgroundSyncService;
 use Filament\Actions\Action;
 use Filament\Notifications\Notification;
@@ -26,6 +27,13 @@ class SapItems extends Page implements HasTable
     protected static ?int $navigationSort = 30;
 
     protected string $view = 'filament.pages.sap-items';
+
+    public static function shouldRegisterNavigation(): bool
+    {
+        // Item sync is stopped — hide the page from the menu. It reappears
+        // automatically if the item sync is re-enabled (OMNIFUL_SYNC_ITEMS_ENABLED).
+        return app(IntegrationDirectionService::class)->isDomainEnabled('items');
+    }
 
     protected function getTableQuery(): Builder
     {
