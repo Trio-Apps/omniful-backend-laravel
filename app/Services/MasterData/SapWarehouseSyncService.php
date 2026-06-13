@@ -243,28 +243,63 @@ class SapWarehouseSyncService
 
         $ok = 0;
         $failed = 0;
+        $skipped = 0;
         $errors = [];
 
         foreach ($rows as $row) {
-            try {
-                $payload = [
-                    'code' => data_get($row, 'code') ?? data_get($row, 'hub_code') ?? data_get($row, 'id'),
-                    'name' => data_get($row, 'name') ?? data_get($row, 'hub_name'),
-                ];
+            $code = (string) (data_get($row, 'code') ?? data_get($row, 'hub_code') ?? data_get($row, 'id'));
+            $name = (string) (data_get($row, 'name') ?? data_get($row, 'hub_name') ?? $code);
 
-                $result = $sapClient->syncWarehouseFromOmniful($payload);
+            try {
+                $result = $sapClient->syncWarehouseFromOmniful([
+                    'code' => $code,
+                    'name' => $name,
+                ]);
+
                 if (($result['status'] ?? '') === 'skipped_by_udf') {
+                    $skipped++;
                     continue;
                 }
+
+                // Mirror ONLY the pushed Omniful hub into the local table so
+                // the page shows exactly what we synced (Omniful → SAP). We
+                // deliberately do NOT pull the full SAP warehouse list back
+                // here — that previously flooded this page with every SAP
+                // warehouse and falsely marked them "pending" for an
+                // Omniful push that no longer runs in this direction.
+                if ($code !== '') {
+                    SapWarehouse::updateOrCreate(
+                        ['code' => $code],
+                        [
+                            'name' => $name,
+                            'status' => 'synced',
+                            'omniful_status' => 'synced',
+                            'omniful_synced_at' => now(),
+                            'synced_at' => now(),
+                            'error' => null,
+                            'omniful_error' => null,
+                        ]
+                    );
+                }
+
                 $ok++;
             } catch (\Throwable $e) {
+                if ($code !== '') {
+                    SapWarehouse::updateOrCreate(
+                        ['code' => $code],
+                        [
+                            'name' => $name,
+                            'status' => 'failed',
+                            'error' => $e->getMessage(),
+                        ]
+                    );
+                }
+
                 $failed++;
-                $errors[] = ($row['code'] ?? $row['id'] ?? 'unknown') . ': ' . $e->getMessage();
+                $errors[] = ($code !== '' ? $code : 'unknown') . ': ' . $e->getMessage();
             }
         }
 
-        $this->syncFromSap($sapClient);
-
-        return ['ok' => $ok, 'failed' => $failed, 'errors' => $errors];
+        return ['ok' => $ok, 'failed' => $failed, 'skipped' => $skipped, 'errors' => $errors];
     }
 }
