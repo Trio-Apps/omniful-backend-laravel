@@ -4,15 +4,25 @@ namespace App\Services;
 
 use App\Jobs\RunSapSupplierBackgroundSync;
 use App\Models\SapSyncEvent;
+use App\Services\IntegrationDirectionService;
 use Illuminate\Support\Str;
 
 class SapSupplierBackgroundSyncService
 {
     /**
-     * @return array{queued:bool,already_running:bool,event:\App\Models\SapSyncEvent}
+     * @return array{queued:bool,already_running:bool,disabled:bool,event:?\App\Models\SapSyncEvent}
      */
     public function dispatch(?string $triggeredBy = null): array
     {
+        if (!app(IntegrationDirectionService::class)->isDomainEnabled('suppliers')) {
+            return [
+                'queued' => false,
+                'already_running' => false,
+                'disabled' => true,
+                'event' => null,
+            ];
+        }
+
         $activeEvent = $this->activeEvent();
         if ($activeEvent !== null) {
             if ($this->shouldRequeueStaleEvent($activeEvent)) {

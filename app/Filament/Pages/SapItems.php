@@ -113,6 +113,17 @@ class SapItems extends Page implements HasTable
     public function queueItemSync(SapItemBackgroundSyncService $dispatcher): void
     {
         $result = $dispatcher->dispatch('sap_items_page');
+
+        if ((bool) ($result['disabled'] ?? false)) {
+            Notification::make()
+                ->title('Item sync is disabled')
+                ->body('Only the Warehouse sync is active. Item sync is turned off.')
+                ->warning()
+                ->send();
+
+            return;
+        }
+
         $event = $result['event'];
 
         if ((bool) $result['already_running']) {

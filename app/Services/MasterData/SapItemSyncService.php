@@ -4,14 +4,24 @@ namespace App\Services\MasterData;
 
 use App\Models\SapItem;
 use App\Models\SapSyncEvent;
+use App\Services\IntegrationDirectionService;
 use App\Services\OmnifulApiClient;
 use App\Services\SapServiceLayerClient;
 use Illuminate\Support\Arr;
 
 class SapItemSyncService
 {
+    private function syncDisabled(): bool
+    {
+        return !app(IntegrationDirectionService::class)->isDomainEnabled('items');
+    }
+
     public function syncFromSap(SapServiceLayerClient $client): array
     {
+        if ($this->syncDisabled()) {
+            return ['total' => 0, 'synced' => 0, 'pending' => 0, 'skipped' => 0, 'disabled' => true];
+        }
+
         $rows = $client->fetchItems();
         $synced = 0;
         $pending = 0;
@@ -51,6 +61,10 @@ class SapItemSyncService
 
     public function pushToOmniful(OmnifulApiClient $client, ?SapSyncEvent $event = null): array
     {
+        if ($this->syncDisabled()) {
+            return ['ok' => 0, 'failed' => 0, 'errors' => [], 'cancelled' => false, 'disabled' => true];
+        }
+
         $records = SapItem::query()
             ->whereNull('omniful_status')
             ->orWhere('omniful_status', '!=', 'synced')
@@ -105,6 +119,10 @@ class SapItemSyncService
 
     public function syncFromOmniful(OmnifulApiClient $omnifulClient, SapServiceLayerClient $sapClient): array
     {
+        if ($this->syncDisabled()) {
+            return ['ok' => 0, 'failed' => 0, 'errors' => [], 'disabled' => true];
+        }
+
         $rows = $omnifulClient->fetchList('items');
 
         $ok = 0;

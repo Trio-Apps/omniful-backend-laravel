@@ -51,30 +51,15 @@ class IntegrationControlSettings extends Page implements HasForms
         return $schema
             ->components([
                 Section::make('Sync Direction')
-                    ->description('Choose the source of truth per domain to prevent sync collisions')
+                    ->description('Only the Warehouse master-data sync is active (Omniful → SAP). Item and Supplier syncs are turned off; Inventory continues via its own real-time webhook flow.')
                     ->schema([
-                        Select::make('sync_direction_items')
-                            ->label('Items')
-                            ->options(app(IntegrationDirectionService::class)->options())
-                            ->default(IntegrationDirectionService::SAP_TO_OMNIFUL)
-                            ->required(),
-                        Select::make('sync_direction_suppliers')
-                            ->label('Suppliers')
-                            ->options(app(IntegrationDirectionService::class)->options())
-                            ->default(IntegrationDirectionService::SAP_TO_OMNIFUL)
-                            ->required(),
                         Select::make('sync_direction_warehouses')
                             ->label('Warehouses / Hubs')
                             ->options(app(IntegrationDirectionService::class)->options())
-                            ->default(IntegrationDirectionService::SAP_TO_OMNIFUL)
-                            ->required(),
-                        Select::make('sync_direction_inventory')
-                            ->label('Inventory')
-                            ->options(app(IntegrationDirectionService::class)->options())
                             ->default(IntegrationDirectionService::OMNIFUL_TO_SAP)
+                            ->helperText('Warehouses/hubs are pushed from Omniful into SAP. Existing warehouses in SAP are updated (already-created are not duplicated).')
                             ->required(),
-                    ])
-                    ->columns(2),
+                    ]),
                 Section::make('Warehouse Cost Centers')
                     ->description('Warehouse-specific cost center mapping is managed from the dedicated Warehouse Cost Centers page.')
                     ->schema([
@@ -187,13 +172,22 @@ class IntegrationControlSettings extends Page implements HasForms
     {
         $state = $this->form->getState();
 
+        // Items / Suppliers / Inventory direction selectors are no longer
+        // shown on the form (only Warehouses is). Preserve their existing
+        // stored values instead of overwriting them with null.
+        $existing = IntegrationSetting::find(1);
+
         IntegrationSetting::updateOrCreate(
             ['id' => 1],
             [
-                'sync_direction_items' => $state['sync_direction_items'] ?? null,
-                'sync_direction_suppliers' => $state['sync_direction_suppliers'] ?? null,
-                'sync_direction_warehouses' => $state['sync_direction_warehouses'] ?? null,
-                'sync_direction_inventory' => $state['sync_direction_inventory'] ?? null,
+                'sync_direction_items' => $state['sync_direction_items']
+                    ?? $existing?->sync_direction_items,
+                'sync_direction_suppliers' => $state['sync_direction_suppliers']
+                    ?? $existing?->sync_direction_suppliers,
+                'sync_direction_warehouses' => $state['sync_direction_warehouses']
+                    ?? $existing?->sync_direction_warehouses,
+                'sync_direction_inventory' => $state['sync_direction_inventory']
+                    ?? $existing?->sync_direction_inventory,
                 'order_payment_enabled' => (bool) ($state['order_payment_enabled'] ?? false),
                 'order_payment_method_map' => $state['order_payment_method_map'] ?? null,
                 'order_tax_code_ksa_taxable' => $state['order_tax_code_ksa_taxable'] ?? null,

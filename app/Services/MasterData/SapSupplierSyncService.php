@@ -4,13 +4,23 @@ namespace App\Services\MasterData;
 
 use App\Models\SapSupplier;
 use App\Models\SapSyncEvent;
+use App\Services\IntegrationDirectionService;
 use App\Services\OmnifulApiClient;
 use App\Services\SapServiceLayerClient;
 
 class SapSupplierSyncService
 {
+    private function syncDisabled(): bool
+    {
+        return !app(IntegrationDirectionService::class)->isDomainEnabled('suppliers');
+    }
+
     public function syncFromSap(SapServiceLayerClient $client): array
     {
+        if ($this->syncDisabled()) {
+            return ['total' => 0, 'synced' => 0, 'pending' => 0, 'skipped' => 0, 'disabled' => true];
+        }
+
         $rows = $client->fetchSuppliers();
         $synced = 0;
         $pending = 0;
@@ -63,6 +73,10 @@ class SapSupplierSyncService
 
     public function pushToOmniful(OmnifulApiClient $client, ?int $limit = null, ?SapSyncEvent $event = null): array
     {
+        if ($this->syncDisabled()) {
+            return ['ok' => 0, 'failed' => 0, 'errors' => [], 'cancelled' => false, 'disabled' => true];
+        }
+
         $query = SapSupplier::query()
             ->where(function ($q): void {
                 $q->whereNull('omniful_status')
@@ -160,6 +174,10 @@ class SapSupplierSyncService
 
     public function syncFromOmniful(OmnifulApiClient $omnifulClient, SapServiceLayerClient $sapClient): array
     {
+        if ($this->syncDisabled()) {
+            return ['ok' => 0, 'failed' => 0, 'errors' => [], 'disabled' => true];
+        }
+
         $rows = $omnifulClient->fetchList('suppliers');
 
         $ok = 0;

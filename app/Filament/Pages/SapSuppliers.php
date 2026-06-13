@@ -114,6 +114,17 @@ class SapSuppliers extends Page implements HasTable
     public function queueSupplierSync(SapSupplierBackgroundSyncService $dispatcher): void
     {
         $result = $dispatcher->dispatch('sap_suppliers_page');
+
+        if ((bool) ($result['disabled'] ?? false)) {
+            Notification::make()
+                ->title('Supplier sync is disabled')
+                ->body('Only the Warehouse sync is active. Supplier sync is turned off.')
+                ->warning()
+                ->send();
+
+            return;
+        }
+
         $event = $result['event'];
 
         if ((bool) $result['already_running']) {

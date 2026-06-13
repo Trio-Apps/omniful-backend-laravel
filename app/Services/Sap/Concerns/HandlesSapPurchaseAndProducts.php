@@ -3654,10 +3654,43 @@ trait HandlesSapPurchaseAndProducts
         ]);
 
         if (!$response->successful()) {
-            throw new \RuntimeException('SAP warehouse create failed: ' . $response->status() . ' ' . $response->body());
+            // Already-created safety net: when pushing Omniful warehouses into
+            // SAP, a warehouse may already exist (created earlier, or our
+            // existence pre-check missed it due to case/whitespace). SAP
+            // returns an "already exists" error on the create — recover by
+            // updating the existing warehouse instead of failing the sync.
+            $body = (string) $response->body();
+            if ($this->isSapWarehouseAlreadyExistsError($body)) {
+                $encoded = str_replace("'", "''", $warehouseCode);
+                $patch = $this->patch("/Warehouses('{$encoded}')", [
+                    'WarehouseName' => $warehouseName,
+                ]);
+
+                if ($patch->successful()) {
+                    return ['status' => 'updated', 'warehouse_code' => $warehouseCode];
+                }
+
+                // Update also failed but the warehouse clearly exists — treat
+                // as already present rather than aborting the whole push.
+                return ['status' => 'exists', 'warehouse_code' => $warehouseCode];
+            }
+
+            throw new \RuntimeException('SAP warehouse create failed: ' . $response->status() . ' ' . $body);
         }
 
         return ['status' => 'created', 'warehouse_code' => $warehouseCode];
+    }
+
+    private function isSapWarehouseAlreadyExistsError(string $responseBody): bool
+    {
+        $normalized = strtolower($responseBody);
+
+        return str_contains($normalized, 'already exists')
+            || str_contains($normalized, 'already exist')
+            || str_contains($normalized, 'duplicate')
+            // SAP B1 SBObob / Service Layer key-conflict signals.
+            || str_contains($normalized, '-2035')
+            || str_contains($normalized, 'exists in the system');
     }
 
 

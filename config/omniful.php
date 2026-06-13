@@ -4,6 +4,16 @@ return [
     'dashboard_actions' => [
         'master_data_sync_enabled' => (bool) env('OMNIFUL_DASHBOARD_MASTER_DATA_SYNC_ENABLED', false),
     ],
+    // Master-data sync enablement per domain. Only the warehouse sync is
+    // active (Omniful -> SAP); item and supplier syncs are stopped — their
+    // services no-op on every trigger (dashboard button, console command,
+    // background job). Inventory is a separate webhook-driven flow and is
+    // NOT governed here. Flip an env flag to re-enable a domain.
+    'master_data_sync' => [
+        'items_enabled' => (bool) env('OMNIFUL_SYNC_ITEMS_ENABLED', false),
+        'suppliers_enabled' => (bool) env('OMNIFUL_SYNC_SUPPLIERS_ENABLED', false),
+        'warehouses_enabled' => (bool) env('OMNIFUL_SYNC_WAREHOUSES_ENABLED', true),
+    ],
     'sync_endpoints' => [
         'warehouses' => env('OMNIFUL_WAREHOUSES_ENDPOINT', '/sales-channel/public/v1/tenants/hubs'),
         'suppliers' => env('OMNIFUL_SUPPLIERS_ENDPOINT', '/sales-channel/public/v1/suppliers'),

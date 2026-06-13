@@ -46,6 +46,16 @@ class SyncSapMasterData extends Command
                 }
             }
 
+            if ($syncSuppliers && !$directionService->isDomainEnabled('suppliers')) {
+                $this->warn('Supplier sync is disabled (only Warehouse sync is active) — skipping.');
+                $syncSuppliers = false;
+            }
+
+            if ($syncItems && !$directionService->isDomainEnabled('items')) {
+                $this->warn('Item sync is disabled (only Warehouse sync is active) — skipping.');
+                $syncItems = false;
+            }
+
             if ($syncSuppliers) {
                 if ($directionService->isSapToOmniful('suppliers')) {
                     $this->info('Syncing SAP suppliers...');
