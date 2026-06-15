@@ -3845,7 +3845,22 @@ trait HandlesSapPurchaseAndProducts
         $selectClause = implode(',', array_unique($select));
         $escapedField = str_replace("'", "''", $field);
         $escapedValue = str_replace("'", "''", $notIntegrated);
-        $filter = rawurlencode("{$escapedField} eq '{$escapedValue}'");
+
+        // Pick up two cases:
+        //   1. Brand-new items: U_omInt = N (any item type) -> first-time integration.
+        //   2. Already-integrated bundles whose ZIDCOMBO composition changed:
+        //      the staff flip U_OmBInt = N (leaving U_omInt = Y) and the
+        //      service re-pushes the KIT. We scope this to sales-only items
+        //      (SalesItem=tYES, InventoryItem=tNO) so a plain inventory SKU
+        //      whose bundle flag happens to be N is NOT re-processed forever.
+        $filterExpr = "{$escapedField} eq '{$escapedValue}'";
+        if ($bundleField !== '') {
+            $escapedBundleField = str_replace("'", "''", $bundleField);
+            $filterExpr = "({$filterExpr})"
+                . " or ({$escapedBundleField} eq '{$escapedValue}'"
+                . " and SalesItem eq 'tYES' and InventoryItem eq 'tNO')";
+        }
+        $filter = rawurlencode($filterExpr);
 
         $rows = [];
         $top = 200;
