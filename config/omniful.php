@@ -83,6 +83,13 @@ return [
     'sync_timeout' => (int) env('OMNIFUL_TIMEOUT', 20),
     'push_batch' => [
         'suppliers' => (int) env('OMNIFUL_PUSH_BATCH_SUPPLIERS', 50),
+        // Number of items sent to Omniful per bulk request (the /skus endpoint
+        // accepts an array). Sending one item per request triggers Omniful's
+        // 429 rate limit on large catalogs; batching collapses 200 requests
+        // into a handful.
+        'items' => (int) env('OMNIFUL_PUSH_BATCH_ITEMS', 25),
+        // Pause (ms) between batches to stay under the rate limit.
+        'delay_ms' => (int) env('OMNIFUL_PUSH_BATCH_DELAY_MS', 200),
     ],
     'item_push_defaults' => [
         'handling_type' => env('OMNIFUL_ITEM_HANDLING_TYPE', 'cold'),

@@ -71,50 +71,100 @@ class SapItemSyncService
             ->orderBy('code')
             ->get();
 
+        $batchSize = max(1, (int) config('omniful.push_batch.items', 25));
+        $delayMs = max(0, (int) config('omniful.push_batch.delay_ms', 200));
+        $sapClient = app(SapServiceLayerClient::class);
+
         $ok = 0;
         $failed = 0;
         $errors = [];
 
-        foreach ($records as $record) {
+        // Push items to Omniful in BULK (the /skus endpoint takes an array).
+        // One request per item trips Omniful's 429 rate limit on large
+        // catalogs; batching plus a 429 backoff keeps us under it.
+        foreach ($records->chunk($batchSize) as $chunk) {
             if ($event?->fresh()?->sap_status === 'cancel_requested') {
                 return ['ok' => $ok, 'failed' => $failed, 'errors' => $errors, 'cancelled' => true];
             }
 
-            $record->omniful_status = 'syncing';
-            $record->omniful_error = null;
-            $record->save();
-
-            try {
-                $sapClient = app(SapServiceLayerClient::class);
+            $payloads = [];
+            $batchRecords = [];
+            foreach ($chunk as $record) {
                 if (!$sapClient->isItemIntegrationEnabled((string) $record->code)) {
-                    $record->omniful_status = 'skipped';
-                    $record->omniful_error = 'Skipped by item integration UDF control';
-                    $record->save();
+                    $record->update([
+                        'omniful_status' => 'skipped',
+                        'omniful_error' => 'Skipped by item integration UDF control',
+                    ]);
                     continue;
                 }
 
-                $payload = $this->buildOmnifulPayload($record);
+                $payloads[] = $this->buildOmnifulPayload($record);
+                $batchRecords[] = $record;
+            }
 
-                $response = $client->upsert('items', $record->code, [$payload]);
-                if (!$response['ok']) {
-                    throw new \RuntimeException('HTTP ' . $response['status'] . ' ' . $response['body']);
+            if ($payloads === []) {
+                continue;
+            }
+
+            $response = $this->pushBatchWithBackoff($client, 'items', $payloads);
+
+            if ($response['ok'] ?? false) {
+                foreach ($batchRecords as $record) {
+                    $record->update([
+                        'omniful_status' => 'synced',
+                        'omniful_error' => null,
+                        'omniful_synced_at' => now(),
+                    ]);
+                    $ok++;
                 }
+            } else {
+                $message = 'HTTP ' . ($response['status'] ?? 0) . ' ' . ($response['body'] ?? '');
+                foreach ($batchRecords as $record) {
+                    $record->update([
+                        'omniful_status' => 'failed',
+                        'omniful_error' => $message,
+                    ]);
+                    $failed++;
+                }
+                $errors[] = 'batch(' . count($batchRecords) . '): ' . $message;
+            }
 
-                $record->omniful_status = 'synced';
-                $record->omniful_error = null;
-                $record->omniful_synced_at = now();
-                $record->save();
-                $ok++;
-            } catch (\Throwable $e) {
-                $record->omniful_status = 'failed';
-                $record->omniful_error = $e->getMessage();
-                $record->save();
-                $failed++;
-                $errors[] = $record->code . ': ' . $e->getMessage();
+            if ($delayMs > 0) {
+                usleep($delayMs * 1000);
             }
         }
 
         return ['ok' => $ok, 'failed' => $failed, 'errors' => $errors, 'cancelled' => false];
+    }
+
+    /**
+     * POST a bulk payload to Omniful, retrying with exponential backoff when
+     * the API returns 429 (Too Many Requests). The $code is irrelevant for a
+     * list payload (Omniful posts the whole array to the base endpoint).
+     *
+     * @param array<int,array<string,mixed>> $payloads
+     * @return array<string,mixed>
+     */
+    private function pushBatchWithBackoff(OmnifulApiClient $client, string $resource, array $payloads): array
+    {
+        $delays = [2, 5, 10]; // seconds
+        $attempt = 0;
+
+        while (true) {
+            $response = $client->upsert($resource, 'bulk', $payloads);
+            if ($response['ok'] ?? false) {
+                return $response;
+            }
+
+            $status = (int) ($response['status'] ?? 0);
+            if ($status === 429 && $attempt < count($delays)) {
+                sleep($delays[$attempt]);
+                $attempt++;
+                continue;
+            }
+
+            return $response;
+        }
     }
 
     public function syncFromOmniful(OmnifulApiClient $omnifulClient, SapServiceLayerClient $sapClient): array
