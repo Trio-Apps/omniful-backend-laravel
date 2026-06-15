@@ -5,7 +5,6 @@ namespace App\Filament\Pages;
 use App\Models\SapItem;
 use App\Models\SapSyncEvent;
 use App\Services\IntegrationDirectionService;
-use App\Services\SapItemBackgroundPushService;
 use App\Services\SapItemBackgroundSyncService;
 use Filament\Actions\Action;
 use Filament\Notifications\Notification;
@@ -108,7 +107,7 @@ class SapItems extends Page implements HasTable
         ];
 
         $actions[] = Action::make('syncItems')
-            ->label('Sync from SAP')
+            ->label('Integrate to Omniful')
             ->icon('heroicon-o-arrow-path')
             ->extraAttributes([
                 'wire:loading.attr' => 'disabled',
@@ -116,39 +115,7 @@ class SapItems extends Page implements HasTable
             ])
             ->action('queueItemSync');
 
-        $actions[] = Action::make('pushItems')
-            ->label('Push to Omniful')
-            ->icon('heroicon-o-cloud-arrow-up')
-            ->color('warning')
-            ->extraAttributes([
-                'wire:loading.attr' => 'disabled',
-                'wire:loading.class' => 'opacity-70',
-            ])
-            ->action('queueItemPush');
-
         return $actions;
-    }
-
-    public function queueItemPush(SapItemBackgroundPushService $dispatcher): void
-    {
-        $result = $dispatcher->dispatch('sap_items_page');
-        $event = $result['event'];
-
-        if ((bool) $result['already_running']) {
-            Notification::make()
-                ->title('Item push already queued')
-                ->body('Current event: ' . $event->event_key)
-                ->warning()
-                ->send();
-
-            return;
-        }
-
-        Notification::make()
-            ->title('Item push to Omniful queued')
-            ->body('Background job queued: ' . $event->event_key)
-            ->success()
-            ->send();
     }
 
     public function queueItemSync(SapItemBackgroundSyncService $dispatcher): void
@@ -178,8 +145,8 @@ class SapItems extends Page implements HasTable
         }
 
         Notification::make()
-            ->title('Item sync queued')
-            ->body('Background job queued: ' . $event->event_key)
+            ->title('Item integration queued')
+            ->body('Integrating not-yet-integrated SAP items (U_omInt=N) into Omniful as SKU/KIT. Event: ' . $event->event_key)
             ->success()
             ->send();
     }
