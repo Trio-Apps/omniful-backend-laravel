@@ -3837,30 +3837,37 @@ trait HandlesSapPurchaseAndProducts
         }
 
         $bundleField = trim((string) config('omniful.item_integration.bundle_integrated_udf_field', ''));
+        // Do NOT $select the bundle UDF: we never read its value (only stamp it
+        // on push), and selecting a UDF that is not defined on this SAP company
+        // 400s the whole query ("Property 'U_OmBInt' of 'Item' is invalid").
         $select = array_values(array_filter([
             'ItemCode', 'ItemName', 'ForeignName', 'BarCode', 'SalesUnit', 'InventoryUOM',
             'PurchaseUnit', 'UoMGroupEntry', 'InventoryItem', 'PurchaseItem', 'SalesItem',
-            'AvgStdPrice', 'Valid', $field, $bundleField,
+            'AvgStdPrice', 'Valid', $field,
         ]));
         $selectClause = implode(',', array_unique($select));
         $escapedField = str_replace("'", "''", $field);
         $escapedValue = str_replace("'", "''", $notIntegrated);
 
-        // Pick up two cases:
+        // Primary filter picks up two cases:
         //   1. Brand-new items: U_omInt = N (any item type) -> first-time integration.
         //   2. Already-integrated bundles whose ZIDCOMBO composition changed:
-        //      the staff flip U_OmBInt = N (leaving U_omInt = Y) and the
-        //      service re-pushes the KIT. We scope this to sales-only items
-        //      (SalesItem=tYES, InventoryItem=tNO) so a plain inventory SKU
-        //      whose bundle flag happens to be N is NOT re-processed forever.
-        $filterExpr = "{$escapedField} eq '{$escapedValue}'";
+        //      staff flip U_OmBInt = N (leaving U_omInt = Y); scoped to
+        //      sales-only items so a plain inventory SKU is not reprocessed.
+        // The simple filter is the fallback when the bundle UDF is not defined
+        // on this company (so the re-sync clause would 400).
+        $simpleFilter = "{$escapedField} eq '{$escapedValue}'";
+        $primaryFilter = $simpleFilter;
         if ($bundleField !== '') {
             $escapedBundleField = str_replace("'", "''", $bundleField);
-            $filterExpr = "({$filterExpr})"
+            $primaryFilter = "({$simpleFilter})"
                 . " or ({$escapedBundleField} eq '{$escapedValue}'"
                 . " and SalesItem eq 'tYES' and InventoryItem eq 'tNO')";
         }
+
+        $filterExpr = $primaryFilter;
         $filter = rawurlencode($filterExpr);
+        $triedFallback = false;
 
         $rows = [];
         $top = 200;
@@ -3869,6 +3876,18 @@ trait HandlesSapPurchaseAndProducts
             $path = "/Items?\$select={$selectClause}&\$filter={$filter}&\$orderby=ItemCode&\$top={$top}&\$skip={$skip}";
             $response = $this->get($path);
             if (!$response->successful()) {
+                // The bundle re-sync clause references U_OmBInt; if that UDF
+                // is not defined on this company, drop it and retry with the
+                // plain "U_omInt = N" filter instead of failing the whole pull.
+                if (!$triedFallback
+                    && $filterExpr !== $simpleFilter
+                    && $this->isInvalidSapPropertyError((string) $response->body(), $bundleField)) {
+                    $triedFallback = true;
+                    $filterExpr = $simpleFilter;
+                    $filter = rawurlencode($filterExpr);
+                    continue;
+                }
+
                 throw new \RuntimeException('SAP pending-item fetch failed: ' . $response->status() . ' ' . $response->body());
             }
 
@@ -3978,6 +3997,7 @@ trait HandlesSapPurchaseAndProducts
 
         $body = [$field => $integrated];
 
+        $bundleField = '';
         if ($bundle) {
             $bundleField = trim((string) config('omniful.item_integration.bundle_integrated_udf_field', ''));
             if ($bundleField !== '') {
@@ -3987,7 +4007,20 @@ trait HandlesSapPurchaseAndProducts
 
         $encoded = str_replace("'", "''", $itemCode);
         $response = $this->patch("/Items('{$encoded}')", $body);
+
         if (!$response->successful()) {
+            // If the bundle UDF (U_OmBInt) is not defined on this company, the
+            // PATCH 400s on it — still stamp the main integrated flag so the
+            // item is not re-pulled forever (the KIT was already pushed).
+            if ($bundleField !== ''
+                && $this->isInvalidSapPropertyError((string) $response->body(), $bundleField)) {
+                $retry = $this->patch("/Items('{$encoded}')", [$field => $integrated]);
+                if ($retry->successful()) {
+                    return;
+                }
+                throw new \RuntimeException('SAP item integration-flag update failed: ' . $retry->status() . ' ' . $retry->body());
+            }
+
             throw new \RuntimeException('SAP item integration-flag update failed: ' . $response->status() . ' ' . $response->body());
         }
     }
