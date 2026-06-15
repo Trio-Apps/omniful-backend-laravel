@@ -80,6 +80,7 @@ class StockTransferWebhookService
         $useInTransit = $this->shouldUseInTransit($data, $payload, $inTransitWarehouse);
 
         $transferReference = (string) ($event->external_id ?? '');
+        $transferChannel = $this->extractTransferChannel($data, $payload);
 
         if ($useInTransit) {
             $result = $client->createStockTransferViaTransit(
@@ -88,7 +89,8 @@ class StockTransferWebhookService
                 $toWarehouse,
                 $inTransitWarehouse,
                 $remarks,
-                $transferReference
+                $transferReference,
+                $transferChannel
             );
         } else {
             $result = $client->createStockTransfer(
@@ -96,7 +98,8 @@ class StockTransferWebhookService
                 $fromWarehouse,
                 $toWarehouse,
                 $remarks,
-                $transferReference
+                $transferReference,
+                $transferChannel
             );
         }
 
@@ -268,6 +271,34 @@ class StockTransferWebhookService
         }
 
         return null;
+    }
+
+    private function extractTransferChannel(array $data, array $payload): string
+    {
+        $candidates = [
+            data_get($data, 'sales_channel.name'),
+            data_get($data, 'sales_channel.tag'),
+            data_get($data, 'sales_channel'),
+            data_get($data, 'channel_name'),
+            data_get($data, 'channel'),
+            data_get($data, 'source'),
+            data_get($data, 'store_name'),
+            data_get($payload, 'sales_channel.name'),
+            data_get($payload, 'source'),
+            data_get($payload, 'store_name'),
+        ];
+
+        foreach ($candidates as $candidate) {
+            if (is_array($candidate)) {
+                $candidate = $candidate['name'] ?? $candidate['tag'] ?? $candidate['code'] ?? null;
+            }
+            $value = trim((string) ($candidate ?? ''));
+            if ($value !== '') {
+                return $value;
+            }
+        }
+
+        return '';
     }
 
     private function extractTransferStatus(array $data, array $payload): string

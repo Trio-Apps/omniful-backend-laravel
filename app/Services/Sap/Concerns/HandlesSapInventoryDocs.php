@@ -234,7 +234,7 @@ trait HandlesSapInventoryDocs
     /**
      * @param array<int,array{seller_sku_code:string,quantity:float}> $items
      */
-    public function createStockTransfer(array $items, string $fromWarehouse, string $toWarehouse, string $remarks = '', string $reference = ''): array
+    public function createStockTransfer(array $items, string $fromWarehouse, string $toWarehouse, string $remarks = '', string $reference = '', string $channel = ''): array
     {
         $fromWarehouse = trim($fromWarehouse);
         $toWarehouse = trim($toWarehouse);
@@ -291,16 +291,23 @@ trait HandlesSapInventoryDocs
             'StockTransferLines' => $lines,
         ];
 
-        // Stamp the Omniful transfer reference as the U_omo UDF so the SAP
-        // StockTransfer is traceable back to the Omniful transfer request
-        // (same identifier we use on orders/invoices). We stamp ONLY U_omo
-        // here — not the sales-channel UDFs (U_ZidId/U_SallaOrderId) — since
-        // those are not defined on the StockTransfers (OWTR) table and would
-        // make SAP reject the document. Requires U_omo to exist on OWTR.
+        // Stamp the Omniful transfer reference as the U_omo UDF and the
+        // Omniful channel as U_omChannel so the SAP StockTransfer is traceable
+        // back to the Omniful transfer request (same identifiers we use on
+        // orders/invoices). We stamp ONLY these two — not the sales-channel-id
+        // UDFs (U_ZidId/U_SallaOrderId) — since those are not defined on the
+        // StockTransfers (OWTR) table and would make SAP reject the document.
+        // Requires U_omo (and U_omChannel, if used) to exist on OWTR.
         $reference = trim($reference);
         $orderUdfField = trim((string) config('omniful.order_sync.order_number_udf_field', 'U_omo'));
         if ($reference !== '' && $orderUdfField !== '') {
             $body[$orderUdfField] = $reference;
+        }
+
+        $channel = trim($channel);
+        $channelUdfField = trim((string) config('omniful.order_sync.channel_udf_field', 'U_omChannel'));
+        if ($channel !== '' && $channelUdfField !== '') {
+            $body[$channelUdfField] = $channel;
         }
 
         $response = $this->post('/StockTransfers', $body);
@@ -323,7 +330,8 @@ trait HandlesSapInventoryDocs
         string $toWarehouse,
         string $inTransitWarehouse,
         string $remarks = '',
-        string $reference = ''
+        string $reference = '',
+        string $channel = ''
     ): array {
         $inTransitWarehouse = trim($inTransitWarehouse);
         if ($inTransitWarehouse === '') {
@@ -339,7 +347,8 @@ trait HandlesSapInventoryDocs
             $fromWarehouse,
             $inTransitWarehouse,
             trim($remarks . ' | leg-1 source->transit'),
-            $reference
+            $reference,
+            $channel
         );
 
         if (($first['ignored'] ?? false) === true) {
@@ -351,7 +360,8 @@ trait HandlesSapInventoryDocs
             $inTransitWarehouse,
             $toWarehouse,
             trim($remarks . ' | leg-2 transit->destination'),
-            $reference
+            $reference,
+            $channel
         );
 
         if (($second['ignored'] ?? false) === true) {
