@@ -79,20 +79,24 @@ class StockTransferWebhookService
         $inTransitWarehouse = $this->extractInTransitWarehouse($data, $payload);
         $useInTransit = $this->shouldUseInTransit($data, $payload, $inTransitWarehouse);
 
+        $transferReference = (string) ($event->external_id ?? '');
+
         if ($useInTransit) {
             $result = $client->createStockTransferViaTransit(
                 $lines,
                 $fromWarehouse,
                 $toWarehouse,
                 $inTransitWarehouse,
-                $remarks
+                $remarks,
+                $transferReference
             );
         } else {
             $result = $client->createStockTransfer(
                 $lines,
                 $fromWarehouse,
                 $toWarehouse,
-                $remarks
+                $remarks,
+                $transferReference
             );
         }
 

@@ -234,7 +234,7 @@ trait HandlesSapInventoryDocs
     /**
      * @param array<int,array{seller_sku_code:string,quantity:float}> $items
      */
-    public function createStockTransfer(array $items, string $fromWarehouse, string $toWarehouse, string $remarks = ''): array
+    public function createStockTransfer(array $items, string $fromWarehouse, string $toWarehouse, string $remarks = '', string $reference = ''): array
     {
         $fromWarehouse = trim($fromWarehouse);
         $toWarehouse = trim($toWarehouse);
@@ -291,6 +291,18 @@ trait HandlesSapInventoryDocs
             'StockTransferLines' => $lines,
         ];
 
+        // Stamp the Omniful transfer reference as the U_omo UDF so the SAP
+        // StockTransfer is traceable back to the Omniful transfer request
+        // (same identifier we use on orders/invoices). We stamp ONLY U_omo
+        // here — not the sales-channel UDFs (U_ZidId/U_SallaOrderId) — since
+        // those are not defined on the StockTransfers (OWTR) table and would
+        // make SAP reject the document. Requires U_omo to exist on OWTR.
+        $reference = trim($reference);
+        $orderUdfField = trim((string) config('omniful.order_sync.order_number_udf_field', 'U_omo'));
+        if ($reference !== '' && $orderUdfField !== '') {
+            $body[$orderUdfField] = $reference;
+        }
+
         $response = $this->post('/StockTransfers', $body);
         if (!$response->successful()) {
             throw new \RuntimeException('SAP stock transfer create failed: ' . $response->status() . ' ' . $response->body());
@@ -310,7 +322,8 @@ trait HandlesSapInventoryDocs
         string $fromWarehouse,
         string $toWarehouse,
         string $inTransitWarehouse,
-        string $remarks = ''
+        string $remarks = '',
+        string $reference = ''
     ): array {
         $inTransitWarehouse = trim($inTransitWarehouse);
         if ($inTransitWarehouse === '') {
@@ -325,7 +338,8 @@ trait HandlesSapInventoryDocs
             $items,
             $fromWarehouse,
             $inTransitWarehouse,
-            trim($remarks . ' | leg-1 source->transit')
+            trim($remarks . ' | leg-1 source->transit'),
+            $reference
         );
 
         if (($first['ignored'] ?? false) === true) {
@@ -336,7 +350,8 @@ trait HandlesSapInventoryDocs
             $items,
             $inTransitWarehouse,
             $toWarehouse,
-            trim($remarks . ' | leg-2 transit->destination')
+            trim($remarks . ' | leg-2 transit->destination'),
+            $reference
         );
 
         if (($second['ignored'] ?? false) === true) {
