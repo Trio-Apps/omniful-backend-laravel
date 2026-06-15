@@ -1460,12 +1460,18 @@ trait HandlesSapPurchaseAndProducts
         // "CARDFEE-<order>" (globally unique to clear the SP duplicate check);
         // older JEs used Ref2 = <order> or Reference = CARD_FEE. We try the
         // tagged Ref2 first, then the legacy layouts, then a memo substring.
+        // NOTE: the COGS JE for the same order also carries Reference = <order>
+        // (and Reference2 = "COGS-<order>"). Any bare "Reference eq <order>" or
+        // "Reference2 eq <order>" fallback would risk matching the COGS JE and
+        // make the Card Fee step bind to it. We therefore keep every
+        // order-only fallback guarded with a "Card fee" memo marker so a
+        // card-fee lookup can never resolve to a COGS journal.
         $filters = [
             "Reference2 eq '{$escapedTaggedRef2}'",
             "Reference3 eq '{$escapedJournalReference}' and Reference eq '{$escapedReference}'",
             "Reference2 eq '{$escapedReference}' and Reference eq '{$escapedJournalReference}'",
-            "Reference2 eq '{$escapedReference}'",
-            "Reference eq '{$escapedReference}'",
+            "Reference2 eq '{$escapedReference}' and contains(Memo,'Card fee')",
+            "Reference eq '{$escapedReference}' and contains(Memo,'Card fee')",
             "contains(Memo,'Omniful order {$escapedReference}') and contains(Memo,'Card fee')",
             "contains(Memo,'{$escapedReference}') and contains(Memo,'Card fee')",
         ];
@@ -2268,7 +2274,13 @@ trait HandlesSapPurchaseAndProducts
             // SP duplicate check). Try it first, then the legacy layouts.
             $escapedTaggedRef2 = str_replace("'", "''", $this->buildJournalRef2('COGS', $reference));
             $filters[] = "Reference2 eq '{$escapedTaggedRef2}'";
-            $filters[] = "Reference eq '{$escapedRef}'";
+            // Legacy fallback MUST stay COGS-specific: the Card Fee JE for the
+            // same order also carries Reference = <order>, so a bare
+            // "Reference eq <order>" would wrongly match the Card Fee JE and
+            // make the COGS step bind to it (both steps then show the same SAP
+            // doc number and no real COGS entry is ever posted). Guard it with
+            // a COGS memo marker so it only matches genuine COGS journals.
+            $filters[] = "Reference eq '{$escapedRef}' and contains(Memo,'COGS')";
         }
         if ($deliveryDocNum !== '') {
             $escapedDocNum = str_replace("'", "''", $deliveryDocNum);
