@@ -5,6 +5,7 @@ namespace App\Filament\Pages;
 use App\Models\SapSyncEvent;
 use App\Models\SapSupplier;
 use App\Services\IntegrationDirectionService;
+use App\Services\SapSupplierBackgroundPushService;
 use App\Services\SapSupplierBackgroundSyncService;
 use Filament\Actions\Action;
 use Filament\Notifications\Notification;
@@ -116,7 +117,39 @@ class SapSuppliers extends Page implements HasTable
             ])
             ->action('queueSupplierSync');
 
+        $actions[] = Action::make('pushSuppliers')
+            ->label('Push to Omniful')
+            ->icon('heroicon-o-cloud-arrow-up')
+            ->color('warning')
+            ->extraAttributes([
+                'wire:loading.attr' => 'disabled',
+                'wire:loading.class' => 'opacity-70',
+            ])
+            ->action('queueSupplierPush');
+
         return $actions;
+    }
+
+    public function queueSupplierPush(SapSupplierBackgroundPushService $dispatcher): void
+    {
+        $result = $dispatcher->dispatch('sap_suppliers_page');
+        $event = $result['event'];
+
+        if ((bool) $result['already_running']) {
+            Notification::make()
+                ->title('Supplier push already queued')
+                ->body('Current event: ' . $event->event_key)
+                ->warning()
+                ->send();
+
+            return;
+        }
+
+        Notification::make()
+            ->title('Supplier push to Omniful queued')
+            ->body('Background job queued: ' . $event->event_key)
+            ->success()
+            ->send();
     }
 
     public function queueSupplierSync(SapSupplierBackgroundSyncService $dispatcher): void
