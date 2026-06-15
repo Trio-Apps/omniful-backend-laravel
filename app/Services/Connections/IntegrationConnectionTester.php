@@ -170,7 +170,8 @@ class IntegrationConnectionTester
             $expiresAt = now()->addSeconds($seconds);
         }
 
-        IntegrationSetting::updateOrCreate(['id' => 1], [
+        // Persist refreshed tokens onto the ACTIVE environment profile.
+        IntegrationSetting::active()?->update([
             $columns['access'] => (string) $newAccess,
             $columns['refresh'] => $newRefresh ? (string) $newRefresh : $refreshToken,
             $columns['expires_in'] => is_numeric($expiresIn) ? (int) $expiresIn : null,

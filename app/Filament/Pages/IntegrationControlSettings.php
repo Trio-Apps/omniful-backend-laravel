@@ -177,11 +177,11 @@ class IntegrationControlSettings extends Page implements HasForms
 
         // Items / Suppliers / Inventory direction selectors are no longer
         // shown on the form (only Warehouses is). Preserve their existing
-        // stored values instead of overwriting them with null.
-        $existing = IntegrationSetting::find(1);
+        // stored values instead of overwriting them with null. Order config
+        // is saved onto the ACTIVE environment profile.
+        $existing = IntegrationSetting::active();
 
-        IntegrationSetting::updateOrCreate(
-            ['id' => 1],
+        $payload =
             [
                 'sync_direction_items' => $state['sync_direction_items']
                     ?? $existing?->sync_direction_items,
@@ -212,8 +212,16 @@ class IntegrationControlSettings extends Page implements HasForms
                 'order_cogs_journal_enabled' => (bool) ($state['order_cogs_journal_enabled'] ?? false),
                 'order_cogs_expense_account' => $state['order_cogs_expense_account'] ?? null,
                 'order_cogs_inventory_offset_account' => $state['order_cogs_inventory_offset_account'] ?? null,
-            ]
-        );
+            ];
+
+        if ($existing !== null) {
+            $existing->update($payload);
+        } else {
+            IntegrationSetting::create(array_merge(
+                ['environment' => 'production', 'is_active' => true],
+                $payload
+            ));
+        }
 
         SapCostCenterSetting::query()->updateOrCreate(
             ['warehouse_code' => null],

@@ -2,11 +2,16 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 
 class IntegrationSetting extends Model
 {
+    public const ENVIRONMENTS = ['production', 'staging'];
+
     protected $fillable = [
+        'environment',
+        'is_active',
         'sap_service_layer_url',
         'sap_company_db',
         'sap_username',
@@ -62,6 +67,7 @@ class IntegrationSetting extends Model
     ];
 
     protected $casts = [
+        'is_active' => 'boolean',
         'sap_password' => 'encrypted',
         'sap_ssl_verify' => 'boolean',
         'omniful_api_key' => 'encrypted',
@@ -103,4 +109,55 @@ class IntegrationSetting extends Model
         'order_cogs_expense_account' => 'string',
         'order_cogs_inventory_offset_account' => 'string',
     ];
+
+    /**
+     * Make the ACTIVE environment profile the default record everywhere.
+     *
+     * Connection settings are stored one row per environment (production /
+     * staging). A global ordering scope puts the active row first, so every
+     * existing `IntegrationSetting::first()` / `query()->first()` read across
+     * the SAP client, Omniful client, webhook secret checks, sync flows, etc.
+     * automatically resolves to the selected environment without having to
+     * touch each call site. `find($id)` and explicit `where()` queries are
+     * unaffected (ordering is ignored when a key is targeted).
+     */
+    protected static function booted(): void
+    {
+        static::addGlobalScope('activeEnvironmentFirst', function (Builder $query) {
+            $query->orderByDesc('is_active')->orderBy('id');
+        });
+    }
+
+    /**
+     * The currently active environment profile (falls back to the first row).
+     */
+    public static function active(): ?self
+    {
+        return static::query()->where('is_active', true)->first()
+            ?? static::query()->first();
+    }
+
+    /**
+     * Switch the active environment. Marks the chosen profile active (and all
+     * others inactive) and returns it. Connection caches that key off the old
+     * credentials (e.g. the SAP session cookie) naturally miss because the new
+     * profile's credentials differ; callers should still flush transient caches.
+     */
+    public static function activateEnvironment(string $environment): ?self
+    {
+        $environment = strtolower(trim($environment));
+        if (!in_array($environment, self::ENVIRONMENTS, true)) {
+            return null;
+        }
+
+        $target = static::withoutGlobalScopes()->where('environment', $environment)->first();
+        if ($target === null) {
+            $target = static::create(['environment' => $environment, 'is_active' => false]);
+        }
+
+        static::withoutGlobalScopes()->where('id', '!=', $target->id)->update(['is_active' => false]);
+        $target->forceFill(['is_active' => true])->save();
+
+        return $target->refresh();
+    }
 }

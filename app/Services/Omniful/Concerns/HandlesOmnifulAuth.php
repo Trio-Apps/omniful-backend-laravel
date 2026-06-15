@@ -52,7 +52,9 @@ trait HandlesOmnifulAuth
         $this->activeAuth['expires_at'] = $expiresAt;
 
         $columns = $this->activeAuth['columns'] ?? [];
-        IntegrationSetting::updateOrCreate(['id' => 1], [
+        // Persist refreshed tokens onto the ACTIVE environment profile (not a
+        // hard-coded id=1) so staging/production tokens never cross over.
+        IntegrationSetting::active()?->update([
             $columns['access'] ?? 'omniful_access_token' => $this->activeAuth['access_token'],
             $columns['refresh'] ?? 'omniful_refresh_token' => $this->activeAuth['refresh_token'],
             $columns['expires_in'] ?? 'omniful_token_expires_in' => is_numeric($expiresIn) ? (int) $expiresIn : null,

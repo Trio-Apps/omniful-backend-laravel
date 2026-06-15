@@ -7,6 +7,7 @@ use App\Models\SapSyncEvent;
 use App\Services\SapCatalogBackgroundSyncService;
 use App\Services\Connections\IntegrationConnectionTester;
 use Filament\Actions\Action;
+use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Forms\Concerns\InteractsWithForms;
@@ -34,7 +35,8 @@ class IntegrationSettings extends Page implements HasForms
 
     public function mount(): void
     {
-        $settings = IntegrationSetting::first();
+        // first() resolves to the ACTIVE environment profile (global scope).
+        $settings = IntegrationSetting::active();
         $this->form->fill($settings?->toArray() ?? []);
     }
 
@@ -42,6 +44,21 @@ class IntegrationSettings extends Page implements HasForms
     {
         return $schema
             ->components([
+                Section::make('Active Environment')
+                    ->description('Switch the live connection profile. Every SAP & Omniful connection (tenant + seller) and every sync/page follows the selected environment. Each environment keeps its own values.')
+                    ->schema([
+                        Select::make('environment')
+                            ->label('Environment')
+                            ->options([
+                                'production' => 'Production',
+                                'staging' => 'Staging',
+                            ])
+                            ->default('production')
+                            ->selectablePlaceholder(false)
+                            ->live()
+                            ->afterStateUpdated(fn ($state) => $this->switchEnvironment((string) $state))
+                            ->helperText('Selecting an environment makes it the active one and loads its saved connection values below.'),
+                    ]),
                 Section::make('SAP Business One')
                     ->description('Service Layer connection details')
                     ->schema([
@@ -242,15 +259,49 @@ class IntegrationSettings extends Page implements HasForms
         ];
     }
 
+    public function switchEnvironment(string $environment): void
+    {
+        $target = IntegrationSetting::activateEnvironment($environment);
+        if ($target === null) {
+            Notification::make()
+                ->title('Unknown environment')
+                ->danger()
+                ->send();
+
+            return;
+        }
+
+        // Reload the form with the newly-activated environment's values. The
+        // SAP session cookie is keyed by credentials, so the next call logs in
+        // fresh against the new environment; no stale session is reused.
+        $this->form->fill($target->toArray());
+
+        Notification::make()
+            ->title('Switched to ' . ucfirst($environment))
+            ->body('All SAP/Omniful connections and syncs now use the ' . $environment . ' profile.')
+            ->success()
+            ->send();
+    }
+
     private function persistSettings(bool $notify = true): void
     {
         $state = $this->form->getState();
-        IntegrationSetting::updateOrCreate(['id' => 1], $state);
-        $this->form->fill(IntegrationSetting::first()?->toArray() ?? []);
+
+        // Save onto the profile currently selected in the form (the active
+        // environment), not a hard-coded id=1 row.
+        $environment = strtolower(trim((string) ($state['environment'] ?? '')));
+        if (!in_array($environment, IntegrationSetting::ENVIRONMENTS, true)) {
+            $environment = IntegrationSetting::active()?->environment ?? 'production';
+        }
+
+        $row = IntegrationSetting::firstOrCreate(['environment' => $environment]);
+        $row->update($state);
+
+        $this->form->fill(IntegrationSetting::active()?->toArray() ?? []);
 
         if ($notify) {
             Notification::make()
-                ->title('Connections saved')
+                ->title('Connections saved (' . $environment . ')')
                 ->success()
                 ->send();
         }
