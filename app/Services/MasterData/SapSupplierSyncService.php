@@ -146,6 +146,11 @@ class SapSupplierSyncService
                     throw new \RuntimeException('HTTP ' . $response['status'] . ' ' . $response['body']);
                 }
 
+                // Stamp the SAP integration flag (U_OmBPInt = Y) now that the
+                // supplier has been pushed to Omniful, so it is not pulled
+                // again on the next run.
+                $sapClient->markSupplierIntegrated((string) $record->code);
+
                 $record->omniful_status = 'synced';
                 $record->omniful_error = $usedFallbacks
                     ? ('Filled defaults for: ' . implode(', ', $usedFallbacks))

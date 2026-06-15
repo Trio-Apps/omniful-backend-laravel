@@ -475,11 +475,52 @@ trait HandlesSapMasterDataFetch
      */
     public function fetchSuppliers(): array
     {
+        // Only pull suppliers still flagged "not integrated" (U_OmBPInt = N)
+        // when the integration UDF is configured; the flag is stamped back to
+        // Y after a successful Omniful push. The CardType-only fallback keeps
+        // the sync working on companies where the UDF is not defined (the
+        // filtered URLs 400 and fetchAllWithFallback drops to the next).
+        $udf = trim((string) config('omniful.supplier_integration.integrated_udf_field', ''));
+        $pending = (string) config('omniful.supplier_integration.not_integrated_value', 'N');
+
+        $filterExpr = "CardType eq 'S'";
+        if ($udf !== '') {
+            $escUdf = str_replace("'", "''", $udf);
+            $escVal = str_replace("'", "''", $pending);
+            $filterExpr .= " and {$escUdf} eq '{$escVal}'";
+        }
+        $filter = rawurlencode($filterExpr);
+        $cardTypeOnly = rawurlencode("CardType eq 'S'");
+
         return $this->fetchAllWithFallback([
-            "/BusinessPartners?\$filter=CardType%20eq%20'S'&\$select=CardCode,CardName,EmailAddress,Phone1",
-            "/BusinessPartners?\$filter=CardType%20eq%20'S'",
-            "/BusinessPartners",
+            "/BusinessPartners?\$filter={$filter}&\$select=CardCode,CardName,EmailAddress,Phone1",
+            "/BusinessPartners?\$filter={$filter}",
+            "/BusinessPartners?\$filter={$cardTypeOnly}",
         ]);
+    }
+
+    /**
+     * Stamp the supplier integration flag (U_OmBPInt) back to "integrated"
+     * (Y) on the SAP Business Partner after a successful Omniful push.
+     */
+    public function markSupplierIntegrated(string $supplierCode): void
+    {
+        $supplierCode = trim($supplierCode);
+        if ($supplierCode === '') {
+            return;
+        }
+
+        $field = trim((string) config('omniful.supplier_integration.integrated_udf_field', ''));
+        $integrated = (string) config('omniful.supplier_integration.integrated_value', 'Y');
+        if ($field === '') {
+            return;
+        }
+
+        $encoded = str_replace("'", "''", $supplierCode);
+        $response = $this->patch("/BusinessPartners('{$encoded}')", [$field => $integrated]);
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP supplier integration-flag update failed: ' . $response->status() . ' ' . $response->body());
+        }
     }
 
     public function isSupplierIntegrationEnabled(string $supplierCode): bool

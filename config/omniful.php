@@ -71,6 +71,15 @@ return [
             explode(',', (string) env('SAP_SUPPLIER_INTEGRATION_ALLOWED_VALUES', 'Y,YES,TRUE,1,ENABLED'))
         ))),
     ],
+    // SAP -> Omniful supplier integration driven by a BP-master UDF flag,
+    // mirroring the item flow: only Business Partners (suppliers) whose
+    // U_OmBPInt = "N" are pulled; after a successful push to Omniful the flag
+    // is stamped back to "Y". Field name/values are configurable per company.
+    'supplier_integration' => [
+        'integrated_udf_field' => env('SAP_SUPPLIER_INTEGRATED_UDF', 'U_OmBPInt'),
+        'not_integrated_value' => env('SAP_SUPPLIER_NOT_INTEGRATED_VALUE', 'N'),
+        'integrated_value' => env('SAP_SUPPLIER_INTEGRATED_VALUE', 'Y'),
+    ],
     'sync_timeout' => (int) env('OMNIFUL_TIMEOUT', 20),
     'push_batch' => [
         'suppliers' => (int) env('OMNIFUL_PUSH_BATCH_SUPPLIERS', 50),
