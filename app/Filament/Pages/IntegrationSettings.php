@@ -271,16 +271,18 @@ class IntegrationSettings extends Page implements HasForms
             return;
         }
 
-        // Reload the form with the newly-activated environment's values. The
-        // SAP session cookie is keyed by credentials, so the next call logs in
-        // fresh against the new environment; no stale session is reused.
-        $this->form->fill($target->toArray());
-
         Notification::make()
             ->title('Switched to ' . ucfirst($environment))
             ->body('All SAP/Omniful connections and syncs now use the ' . $environment . ' profile.')
             ->success()
             ->send();
+
+        // Hard-reload the page so mount() re-reads the now-active profile and
+        // every field reliably reflects the selected environment's saved
+        // values (avoids partial form refreshes inside the update callback).
+        // The SAP session cookie is keyed by credentials, so the new
+        // environment logs in fresh; no stale session is reused.
+        $this->redirect(static::getUrl());
     }
 
     private function persistSettings(bool $notify = true): void
