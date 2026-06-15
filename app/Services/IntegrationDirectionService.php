@@ -29,9 +29,26 @@ class IntegrationDirectionService
         'warehouses' => 'omniful.master_data_sync.warehouses_enabled',
     ];
 
+    /**
+     * Domains locked to a single direction regardless of any stored setting.
+     * Items and suppliers always flow SAP -> Omniful (one direction only).
+     *
+     * @var array<string,string>
+     */
+    private array $forcedDirections = [
+        'items' => self::SAP_TO_OMNIFUL,
+        'suppliers' => self::SAP_TO_OMNIFUL,
+    ];
+
     public function for(string $domain): string
     {
         $domain = strtolower(trim($domain));
+
+        // Forced (one-direction-only) domains ignore any stored value.
+        if (isset($this->forcedDirections[$domain])) {
+            return $this->forcedDirections[$domain];
+        }
+
         $column = 'sync_direction_' . $domain;
         $fallback = $this->defaults[$domain] ?? self::SAP_TO_OMNIFUL;
 
