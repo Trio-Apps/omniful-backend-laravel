@@ -3820,6 +3820,163 @@ trait HandlesSapPurchaseAndProducts
         }
     }
 
+    /**
+     * Fetch OITM items still flagged "not integrated" (U_omInt = N) for the
+     * SAP -> Omniful item/bundle integration. Returns the raw Service Layer
+     * item records (including the type flags and the integrated UDF) so the
+     * caller can classify each one.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    public function fetchItemsPendingIntegration(int $limit = 0): array
+    {
+        $field = trim((string) config('omniful.item_integration.integrated_udf_field', 'U_omInt'));
+        $notIntegrated = (string) config('omniful.item_integration.not_integrated_value', 'N');
+        if ($field === '') {
+            throw new \RuntimeException('Item integration UDF field is not configured');
+        }
+
+        $bundleField = trim((string) config('omniful.item_integration.bundle_integrated_udf_field', ''));
+        $select = array_values(array_filter([
+            'ItemCode', 'ItemName', 'ForeignName', 'BarCode', 'SalesUnit', 'InventoryUOM',
+            'PurchaseUnit', 'InventoryItem', 'PurchaseItem', 'SalesItem', 'AvgStdPrice', 'Valid',
+            $field, $bundleField,
+        ]));
+        $selectClause = implode(',', array_unique($select));
+        $escapedField = str_replace("'", "''", $field);
+        $escapedValue = str_replace("'", "''", $notIntegrated);
+        $filter = rawurlencode("{$escapedField} eq '{$escapedValue}'");
+
+        $rows = [];
+        $top = 200;
+        $skip = 0;
+        while (true) {
+            $path = "/Items?\$select={$selectClause}&\$filter={$filter}&\$orderby=ItemCode&\$top={$top}&\$skip={$skip}";
+            $response = $this->get($path);
+            if (!$response->successful()) {
+                throw new \RuntimeException('SAP pending-item fetch failed: ' . $response->status() . ' ' . $response->body());
+            }
+
+            $page = (array) ($response->json('value') ?? []);
+            if ($page === []) {
+                break;
+            }
+
+            foreach ($page as $row) {
+                if (is_array($row)) {
+                    $rows[] = $row;
+                    if ($limit > 0 && count($rows) >= $limit) {
+                        return $rows;
+                    }
+                }
+            }
+
+            if (count($page) < $top) {
+                break;
+            }
+            $skip += $top;
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Read a combo/bundle definition from the ZIDCOMBO UDO by its parent item
+     * code. Returns the sub-item lines as
+     * [['item_code' => ..., 'quantity' => ...], ...] or [] when the item is
+     * not a combo (or the combo has no usable lines).
+     *
+     * @return array<int,array{item_code:string,quantity:float}>
+     */
+    public function fetchComboLinesFromUdo(string $itemCode): array
+    {
+        $itemCode = trim($itemCode);
+        if ($itemCode === '') {
+            return [];
+        }
+
+        $udo = trim((string) config('omniful.item_integration.combo_udo', 'ZIDCOMBO'));
+        $linesKey = trim((string) config('omniful.item_integration.combo_lines_collection', 'ZID_COMBOSLINESCollection'));
+        $itemField = trim((string) config('omniful.item_integration.combo_line_item_field', 'U_ItemCode'));
+        $qtyField = trim((string) config('omniful.item_integration.combo_line_qty_field', 'U_QTY'));
+        if ($udo === '') {
+            return [];
+        }
+
+        $escaped = str_replace("'", "''", $itemCode);
+        $filter = rawurlencode("Code eq '{$escaped}'");
+        $response = $this->get("/{$udo}?\$filter={$filter}&\$top=1");
+        if (!$response->successful()) {
+            Log::warning('SAP combo UDO lookup failed', [
+                'item_code' => $itemCode,
+                'udo' => $udo,
+                'status' => $response->status(),
+                'body' => $response->body(),
+            ]);
+
+            return [];
+        }
+
+        $combo = (array) (($response->json('value') ?? [])[0] ?? []);
+        if ($combo === []) {
+            return [];
+        }
+
+        // Skip canceled combos.
+        if (strtoupper(trim((string) ($combo['Canceled'] ?? 'N'))) === 'Y') {
+            return [];
+        }
+
+        $lines = [];
+        foreach ((array) ($combo[$linesKey] ?? []) as $line) {
+            if (!is_array($line)) {
+                continue;
+            }
+            $subCode = trim((string) ($line[$itemField] ?? ''));
+            $qty = (float) ($line[$qtyField] ?? 0);
+            if ($subCode === '' || $qty <= 0) {
+                continue;
+            }
+            $lines[] = ['item_code' => $subCode, 'quantity' => $qty];
+        }
+
+        return $lines;
+    }
+
+    /**
+     * Stamp the item-master integration flag(s) back to "integrated" after a
+     * successful Omniful push. Sets U_omInt = Y, and for bundles also the
+     * bundle-integrated flag (U_OmBInt) = Y.
+     */
+    public function markItemIntegrated(string $itemCode, bool $bundle = false): void
+    {
+        $itemCode = trim($itemCode);
+        if ($itemCode === '') {
+            return;
+        }
+
+        $field = trim((string) config('omniful.item_integration.integrated_udf_field', 'U_omInt'));
+        $integrated = (string) config('omniful.item_integration.integrated_value', 'Y');
+        if ($field === '') {
+            return;
+        }
+
+        $body = [$field => $integrated];
+
+        if ($bundle) {
+            $bundleField = trim((string) config('omniful.item_integration.bundle_integrated_udf_field', ''));
+            if ($bundleField !== '') {
+                $body[$bundleField] = $integrated;
+            }
+        }
+
+        $encoded = str_replace("'", "''", $itemCode);
+        $response = $this->patch("/Items('{$encoded}')", $body);
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP item integration-flag update failed: ' . $response->status() . ' ' . $response->body());
+        }
+    }
+
 
     private function createSapItem(string $itemCode, array $data): void
     {

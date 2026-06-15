@@ -18,11 +18,42 @@ return [
         'warehouses' => env('OMNIFUL_WAREHOUSES_ENDPOINT', '/sales-channel/public/v1/tenants/hubs'),
         'suppliers' => env('OMNIFUL_SUPPLIERS_ENDPOINT', '/sales-channel/public/v1/suppliers'),
         'items' => env('OMNIFUL_ITEMS_ENDPOINT', '/sales-channel/public/v1/skus'),
+        'kits' => env('OMNIFUL_KITS_ENDPOINT', '/sales-channel/public/v1/master/skus/kits'),
     ],
     'sync_methods' => [
         'warehouses' => env('OMNIFUL_WAREHOUSES_METHOD', 'post'),
         'suppliers' => env('OMNIFUL_SUPPLIERS_METHOD', 'post'),
         'items' => env('OMNIFUL_ITEMS_METHOD', 'post'),
+        'kits' => env('OMNIFUL_KITS_METHOD', 'post'),
+    ],
+    // SAP -> Omniful item/bundle integration driven by item-master UDF flags.
+    // We read OITM items whose integrated flag = "not integrated" and:
+    //   * sales-only items (SalesItem=tYES, InventoryItem=tNO) are bundles:
+    //     look them up in the ZIDCOMBO UDO; if it has sub-item lines, create a
+    //     KIT in Omniful and mark integrated + bundle-integrated; otherwise
+    //     ignore (do not integrate).
+    //   * inventory items (InventoryItem=tYES) are pushed to Omniful as a SKU
+    //     and marked integrated.
+    // Field names are configurable because they differ per SAP company.
+    'item_integration' => [
+        // OITM UDF that flags whether an item has been integrated to Omniful.
+        'integrated_udf_field' => env('SAP_ITEM_INTEGRATED_UDF', 'U_omInt'),
+        // OITM UDF that flags whether a bundle/combo has been integrated.
+        'bundle_integrated_udf_field' => env('SAP_ITEM_BUNDLE_INTEGRATED_UDF', 'U_OmBInt'),
+        // Value that means "not integrated yet" (what we read) and "integrated"
+        // (what we stamp after a successful push).
+        'not_integrated_value' => env('SAP_ITEM_NOT_INTEGRATED_VALUE', 'N'),
+        'integrated_value' => env('SAP_ITEM_INTEGRATED_VALUE', 'Y'),
+        // SAP UDO holding combo/bundle definitions (Service Layer object code,
+        // NOT the @table name) and its embedded sub-items collection + fields.
+        'combo_udo' => env('SAP_COMBO_UDO', 'ZIDCOMBO'),
+        'combo_lines_collection' => env('SAP_COMBO_LINES_COLLECTION', 'ZID_COMBOSLINESCollection'),
+        'combo_line_item_field' => env('SAP_COMBO_LINE_ITEM_FIELD', 'U_ItemCode'),
+        'combo_line_qty_field' => env('SAP_COMBO_LINE_QTY_FIELD', 'U_QTY'),
+        // Default currency stamped on the Omniful KIT payload.
+        'kit_currency' => env('OMNIFUL_KIT_CURRENCY', 'SAR'),
+        // Max items processed per run (0 = unlimited).
+        'batch_limit' => (int) env('SAP_ITEM_INTEGRATION_BATCH_LIMIT', 0),
     ],
     'integration_control' => [
         'item_udf_field' => env('SAP_ITEM_INTEGRATION_UDF_FIELD', 'U_OmnifulSync'),
