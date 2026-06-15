@@ -109,8 +109,8 @@ class SapSuppliers extends Page implements HasTable
         ];
 
         $actions[] = Action::make('syncSuppliers')
-            ->label('Sync from SAP')
-            ->icon('heroicon-o-arrow-path')
+            ->label('Pull from SAP')
+            ->icon('heroicon-o-arrow-down-tray')
             ->extraAttributes([
                 'wire:loading.attr' => 'disabled',
                 'wire:loading.class' => 'opacity-70',
@@ -126,6 +126,24 @@ class SapSuppliers extends Page implements HasTable
                 'wire:loading.class' => 'opacity-70',
             ])
             ->action('queueSupplierPush');
+
+        $actions[] = Action::make('clearSuppliers')
+            ->label('Clear list')
+            ->icon('heroicon-o-trash')
+            ->color('danger')
+            ->requiresConfirmation()
+            ->modalHeading('Clear local SAP suppliers')
+            ->modalDescription('Deletes all rows from the local SAP suppliers mirror on this page. SAP and Omniful are not touched. You can re-pull anytime.')
+            ->modalSubmitActionLabel('Clear')
+            ->action(function (): void {
+                $count = SapSupplier::query()->count();
+                SapSupplier::query()->delete();
+                Notification::make()
+                    ->title('Local suppliers cleared')
+                    ->body($count . ' row(s) removed from the local mirror.')
+                    ->success()
+                    ->send();
+            });
 
         return $actions;
     }

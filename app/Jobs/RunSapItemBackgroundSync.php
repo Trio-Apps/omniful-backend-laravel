@@ -3,7 +3,8 @@
 namespace App\Jobs;
 
 use App\Models\SapSyncEvent;
-use App\Services\MasterData\SapItemIntegrationService;
+use App\Services\MasterData\SapItemSyncService;
+use App\Services\SapServiceLayerClient;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 
@@ -21,7 +22,8 @@ class RunSapItemBackgroundSync implements ShouldQueue
     }
 
     public function handle(
-        SapItemIntegrationService $integration
+        SapServiceLayerClient $client,
+        SapItemSyncService $itemSync
     ): void {
         $event = SapSyncEvent::find($this->syncEventId);
         if ($event === null) {
@@ -38,18 +40,17 @@ class RunSapItemBackgroundSync implements ShouldQueue
         ]);
 
         try {
-            // Agreed flow: read only OITM items flagged not-integrated
-            // (U_omInt = N), integrate each as a SKU (inventory item) or a KIT
-            // (sales-only combo from ZIDCOMBO), then stamp the flag(s) to Y.
-            $details = $integration->run();
+            // PULL step only: mirror the not-yet-integrated SAP items
+            // (U_omInt = N) into the local table. The push step (separate
+            // button) classifies SKU/KIT, sends to Omniful and stamps Y.
+            $details = $itemSync->syncFromSap($client);
 
             $summary = [
-                'mode' => 'sap_to_omniful_integration',
+                'mode' => 'sap_to_local',
                 'total' => (int) ($details['total'] ?? 0),
-                'skus_created' => (int) ($details['skus_created'] ?? 0),
-                'kits_created' => (int) ($details['kits_created'] ?? 0),
-                'ignored_no_combo' => (int) ($details['ignored_no_combo'] ?? 0),
-                'skipped' => (int) ($details['skipped_other'] ?? 0),
+                'synced' => (int) ($details['synced'] ?? 0),
+                'pending' => (int) ($details['pending'] ?? 0),
+                'skipped' => (int) ($details['skipped'] ?? 0),
                 'failed' => (int) ($details['failed'] ?? 0),
             ];
 

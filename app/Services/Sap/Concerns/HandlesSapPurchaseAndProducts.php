@@ -3839,8 +3839,8 @@ trait HandlesSapPurchaseAndProducts
         $bundleField = trim((string) config('omniful.item_integration.bundle_integrated_udf_field', ''));
         $select = array_values(array_filter([
             'ItemCode', 'ItemName', 'ForeignName', 'BarCode', 'SalesUnit', 'InventoryUOM',
-            'PurchaseUnit', 'InventoryItem', 'PurchaseItem', 'SalesItem', 'AvgStdPrice', 'Valid',
-            $field, $bundleField,
+            'PurchaseUnit', 'UoMGroupEntry', 'InventoryItem', 'PurchaseItem', 'SalesItem',
+            'AvgStdPrice', 'Valid', $field, $bundleField,
         ]));
         $selectClause = implode(',', array_unique($select));
         $escapedField = str_replace("'", "''", $field);

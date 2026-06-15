@@ -5,6 +5,7 @@ namespace App\Filament\Pages;
 use App\Models\SapItem;
 use App\Models\SapSyncEvent;
 use App\Services\IntegrationDirectionService;
+use App\Services\SapItemBackgroundPushService;
 use App\Services\SapItemBackgroundSyncService;
 use Filament\Actions\Action;
 use Filament\Notifications\Notification;
@@ -107,15 +108,65 @@ class SapItems extends Page implements HasTable
         ];
 
         $actions[] = Action::make('syncItems')
-            ->label('Integrate to Omniful')
-            ->icon('heroicon-o-arrow-path')
+            ->label('Pull from SAP')
+            ->icon('heroicon-o-arrow-down-tray')
             ->extraAttributes([
                 'wire:loading.attr' => 'disabled',
                 'wire:loading.class' => 'opacity-70',
             ])
             ->action('queueItemSync');
 
+        $actions[] = Action::make('pushItems')
+            ->label('Push to Omniful')
+            ->icon('heroicon-o-cloud-arrow-up')
+            ->color('warning')
+            ->extraAttributes([
+                'wire:loading.attr' => 'disabled',
+                'wire:loading.class' => 'opacity-70',
+            ])
+            ->action('queueItemPush');
+
+        $actions[] = Action::make('clearItems')
+            ->label('Clear list')
+            ->icon('heroicon-o-trash')
+            ->color('danger')
+            ->requiresConfirmation()
+            ->modalHeading('Clear local SAP items')
+            ->modalDescription('Deletes all rows from the local SAP items mirror on this page. SAP and Omniful are not touched. You can re-pull anytime.')
+            ->modalSubmitActionLabel('Clear')
+            ->action(function (): void {
+                $count = SapItem::query()->count();
+                SapItem::query()->delete();
+                Notification::make()
+                    ->title('Local items cleared')
+                    ->body($count . ' row(s) removed from the local mirror.')
+                    ->success()
+                    ->send();
+            });
+
         return $actions;
+    }
+
+    public function queueItemPush(SapItemBackgroundPushService $dispatcher): void
+    {
+        $result = $dispatcher->dispatch('sap_items_page');
+        $event = $result['event'];
+
+        if ((bool) $result['already_running']) {
+            Notification::make()
+                ->title('Item push already queued')
+                ->body('Current event: ' . $event->event_key)
+                ->warning()
+                ->send();
+
+            return;
+        }
+
+        Notification::make()
+            ->title('Item push to Omniful queued')
+            ->body('Classifying SKU/KIT and pushing pending items. Event: ' . $event->event_key)
+            ->success()
+            ->send();
     }
 
     public function queueItemSync(SapItemBackgroundSyncService $dispatcher): void
@@ -145,8 +196,8 @@ class SapItems extends Page implements HasTable
         }
 
         Notification::make()
-            ->title('Item integration queued')
-            ->body('Integrating not-yet-integrated SAP items (U_omInt=N) into Omniful as SKU/KIT. Event: ' . $event->event_key)
+            ->title('Item pull queued')
+            ->body('Pulling not-yet-integrated SAP items (U_omInt=N) into the local list. Event: ' . $event->event_key)
             ->success()
             ->send();
     }

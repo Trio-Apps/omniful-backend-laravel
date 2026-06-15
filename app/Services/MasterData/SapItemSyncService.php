@@ -22,7 +22,10 @@ class SapItemSyncService
             return ['total' => 0, 'synced' => 0, 'pending' => 0, 'skipped' => 0, 'disabled' => true];
         }
 
-        $rows = $client->fetchItems();
+        // Pull ONLY the not-yet-integrated items (U_omInt = N) into the local
+        // mirror — not the whole catalogue. The push step then classifies each
+        // as SKU/KIT and stamps the flag to Y.
+        $rows = $client->fetchItemsPendingIntegration();
         $synced = 0;
         $pending = 0;
 
@@ -71,62 +74,53 @@ class SapItemSyncService
             ->orderBy('code')
             ->get();
 
-        $batchSize = max(1, (int) config('omniful.push_batch.items', 25));
         $delayMs = max(0, (int) config('omniful.push_batch.delay_ms', 200));
-        $sapClient = app(SapServiceLayerClient::class);
+        $integration = app(SapItemIntegrationService::class);
 
         $ok = 0;
         $failed = 0;
         $errors = [];
+        $summary = ['kit' => 0, 'sku' => 0, 'ignored' => 0, 'skipped' => 0];
 
-        // Push items to Omniful in BULK (the /skus endpoint takes an array).
-        // One request per item trips Omniful's 429 rate limit on large
-        // catalogs; batching plus a 429 backoff keeps us under it.
-        foreach ($records->chunk($batchSize) as $chunk) {
+        // Push step: classify each mirrored item as SKU (inventory) or KIT
+        // (sales-only ZIDCOMBO combo), push it to Omniful and stamp the SAP
+        // integration flag(s) to Y — the agreed U_omInt flow, per record.
+        foreach ($records as $record) {
             if ($event?->fresh()?->sap_status === 'cancel_requested') {
                 return ['ok' => $ok, 'failed' => $failed, 'errors' => $errors, 'cancelled' => true];
             }
 
-            $payloads = [];
-            $batchRecords = [];
-            foreach ($chunk as $record) {
-                if (!$sapClient->isItemIntegrationEnabled((string) $record->code)) {
-                    $record->update([
-                        'omniful_status' => 'skipped',
-                        'omniful_error' => 'Skipped by item integration UDF control',
-                    ]);
-                    continue;
-                }
-
-                $payloads[] = $this->buildOmnifulPayload($record);
-                $batchRecords[] = $record;
+            $rawItem = is_array($record->payload) ? $record->payload : [];
+            if (trim((string) ($rawItem['ItemCode'] ?? '')) === '') {
+                $rawItem['ItemCode'] = $record->code;
             }
 
-            if ($payloads === []) {
-                continue;
-            }
+            try {
+                $outcome = $integration->integrateSapItem($rawItem);
+                $summary[$outcome] = ($summary[$outcome] ?? 0) + 1;
 
-            $response = $this->pushBatchWithBackoff($client, 'items', $payloads);
-
-            if ($response['ok'] ?? false) {
-                foreach ($batchRecords as $record) {
+                if (in_array($outcome, ['kit', 'sku'], true)) {
                     $record->update([
                         'omniful_status' => 'synced',
                         'omniful_error' => null,
                         'omniful_synced_at' => now(),
                     ]);
                     $ok++;
-                }
-            } else {
-                $message = 'HTTP ' . ($response['status'] ?? 0) . ' ' . ($response['body'] ?? '');
-                foreach ($batchRecords as $record) {
+                } else {
                     $record->update([
-                        'omniful_status' => 'failed',
-                        'omniful_error' => $message,
+                        'omniful_status' => 'skipped',
+                        'omniful_error' => $outcome === 'ignored'
+                            ? 'Sales-only item with no ZIDCOMBO sub-items'
+                            : 'Not an inventory item or sellable bundle',
                     ]);
-                    $failed++;
                 }
-                $errors[] = 'batch(' . count($batchRecords) . '): ' . $message;
+            } catch (\Throwable $e) {
+                $record->update([
+                    'omniful_status' => 'failed',
+                    'omniful_error' => $e->getMessage(),
+                ]);
+                $failed++;
+                $errors[] = $record->code . ': ' . $e->getMessage();
             }
 
             if ($delayMs > 0) {
@@ -134,7 +128,7 @@ class SapItemSyncService
             }
         }
 
-        return ['ok' => $ok, 'failed' => $failed, 'errors' => $errors, 'cancelled' => false];
+        return ['ok' => $ok, 'failed' => $failed, 'errors' => $errors, 'cancelled' => false, 'summary' => $summary];
     }
 
     /**

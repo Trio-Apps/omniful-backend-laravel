@@ -51,35 +51,20 @@ class SapItemIntegrationService
                 continue;
             }
 
-            $salesItem = strtoupper(trim((string) ($item['SalesItem'] ?? ''))) === 'TYES';
-            $inventoryItem = strtoupper(trim((string) ($item['InventoryItem'] ?? ''))) === 'TYES';
-
             try {
-                // Sales-only (and NOT inventory) => bundle/combo candidate.
-                if ($salesItem && !$inventoryItem) {
-                    $lines = $sap->fetchComboLinesFromUdo($itemCode);
-                    if ($lines === []) {
-                        // No sub-items in the UDO -> ignore, do not integrate.
+                switch ($this->integrateSapItem($item)) {
+                    case 'kit':
+                        $summary['kits_created']++;
+                        break;
+                    case 'sku':
+                        $summary['skus_created']++;
+                        break;
+                    case 'ignored':
                         $summary['ignored_no_combo']++;
-                        continue;
-                    }
-
-                    $this->pushKit($omniful, $item, $lines);
-                    $sap->markItemIntegrated($itemCode, true);
-                    $summary['kits_created']++;
-                    continue;
+                        break;
+                    default:
+                        $summary['skipped_other']++;
                 }
-
-                // Inventory item => integrate as a SKU.
-                if ($inventoryItem) {
-                    $this->pushSku($omniful, $item);
-                    $sap->markItemIntegrated($itemCode, false);
-                    $summary['skus_created']++;
-                    continue;
-                }
-
-                // Neither a sellable bundle nor an inventory item -> skip.
-                $summary['skipped_other']++;
             } catch (\Throwable $e) {
                 $summary['failed']++;
                 $summary['errors'][] = $itemCode . ': ' . $e->getMessage();
@@ -91,6 +76,53 @@ class SapItemIntegrationService
         }
 
         return $summary;
+    }
+
+    /**
+     * Integrate a single raw SAP item record into Omniful and stamp its
+     * integration flag(s). Returns the outcome:
+     *   'kit'     - sales-only combo pushed as an Omniful KIT (U_omInt+U_OmBInt=Y)
+     *   'sku'     - inventory item pushed as an Omniful SKU (U_omInt=Y)
+     *   'ignored' - sales-only but no ZIDCOMBO sub-items: not integrated
+     *   'skipped' - neither a sellable bundle nor an inventory item
+     *
+     * @param array<string,mixed> $item Raw Service Layer OITM record.
+     */
+    public function integrateSapItem(array $item): string
+    {
+        $sap = app(SapServiceLayerClient::class);
+        $omniful = app(OmnifulApiClient::class);
+
+        $itemCode = trim((string) ($item['ItemCode'] ?? ''));
+        if ($itemCode === '') {
+            return 'skipped';
+        }
+
+        $salesItem = strtoupper(trim((string) ($item['SalesItem'] ?? ''))) === 'TYES';
+        $inventoryItem = strtoupper(trim((string) ($item['InventoryItem'] ?? ''))) === 'TYES';
+
+        // Sales-only (and NOT inventory) => bundle/combo candidate.
+        if ($salesItem && !$inventoryItem) {
+            $lines = $sap->fetchComboLinesFromUdo($itemCode);
+            if ($lines === []) {
+                return 'ignored';
+            }
+
+            $this->pushKit($omniful, $item, $lines);
+            $sap->markItemIntegrated($itemCode, true);
+
+            return 'kit';
+        }
+
+        // Inventory item => integrate as a SKU.
+        if ($inventoryItem) {
+            $this->pushSku($omniful, $item);
+            $sap->markItemIntegrated($itemCode, false);
+
+            return 'sku';
+        }
+
+        return 'skipped';
     }
 
     /**
