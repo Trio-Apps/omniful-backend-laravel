@@ -825,6 +825,7 @@
       "Quantity": 3,
       "FromWarehouseCode": "{{fromWarehouse}}",
       "WarehouseCode": "{{toWarehouse}}",
+      "U_WhsDest": "{{toWarehouse}}",
       "CostingCode": "{{optionalWhenEnabled}}",
       "CostingCode2": "{{optionalWhenEnabled}}",
       "CostingCode3": "{{optionalWhenEnabled}}",
@@ -835,6 +836,7 @@
   ]
 }</pre>
       <p class="small">When in-transit mode is enabled, the same payload shape is sent twice: source -> transit, then transit -> destination.</p>
+      <p class="small"><code>U_WhsDest</code> is a row-level UDF mirroring each line's destination warehouse. The field name is configurable via <code>OMNIFUL_STOCK_TRANSFER_DEST_UDF_FIELD</code> (omitted when set empty) and must exist on the WTR1 (lines) table in SAP.</p>
     </div>
 
     <div class="card">

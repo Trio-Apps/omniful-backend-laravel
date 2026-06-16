@@ -245,6 +245,10 @@ trait HandlesSapInventoryDocs
         $fromWarehouse = $this->ensureWarehouseExists($fromWarehouse, 1);
         $toWarehouse = $this->ensureWarehouseExists($toWarehouse, 1);
 
+        // Row-level UDF that mirrors the destination warehouse on each line, on
+        // top of the standard WarehouseCode (per Omniful integration spec).
+        $lineDestUdf = trim((string) config('omniful.stock_transfer.line_destination_udf_field', 'U_WhsDest'));
+
         $lines = [];
         $lineIndex = 0;
         foreach ($items as $item) {
@@ -259,12 +263,18 @@ trait HandlesSapInventoryDocs
             $this->ensureItemWarehouseExists($itemCode, $fromWarehouse);
             $this->ensureItemWarehouseExists($itemCode, $toWarehouse);
 
-            $lines[] = [
+            $line = [
                 'ItemCode' => $itemCode,
                 'Quantity' => $qty,
                 'FromWarehouseCode' => $fromWarehouse,
                 'WarehouseCode' => $toWarehouse,
             ];
+
+            if ($lineDestUdf !== '') {
+                $line[$lineDestUdf] = $toWarehouse;
+            }
+
+            $lines[] = $line;
         }
 
         if ($lines === []) {

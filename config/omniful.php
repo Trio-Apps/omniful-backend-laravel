@@ -400,6 +400,10 @@ return [
         'in_transit_enabled' => (bool) env('OMNIFUL_IN_TRANSIT_ENABLED', false),
         'in_transit_warehouse' => env('OMNIFUL_IN_TRANSIT_WAREHOUSE', ''),
         'force_in_transit' => (bool) env('OMNIFUL_IN_TRANSIT_FORCE', false),
+        // Stamp the destination warehouse of each StockTransfer line into this
+        // row-level UDF (in addition to the standard WarehouseCode). Set empty
+        // to disable. Requires the UDF to exist on the WTR1 (lines) table.
+        'line_destination_udf_field' => env('OMNIFUL_STOCK_TRANSFER_DEST_UDF_FIELD', 'U_WhsDest'),
         // Stock Transfer Events monitor screen focuses on these two
         // statuses by default (left the source warehouse / arrived at the
         // target warehouse). All other statuses are still recorded and
