@@ -5,6 +5,7 @@ namespace App\Filament\Pages;
 use App\Models\SapSyncEvent;
 use App\Models\SapSupplier;
 use App\Services\IntegrationDirectionService;
+use App\Services\MasterData\SapSupplierSyncService;
 use App\Services\SapSupplierBackgroundPushService;
 use App\Services\SapSupplierBackgroundSyncService;
 use Filament\Actions\Action;
@@ -73,6 +74,63 @@ class SapSuppliers extends Page implements HasTable
     protected function getTableActions(): array
     {
         return [
+            Action::make('payload')
+                ->label('Payload')
+                ->icon('heroicon-o-code-bracket')
+                ->color('info')
+                ->modalHeading('Omniful Payload Preview')
+                ->modalSubmitAction(false)
+                ->modalCancelActionLabel('Close')
+                ->modalContent(function ($record) {
+                    // Prefer the exact payload captured on the last push so it
+                    // matches the response shown beside it; fall back to a live
+                    // preview when nothing has been pushed yet.
+                    if (is_array($record->omniful_payload)) {
+                        $preview = [
+                            'type' => 'supplier',
+                            'resource' => 'suppliers',
+                            'payload' => $record->omniful_payload,
+                            'note' => null,
+                        ];
+                    } else {
+                        $preview = app(SapSupplierSyncService::class)->previewPayload($record);
+                    }
+
+                    return view('filament.pages.sap-supplier-payload', [
+                        'code' => $record->code,
+                        'preview' => $preview,
+                        'response' => $record->omniful_response,
+                        'responseCode' => $record->omniful_response_code,
+                        'syncedAt' => $record->omniful_synced_at,
+                    ]);
+                }),
+            Action::make('pushOne')
+                ->label('Push')
+                ->icon('heroicon-o-cloud-arrow-up')
+                ->color('warning')
+                ->requiresConfirmation()
+                ->modalHeading('Push this supplier to Omniful')
+                ->modalDescription('Sends this single supplier to Omniful now and captures the response — even if it is already synced. Use it to (re)check the payload/response for debugging.')
+                ->modalSubmitActionLabel('Push')
+                ->action(function ($record): void {
+                    $result = app(SapSupplierSyncService::class)->pushRecord($record);
+
+                    if ($result['ok']) {
+                        Notification::make()
+                            ->title('Pushed to Omniful')
+                            ->body($record->code . ' → HTTP ' . ($record->fresh()->omniful_response_code ?? '—') . '. Open Payload to see the response.')
+                            ->success()
+                            ->send();
+
+                        return;
+                    }
+
+                    Notification::make()
+                        ->title('Push not successful')
+                        ->body($record->code . ': ' . ($result['error'] ?? 'See the Payload modal for details.'))
+                        ->warning()
+                        ->send();
+                }),
             Action::make('error')
                 ->label('Reason')
                 ->icon('heroicon-o-exclamation-triangle')

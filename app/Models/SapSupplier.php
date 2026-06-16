@@ -18,10 +18,14 @@ class SapSupplier extends Model
         'omniful_status',
         'omniful_error',
         'omniful_synced_at',
+        'omniful_payload',
+        'omniful_response',
+        'omniful_response_code',
     ];
 
     protected $casts = [
         'payload' => 'array',
+        'omniful_payload' => 'array',
         'synced_at' => 'datetime',
         'omniful_synced_at' => 'datetime',
     ];

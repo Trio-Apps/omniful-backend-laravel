@@ -112,58 +112,13 @@ class SapSupplierSyncService
             $record->omniful_error = null;
             $record->save();
 
-            try {
-                $sapClient = app(SapServiceLayerClient::class);
-                if (!$sapClient->isSupplierIntegrationEnabled((string) $record->code)) {
-                    $record->omniful_status = 'skipped';
-                    $record->omniful_error = 'Skipped by supplier integration UDF control';
-                    $record->save();
-                    continue;
-                }
+            $result = $this->pushRecord($record, $client);
 
-                $usedFallbacks = [];
-                $name = $record->name ?: $record->code;
-                if (!$record->name) {
-                    $usedFallbacks[] = 'name';
-                }
-                $email = $record->email ?: ($record->code . '@sap.local');
-                if (!$record->email) {
-                    $usedFallbacks[] = 'email';
-                }
-                $phone = $record->phone ?: '0000000000';
-                if (!$record->phone) {
-                    $usedFallbacks[] = 'phone';
-                }
-                $payload = [
-                    'name' => $name,
-                    'email' => $email,
-                    'phone' => $phone,
-                    'code' => $record->code,
-                ];
-
-                $response = $client->upsert('suppliers', $record->code, $payload);
-                if (!$response['ok']) {
-                    throw new \RuntimeException('HTTP ' . $response['status'] . ' ' . $response['body']);
-                }
-
-                // Stamp the SAP integration flag (U_OmBPInt = Y) now that the
-                // supplier has been pushed to Omniful, so it is not pulled
-                // again on the next run.
-                $sapClient->markSupplierIntegrated((string) $record->code);
-
-                $record->omniful_status = 'synced';
-                $record->omniful_error = $usedFallbacks
-                    ? ('Filled defaults for: ' . implode(', ', $usedFallbacks))
-                    : null;
-                $record->omniful_synced_at = now();
-                $record->save();
+            if ($result['ok']) {
                 $ok++;
-            } catch (\Throwable $e) {
-                $record->omniful_status = 'failed';
-                $record->omniful_error = $e->getMessage();
-                $record->save();
+            } elseif ($result['outcome'] !== 'skipped') {
                 $failed++;
-                $errors[] = $record->code . ': ' . $e->getMessage();
+                $errors[] = $record->code . ': ' . ($result['error'] ?? 'push failed');
             }
         }
 
@@ -175,6 +130,147 @@ class SapSupplierSyncService
             ->count();
 
         return ['ok' => $ok, 'failed' => $failed, 'errors' => $errors, 'remaining' => $remaining, 'cancelled' => false];
+    }
+
+    /**
+     * Push a single supplier to Omniful, persisting the exact payload sent plus
+     * Omniful's raw response and HTTP status on the record (regardless of
+     * outcome) for per-supplier debugging. Unlike the bulk push, this always
+     * sends — even for an already-synced supplier — so it doubles as a
+     * "re-push / debug" action from the SAP Suppliers page.
+     *
+     * @return array{outcome:string,ok:bool,error:?string}
+     */
+    public function pushRecord(SapSupplier $record, ?OmnifulApiClient $client = null): array
+    {
+        $client ??= app(OmnifulApiClient::class);
+        $sapClient = app(SapServiceLayerClient::class);
+
+        [$payload, $usedFallbacks] = $this->buildOmnifulPayload($record);
+
+        try {
+            // Respect the SAP UDF control: a supplier flagged not-integrated is
+            // skipped (nothing is sent to Omniful).
+            if (!$sapClient->isSupplierIntegrationEnabled((string) $record->code)) {
+                $record->update([
+                    'omniful_status' => 'skipped',
+                    'omniful_error' => 'Skipped by supplier integration UDF control',
+                    'omniful_payload' => $payload,
+                    'omniful_response' => null,
+                    'omniful_response_code' => null,
+                ]);
+
+                return ['outcome' => 'skipped', 'ok' => false, 'error' => null];
+            }
+
+            $response = $client->upsert('suppliers', (string) $record->code, $payload);
+
+            // Always persist the exact payload sent and Omniful's raw response
+            // (plus HTTP status), regardless of outcome, for debugging.
+            $captured = [
+                'omniful_payload' => $payload,
+                'omniful_response' => $response['body'] ?? null,
+                'omniful_response_code' => $response['status'] ?? null,
+            ];
+
+            if (!($response['ok'] ?? false)) {
+                $record->update($captured + [
+                    'omniful_status' => 'failed',
+                    'omniful_error' => 'HTTP ' . ($response['status'] ?? 0) . ' ' . ($response['body'] ?? ''),
+                ]);
+
+                return ['outcome' => 'supplier', 'ok' => false, 'error' => 'HTTP ' . ($response['status'] ?? 0)];
+            }
+
+            // Omniful accepted — persist the captured payload/response and mark
+            // synced FIRST, so the debug modal always reflects what was sent
+            // even if the subsequent SAP flag stamp fails.
+            $record->update($captured + [
+                'omniful_status' => 'synced',
+                'omniful_error' => $usedFallbacks
+                    ? ('Filled defaults for: ' . implode(', ', $usedFallbacks))
+                    : null,
+                'omniful_synced_at' => now(),
+            ]);
+
+            // Stamp the SAP integration flag (U_OmBPInt = Y) so the supplier is
+            // not pulled again. If this fails we keep the captured response but
+            // flip to failed (so it is retried) and surface the SAP error.
+            try {
+                $sapClient->markSupplierIntegrated((string) $record->code);
+            } catch (\Throwable $e) {
+                $record->update([
+                    'omniful_status' => 'failed',
+                    'omniful_error' => 'Omniful accepted but SAP flag stamp failed: ' . $e->getMessage(),
+                ]);
+
+                return ['outcome' => 'supplier', 'ok' => false, 'error' => $e->getMessage()];
+            }
+
+            return ['outcome' => 'supplier', 'ok' => true, 'error' => null];
+        } catch (\Throwable $e) {
+            $record->update([
+                'omniful_status' => 'failed',
+                'omniful_error' => $e->getMessage(),
+            ]);
+
+            return ['outcome' => 'error', 'ok' => false, 'error' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Build the exact Omniful payload that would be pushed for a supplier,
+     * filling the same name/email/phone defaults the push uses. Returns the
+     * payload plus the list of fields that fell back to a default.
+     *
+     * @return array{0:array<string,mixed>,1:array<int,string>}
+     */
+    public function buildOmnifulPayload(SapSupplier $record): array
+    {
+        $usedFallbacks = [];
+
+        $name = $record->name ?: $record->code;
+        if (!$record->name) {
+            $usedFallbacks[] = 'name';
+        }
+
+        $email = $record->email ?: ($record->code . '@sap.local');
+        if (!$record->email) {
+            $usedFallbacks[] = 'email';
+        }
+
+        $phone = $record->phone ?: '0000000000';
+        if (!$record->phone) {
+            $usedFallbacks[] = 'phone';
+        }
+
+        return [[
+            'name' => $name,
+            'email' => $email,
+            'phone' => $phone,
+            'code' => $record->code,
+        ], $usedFallbacks];
+    }
+
+    /**
+     * Build the exact Omniful payload that would be pushed for a supplier,
+     * WITHOUT sending anything. Used by the SAP Suppliers page to preview/debug
+     * per-supplier payloads.
+     *
+     * @return array{type:string,resource:string,payload:array<string,mixed>,note:?string}
+     */
+    public function previewPayload(SapSupplier $record): array
+    {
+        [$payload, $usedFallbacks] = $this->buildOmnifulPayload($record);
+
+        return [
+            'type' => 'supplier',
+            'resource' => 'suppliers',
+            'payload' => $payload,
+            'note' => $usedFallbacks
+                ? ('Defaults will be filled for: ' . implode(', ', $usedFallbacks))
+                : null,
+        ];
     }
 
     public function syncFromOmniful(OmnifulApiClient $omnifulClient, SapServiceLayerClient $sapClient): array
