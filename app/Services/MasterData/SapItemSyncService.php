@@ -96,31 +96,61 @@ class SapItemSyncService
             }
 
             try {
-                $outcome = $integration->integrateSapItem($rawItem);
-                $summary[$outcome] = ($summary[$outcome] ?? 0) + 1;
+                $details = $integration->integrateSapItemDetailed($rawItem);
+            } catch (\Throwable $e) {
+                // SAP-side failure (e.g. combo lookup) — nothing was sent.
+                $record->update([
+                    'omniful_status' => 'failed',
+                    'omniful_error' => $e->getMessage(),
+                    'omniful_payload' => null,
+                    'omniful_response' => $e->getMessage(),
+                    'omniful_response_code' => null,
+                ]);
+                $failed++;
+                $errors[] = $record->code . ': ' . $e->getMessage();
 
-                if (in_array($outcome, ['kit', 'sku'], true)) {
-                    $record->update([
+                if ($delayMs > 0) {
+                    usleep($delayMs * 1000);
+                }
+
+                continue;
+            }
+
+            $outcome = (string) $details['outcome'];
+            $response = $details['response'] ?? null;
+            $summary[$outcome] = ($summary[$outcome] ?? 0) + 1;
+
+            // Always persist the exact payload sent and Omniful's raw response
+            // (plus HTTP status), regardless of outcome, for per-item debugging.
+            $captured = [
+                'omniful_payload' => $details['payload'] ?? null,
+                'omniful_response' => $response['body'] ?? null,
+                'omniful_response_code' => $response['status'] ?? null,
+            ];
+
+            if (in_array($outcome, ['kit', 'sku'], true)) {
+                if ($response['ok'] ?? false) {
+                    $record->update($captured + [
                         'omniful_status' => 'synced',
                         'omniful_error' => null,
                         'omniful_synced_at' => now(),
                     ]);
                     $ok++;
                 } else {
-                    $record->update([
-                        'omniful_status' => 'skipped',
-                        'omniful_error' => $outcome === 'ignored'
-                            ? 'Sales-only item with no ZIDCOMBO sub-items'
-                            : 'Not an inventory item or sellable bundle',
+                    $record->update($captured + [
+                        'omniful_status' => 'failed',
+                        'omniful_error' => $response['body'] ?? 'Omniful push failed',
                     ]);
+                    $failed++;
+                    $errors[] = $record->code . ': HTTP ' . ($response['status'] ?? 0);
                 }
-            } catch (\Throwable $e) {
-                $record->update([
-                    'omniful_status' => 'failed',
-                    'omniful_error' => $e->getMessage(),
+            } else {
+                $record->update($captured + [
+                    'omniful_status' => 'skipped',
+                    'omniful_error' => $outcome === 'ignored'
+                        ? 'Sales-only item with no ZIDCOMBO sub-items'
+                        : 'Not an inventory item or sellable bundle',
                 ]);
-                $failed++;
-                $errors[] = $record->code . ': ' . $e->getMessage();
             }
 
             if ($delayMs > 0) {

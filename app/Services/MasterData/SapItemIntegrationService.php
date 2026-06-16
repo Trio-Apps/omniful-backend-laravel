@@ -90,12 +90,40 @@ class SapItemIntegrationService
      */
     public function integrateSapItem(array $item): string
     {
+        $details = $this->integrateSapItemDetailed($item);
+        $outcome = (string) $details['outcome'];
+        $response = $details['response'] ?? null;
+
+        // Preserve the original throw-on-failure contract for callers (e.g. the
+        // IntegrateSapItems command) that count failures via exceptions.
+        if (in_array($outcome, ['kit', 'sku'], true) && !($response['ok'] ?? false)) {
+            throw new \RuntimeException(
+                'Omniful ' . strtoupper($outcome) . ' push failed: HTTP '
+                . ($response['status'] ?? 0) . ' ' . ($response['body'] ?? '')
+            );
+        }
+
+        return $outcome;
+    }
+
+    /**
+     * Same classification + push as integrateSapItem(), but returns the full
+     * detail (resource, exact payload sent, raw Omniful response) WITHOUT
+     * throwing on a push failure — the failed response is returned instead so
+     * callers can persist it for debugging. The SAP integration flag is stamped
+     * only when Omniful accepts the push.
+     *
+     * @param array<string,mixed> $item Raw Service Layer OITM record.
+     * @return array{outcome:string,resource:?string,payload:?array<string,mixed>,response:?array<string,mixed>}
+     */
+    public function integrateSapItemDetailed(array $item): array
+    {
         $sap = app(SapServiceLayerClient::class);
         $omniful = app(OmnifulApiClient::class);
 
         $itemCode = trim((string) ($item['ItemCode'] ?? ''));
         if ($itemCode === '') {
-            return 'skipped';
+            return ['outcome' => 'skipped', 'resource' => null, 'payload' => null, 'response' => null];
         }
 
         $salesItem = strtoupper(trim((string) ($item['SalesItem'] ?? ''))) === 'TYES';
@@ -105,24 +133,30 @@ class SapItemIntegrationService
         if ($salesItem && !$inventoryItem) {
             $lines = $sap->fetchComboLinesFromUdo($itemCode);
             if ($lines === []) {
-                return 'ignored';
+                return ['outcome' => 'ignored', 'resource' => null, 'payload' => null, 'response' => null];
             }
 
-            $this->pushKit($omniful, $item, $lines);
-            $sap->markItemIntegrated($itemCode, true);
+            $payload = $this->buildKitPayload($item, $lines);
+            $response = $omniful->upsert('kits', (string) ($payload['sku_code'] ?? ''), [$payload]);
+            if ($response['ok'] ?? false) {
+                $sap->markItemIntegrated($itemCode, true);
+            }
 
-            return 'kit';
+            return ['outcome' => 'kit', 'resource' => 'kits', 'payload' => $payload, 'response' => $response];
         }
 
         // Inventory item => integrate as a SKU.
         if ($inventoryItem) {
-            $this->pushSku($omniful, $item);
-            $sap->markItemIntegrated($itemCode, false);
+            $payload = $this->buildSkuPayload($item);
+            $response = $omniful->upsert('items', (string) ($payload['sku_code'] ?? ''), [$payload]);
+            if ($response['ok'] ?? false) {
+                $sap->markItemIntegrated($itemCode, false);
+            }
 
-            return 'sku';
+            return ['outcome' => 'sku', 'resource' => 'items', 'payload' => $payload, 'response' => $response];
         }
 
-        return 'skipped';
+        return ['outcome' => 'skipped', 'resource' => null, 'payload' => null, 'response' => null];
     }
 
     /**
@@ -170,35 +204,6 @@ class SapItemIntegrationService
             'payload' => null,
             'note' => 'Neither a sellable bundle nor an inventory item.',
         ];
-    }
-
-    /**
-     * @param array<string,mixed> $item
-     */
-    private function pushSku(OmnifulApiClient $omniful, array $item): void
-    {
-        $payload = $this->buildSkuPayload($item);
-        $code = (string) ($payload['sku_code'] ?? '');
-
-        $response = $omniful->upsert('items', $code, [$payload]);
-        if (!($response['ok'] ?? false)) {
-            throw new \RuntimeException('Omniful SKU push failed: HTTP ' . ($response['status'] ?? 0) . ' ' . ($response['body'] ?? ''));
-        }
-    }
-
-    /**
-     * @param array<string,mixed> $item
-     * @param array<int,array{item_code:string,quantity:float}> $lines
-     */
-    private function pushKit(OmnifulApiClient $omniful, array $item, array $lines): void
-    {
-        $payload = $this->buildKitPayload($item, $lines);
-        $code = (string) ($payload['sku_code'] ?? '');
-
-        $response = $omniful->upsert('kits', $code, [$payload]);
-        if (!($response['ok'] ?? false)) {
-            throw new \RuntimeException('Omniful KIT push failed: HTTP ' . ($response['status'] ?? 0) . ' ' . ($response['body'] ?? ''));
-        }
     }
 
     /**

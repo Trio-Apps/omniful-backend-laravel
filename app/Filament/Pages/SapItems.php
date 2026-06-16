@@ -81,14 +81,31 @@ class SapItems extends Page implements HasTable
                 ->modalSubmitAction(false)
                 ->modalCancelActionLabel('Close')
                 ->modalContent(function ($record) {
-                    $raw = is_array($record->payload) ? $record->payload : [];
-                    if (trim((string) ($raw['ItemCode'] ?? '')) === '') {
-                        $raw['ItemCode'] = $record->code;
+                    // Prefer the exact payload/response captured during the last
+                    // push; fall back to a live preview when the item hasn't been
+                    // pushed yet (no response available in that case).
+                    if (is_array($record->omniful_payload)) {
+                        $sent = $record->omniful_payload;
+                        $preview = [
+                            'type' => isset($sent['child_skus']) ? 'kit' : 'sku',
+                            'resource' => isset($sent['child_skus']) ? 'kits' : 'items',
+                            'payload' => $sent,
+                            'note' => null,
+                        ];
+                    } else {
+                        $raw = is_array($record->payload) ? $record->payload : [];
+                        if (trim((string) ($raw['ItemCode'] ?? '')) === '') {
+                            $raw['ItemCode'] = $record->code;
+                        }
+                        $preview = app(SapItemIntegrationService::class)->previewPayload($raw);
                     }
 
                     return view('filament.pages.sap-item-payload', [
                         'code' => $record->code,
-                        'preview' => app(SapItemIntegrationService::class)->previewPayload($raw),
+                        'preview' => $preview,
+                        'response' => $record->omniful_response,
+                        'responseCode' => $record->omniful_response_code,
+                        'syncedAt' => $record->omniful_synced_at,
                     ]);
                 }),
             Action::make('error')
