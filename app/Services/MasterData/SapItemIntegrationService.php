@@ -126,6 +126,53 @@ class SapItemIntegrationService
     }
 
     /**
+     * Build the exact Omniful payload that would be pushed for a raw SAP item,
+     * WITHOUT sending anything to Omniful or stamping any flags. Used by the
+     * SAP Items page to preview/debug per-item payloads. For sales-only combos
+     * this performs a read-only SAP lookup of the ZIDCOMBO sub-item lines.
+     *
+     * @param array<string,mixed> $item Raw Service Layer OITM record.
+     * @return array{type:string,resource:?string,payload:?array<string,mixed>,note:?string}
+     */
+    public function previewPayload(array $item): array
+    {
+        $sap = app(SapServiceLayerClient::class);
+
+        $itemCode = trim((string) ($item['ItemCode'] ?? ''));
+        if ($itemCode === '') {
+            return ['type' => 'skipped', 'resource' => null, 'payload' => null, 'note' => 'Item has no ItemCode.'];
+        }
+
+        $salesItem = strtoupper(trim((string) ($item['SalesItem'] ?? ''))) === 'TYES';
+        $inventoryItem = strtoupper(trim((string) ($item['InventoryItem'] ?? ''))) === 'TYES';
+
+        if ($salesItem && !$inventoryItem) {
+            $lines = $sap->fetchComboLinesFromUdo($itemCode);
+            if ($lines === []) {
+                return [
+                    'type' => 'ignored',
+                    'resource' => null,
+                    'payload' => null,
+                    'note' => 'Sales-only item with no ZIDCOMBO sub-items — not integrated.',
+                ];
+            }
+
+            return ['type' => 'kit', 'resource' => 'kits', 'payload' => $this->buildKitPayload($item, $lines), 'note' => null];
+        }
+
+        if ($inventoryItem) {
+            return ['type' => 'sku', 'resource' => 'items', 'payload' => $this->buildSkuPayload($item), 'note' => null];
+        }
+
+        return [
+            'type' => 'skipped',
+            'resource' => null,
+            'payload' => null,
+            'note' => 'Neither a sellable bundle nor an inventory item.',
+        ];
+    }
+
+    /**
      * @param array<string,mixed> $item
      */
     private function pushSku(OmnifulApiClient $omniful, array $item): void

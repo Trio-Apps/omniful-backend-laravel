@@ -5,6 +5,7 @@ namespace App\Filament\Pages;
 use App\Models\SapItem;
 use App\Models\SapSyncEvent;
 use App\Services\IntegrationDirectionService;
+use App\Services\MasterData\SapItemIntegrationService;
 use App\Services\SapItemBackgroundPushService;
 use App\Services\SapItemBackgroundSyncService;
 use Filament\Actions\Action;
@@ -72,6 +73,24 @@ class SapItems extends Page implements HasTable
     protected function getTableActions(): array
     {
         return [
+            Action::make('payload')
+                ->label('Payload')
+                ->icon('heroicon-o-code-bracket')
+                ->color('info')
+                ->modalHeading('Omniful Payload Preview')
+                ->modalSubmitAction(false)
+                ->modalCancelActionLabel('Close')
+                ->modalContent(function ($record) {
+                    $raw = is_array($record->payload) ? $record->payload : [];
+                    if (trim((string) ($raw['ItemCode'] ?? '')) === '') {
+                        $raw['ItemCode'] = $record->code;
+                    }
+
+                    return view('filament.pages.sap-item-payload', [
+                        'code' => $record->code,
+                        'preview' => app(SapItemIntegrationService::class)->previewPayload($raw),
+                    ]);
+                }),
             Action::make('error')
                 ->label('Reason')
                 ->icon('heroicon-o-exclamation-triangle')
