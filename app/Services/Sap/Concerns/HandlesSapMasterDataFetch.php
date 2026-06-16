@@ -483,20 +483,44 @@ trait HandlesSapMasterDataFetch
         $udf = trim((string) config('omniful.supplier_integration.integrated_udf_field', ''));
         $pending = (string) config('omniful.supplier_integration.not_integrated_value', 'N');
 
-        $filterExpr = "CardType eq 'S'";
-        if ($udf !== '') {
-            $escUdf = str_replace("'", "''", $udf);
-            $escVal = str_replace("'", "''", $pending);
-            $filterExpr .= " and {$escUdf} eq '{$escVal}'";
-        }
-        $filter = rawurlencode($filterExpr);
-        $cardTypeOnly = rawurlencode("CardType eq 'S'");
+        // Suppliers are OCRD rows with CardType = Supplier (never customers).
+        // SAP B1 Service Layer accepts 'S' in most companies, while some require
+        // the enum literal 'cSupplier' — try both. CardType is kept in the
+        // projection so we can also enforce supplier-only on the client side.
+        $select = 'CardCode,CardName,CardType,EmailAddress,Phone1';
 
-        return $this->fetchAllWithFallback([
-            "/BusinessPartners?\$filter={$filter}&\$select=CardCode,CardName,EmailAddress,Phone1",
-            "/BusinessPartners?\$filter={$filter}",
-            "/BusinessPartners?\$filter={$cardTypeOnly}",
-        ]);
+        $buildFilter = function (string $cardType) use ($udf, $pending): string {
+            $expr = "CardType eq '" . str_replace("'", "''", $cardType) . "'";
+            if ($udf !== '') {
+                $escUdf = str_replace("'", "''", $udf);
+                $escVal = str_replace("'", "''", $pending);
+                $expr .= " and {$escUdf} eq '{$escVal}'";
+            }
+
+            return $expr;
+        };
+
+        $paths = [];
+        foreach (['S', 'cSupplier'] as $cardType) {
+            $filter = rawurlencode($buildFilter($cardType));
+            $typeOnly = rawurlencode("CardType eq '" . str_replace("'", "''", $cardType) . "'");
+            $paths[] = "/BusinessPartners?\$filter={$filter}&\$select={$select}";
+            $paths[] = "/BusinessPartners?\$filter={$filter}";
+            $paths[] = "/BusinessPartners?\$filter={$typeOnly}&\$select={$select}";
+        }
+
+        $rows = $this->fetchAllWithFallback($paths);
+
+        // Defensive: never return customers/leads even if a fallback widened the
+        // result set — keep only rows whose CardType resolves to Supplier. Rows
+        // without a CardType in the projection fall back to trusting the filter.
+        return array_values(array_filter($rows, function ($row): bool {
+            if (!is_array($row) || !array_key_exists('CardType', $row)) {
+                return true;
+            }
+
+            return $this->normalizeSapCardType((string) ($row['CardType'] ?? '')) === 'S';
+        }));
     }
 
     /**
