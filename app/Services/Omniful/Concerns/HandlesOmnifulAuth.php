@@ -78,7 +78,12 @@ trait HandlesOmnifulAuth
 
     private function selectAuthContext(string $resource): void
     {
-        if (in_array($resource, ['suppliers', 'items'], true)) {
+        // Per Omniful: use the tenant API for everything EXCEPT kit creation,
+        // supplier creation and transfers, which require the seller API.
+        // Notably SKU creation ('items') uses the tenant API.
+        // Refs: https://docs.omniful.tech/#761c6285-18b6-4e83-ba05-b081b8c9dc2d
+        //       https://docs.omniful.tech/#66865a26-649e-4d85-8302-febff8568103
+        if (in_array($resource, ['kits', 'suppliers', 'transfers'], true)) {
             $this->activeAuth = $this->sellerAuth;
         } else {
             $this->activeAuth = $this->tenantAuth;
