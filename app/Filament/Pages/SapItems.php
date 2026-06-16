@@ -6,6 +6,7 @@ use App\Models\SapItem;
 use App\Models\SapSyncEvent;
 use App\Services\IntegrationDirectionService;
 use App\Services\MasterData\SapItemIntegrationService;
+use App\Services\MasterData\SapItemSyncService;
 use App\Services\SapItemBackgroundPushService;
 use App\Services\SapItemBackgroundSyncService;
 use Filament\Actions\Action;
@@ -107,6 +108,33 @@ class SapItems extends Page implements HasTable
                         'responseCode' => $record->omniful_response_code,
                         'syncedAt' => $record->omniful_synced_at,
                     ]);
+                }),
+            Action::make('pushOne')
+                ->label('Push')
+                ->icon('heroicon-o-cloud-arrow-up')
+                ->color('warning')
+                ->requiresConfirmation()
+                ->modalHeading('Push this item to Omniful')
+                ->modalDescription('Sends this single item to Omniful now and captures the response — even if it is already synced. Use it to (re)check the payload/response for debugging.')
+                ->modalSubmitActionLabel('Push')
+                ->action(function ($record): void {
+                    $result = app(SapItemSyncService::class)->pushRecord($record);
+
+                    if ($result['ok']) {
+                        Notification::make()
+                            ->title('Pushed to Omniful')
+                            ->body($record->code . ' → HTTP ' . ($record->fresh()->omniful_response_code ?? '—') . '. Open Payload to see the response.')
+                            ->success()
+                            ->send();
+
+                        return;
+                    }
+
+                    Notification::make()
+                        ->title('Push not successful')
+                        ->body($record->code . ': ' . ($result['error'] ?? 'See the Payload modal for details.'))
+                        ->warning()
+                        ->send();
                 }),
             Action::make('error')
                 ->label('Reason')
