@@ -50,4 +50,19 @@ class OmnifulReturnOrderEvent extends Model
 
         return parent::setAttribute($key, $value);
     }
+
+    /**
+     * Whether the full SAP flow for this return is finished: the AR credit memo
+     * step AND the COGS reversal step are both in a completed state. Anything
+     * else (failed, ignored, pending, or a step not started yet — e.g. COGS
+     * reversal pending) counts as incomplete and is eligible for retry. Mirrors
+     * the "Completed" definition used by the Process Steps panel on the view.
+     */
+    public function isSapFlowComplete(): bool
+    {
+        $completed = ['created', 'updated', 'logged', 'skipped'];
+
+        return in_array((string) $this->sap_status, $completed, true)
+            && in_array((string) $this->sap_cogs_reversal_status, $completed, true);
+    }
 }

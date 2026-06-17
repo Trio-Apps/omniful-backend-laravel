@@ -3,7 +3,10 @@
 namespace App\Filament\Pages;
 
 use App\Models\OmnifulReturnOrderEvent;
+use App\Services\Webhooks\WebhookRetryService;
 use App\Support\Utf8;
+use Filament\Actions\Action;
+use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 
@@ -52,6 +55,31 @@ class OmnifulReturnOrderEventView extends Page
         $this->flowSummary = $this->buildFlowSummary($this->flowSteps);
         $this->debugPayloads = $this->buildDebugPayloads();
         $this->sapResponses = $this->buildSapResponses();
+    }
+
+    protected function getHeaderActions(): array
+    {
+        return [
+            Action::make('retry')
+                ->label('Retry')
+                ->icon('heroicon-o-arrow-path')
+                ->color('warning')
+                ->visible(fn () => !$this->record->isSapFlowComplete())
+                ->requiresConfirmation()
+                ->modalHeading('Retry return order SAP sync?')
+                ->modalDescription('Re-runs the return in SAP and completes any unfinished step (e.g. the COGS reversal). Already-created documents are not duplicated.')
+                ->action(function () {
+                    $result = app(WebhookRetryService::class)->retryReturnOrderEvent($this->record);
+
+                    Notification::make()
+                        ->title($result['ok'] ? 'Retry completed' : 'Retry failed')
+                        ->body($result['message'])
+                        ->{$result['ok'] ? 'success' : 'danger'}()
+                        ->send();
+
+                    $this->redirect(static::getUrl(['record' => $this->record->getKey()]));
+                }),
+        ];
     }
 
     public function getTitle(): string

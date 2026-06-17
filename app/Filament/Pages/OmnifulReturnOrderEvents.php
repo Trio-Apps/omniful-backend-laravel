@@ -119,13 +119,13 @@ class OmnifulReturnOrderEvents extends Page implements HasTable
                     'error' => $record->sap_error,
                 ])),
             Action::make('retrySap')
-                ->label('Retry SAP')
+                ->label('Retry')
                 ->icon('heroicon-o-arrow-path')
                 ->color('warning')
-                ->visible(fn ($record) => in_array((string) $record->sap_status, ['failed', 'ignored'], true))
+                ->visible(fn ($record) => !$record->isSapFlowComplete())
                 ->requiresConfirmation()
                 ->modalHeading('Retry return order SAP sync?')
-                ->modalDescription('This will resend the return order to SAP and update the stored SAP status and payload debug.')
+                ->modalDescription('Re-runs the return in SAP and completes any unfinished step (e.g. the COGS reversal). Already-created documents are not duplicated.')
                 ->action(function ($record) {
                     $result = app(WebhookRetryService::class)->retryReturnOrderEvent($record);
                     Notification::make()
