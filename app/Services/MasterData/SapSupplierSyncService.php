@@ -24,7 +24,7 @@ class SapSupplierSyncService
      */
     private function extractSupplierPhone(array $row): ?string
     {
-        foreach (['Cellular', 'Phone1', 'Phone2'] as $field) {
+        foreach (['MobilePhoneNumber', 'Cellular', 'Phone1', 'Phone2'] as $field) {
             $value = trim((string) ($row[$field] ?? ''));
             if ($value !== '') {
                 return $value;
@@ -165,7 +165,7 @@ class SapSupplierSyncService
         $client ??= app(OmnifulApiClient::class);
         $sapClient = app(SapServiceLayerClient::class);
 
-        [$payload, $usedFallbacks] = $this->buildOmnifulPayload($record);
+        [$payload] = $this->buildOmnifulPayload($record);
 
         try {
             // Respect the SAP UDF control: a supplier flagged not-integrated is
@@ -206,9 +206,7 @@ class SapSupplierSyncService
             // even if the subsequent SAP flag stamp fails.
             $record->update($captured + [
                 'omniful_status' => 'synced',
-                'omniful_error' => $usedFallbacks
-                    ? ('Filled defaults for: ' . implode(', ', $usedFallbacks))
-                    : null,
+                'omniful_error' => null,
                 'omniful_synced_at' => now(),
             ]);
 
