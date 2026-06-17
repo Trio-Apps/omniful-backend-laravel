@@ -27,6 +27,12 @@ class OmnifulProductEvents extends Page implements HasTable
 
     protected string $view = 'filament.pages.omniful-product-events';
 
+    public static function shouldRegisterNavigation(): bool
+    {
+        // Hidden from the sidebar; the page is still reachable by URL.
+        return false;
+    }
+
     protected function getTableQuery(): Builder
     {
         return OmnifulProductEvent::query()->orderByDesc('received_at');
