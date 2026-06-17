@@ -15,7 +15,11 @@ class OmnifulApiClient
     private array $activeAuth = [];
     public function __construct()
     {
-        $settings = IntegrationSetting::first();
+        // Use the ACTIVE environment profile (staging vs production), matching
+        // where the Connections/Integration Settings UI saves credentials.
+        // Using first() could load another environment's tokens (e.g. a staging
+        // seller token against the production API), causing 401s.
+        $settings = IntegrationSetting::active();
 
         $this->baseUrl = rtrim((string) ($settings?->omniful_api_url ?? ''), '/');
         $this->timeout = (int) (config('omniful.sync_timeout', 20));
