@@ -2445,6 +2445,22 @@ trait HandlesSapPurchaseAndProducts
         }
 
         $creditMemo = $this->getCreditNote($creditMemoDocEntry);
+
+        // Only reverse COGS against a genuine, still-valid AR credit memo. Refuse
+        // to post when the document is missing, its DocEntry does not match what
+        // we asked for, or it has been cancelled in SAP — this prevents a COGS
+        // reversal JE from being posted when there is effectively no credit memo.
+        $fetchedEntry = (int) ($creditMemo['DocEntry'] ?? -1);
+        $isCancelled = ($creditMemo['Cancelled'] ?? 'tNO') === 'tYES';
+        if ($creditMemo === [] || $fetchedEntry !== $creditMemoDocEntry || $isCancelled) {
+            return [
+                'ignored' => true,
+                'reason' => 'No valid credit memo for COGS reversal (doc entry ' . $creditMemoDocEntry
+                    . ($isCancelled ? ', cancelled in SAP' : '') . ')',
+                'request_body' => null,
+            ];
+        }
+
         $amount = (float) ($data['amount'] ?? $this->extractCreditMemoCogsAmount($creditMemo));
         if ($amount <= 0) {
             return [
@@ -4512,6 +4528,13 @@ trait HandlesSapPurchaseAndProducts
     private function getCreditNote(int $docEntry): array
     {
         $response = $this->get('/CreditNotes(' . $docEntry . ')');
+
+        // A missing credit memo (404) is not a hard error here: the caller uses
+        // the empty result to refuse posting a COGS reversal when no credit memo
+        // exists for the given doc entry.
+        if ($response->status() === 404) {
+            return [];
+        }
 
         if (!$response->successful()) {
             throw new \RuntimeException('SAP credit memo fetch failed: ' . $response->status() . ' ' . $response->body());
