@@ -2462,10 +2462,22 @@ trait HandlesSapPurchaseAndProducts
         }
 
         $amount = (float) ($data['amount'] ?? $this->extractCreditMemoCogsAmount($creditMemo));
+
+        // Bundles/kits carry no stock cost on the credit-memo line (StockPrice 0),
+        // so the per-line amount is 0. Fall back to the COGS that was actually
+        // posted for the original order (same CogsSP source the order COGS journal
+        // uses), so a bundle return still reverses the real component COGS.
+        if ($amount <= 0) {
+            $orderReference = trim((string) ($data['cogs_order_reference'] ?? $data['reference'] ?? ''));
+            if ($orderReference !== '') {
+                $amount = $this->fetchCogsAmountByOrderReference($orderReference);
+            }
+        }
+
         if ($amount <= 0) {
             return [
                 'ignored' => true,
-                'reason' => 'COGS reversal amount is not available from credit memo lines',
+                'reason' => 'COGS reversal amount is not available from credit memo lines or original order COGS',
                 'request_body' => null,
             ];
         }

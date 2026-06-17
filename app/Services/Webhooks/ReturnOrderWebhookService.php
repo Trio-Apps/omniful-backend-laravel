@@ -301,11 +301,18 @@ class ReturnOrderWebhookService
             return;
         }
 
+        $payload = (array) ($event->payload ?? []);
+        $data = (array) data_get($payload, 'data', []);
+        $orderReference = (string) ($this->extractOrderReferenceId($data, $payload) ?? '');
+
         $client = app(SapServiceLayerClient::class);
         try {
             $result = $client->createCogsReversalJournalForCreditMemo([
                 'credit_memo_doc_entry' => $creditMemoDocEntry,
                 'reference' => (string) ($event->external_id ?? ''),
+                // Original order reference, used to look up the posted order COGS
+                // when the credit-memo line has no stock cost (bundles/kits).
+                'cogs_order_reference' => $orderReference,
                 'memo' => 'COGS reversal from Omniful return ' . (string) ($event->external_id ?? ''),
                 'expense_account' => $this->resolveCogsAccount('order_cogs_expense_account', 'omniful.order_accounting.cogs_expense_account'),
                 'offset_account' => $this->resolveCogsAccount('order_cogs_inventory_offset_account', 'omniful.order_accounting.inventory_offset_account'),

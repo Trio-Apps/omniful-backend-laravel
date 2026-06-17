@@ -1460,6 +1460,9 @@ class OrderWebhookService
                 'credit_memo_doc_entry' => $creditMemoDocEntry,
                 'reference' => (string) ($order->external_id ?? ''),
                 'memo' => 'COGS reversal from canceled Omniful order ' . (string) ($order->external_id ?? ''),
+                // Original order reference, used to look up the posted order COGS
+                // when the credit-memo line has no stock cost (bundles/kits).
+                'cogs_order_reference' => (string) ($order->external_id ?? ''),
                 'expense_account' => $this->resolveIntegrationSettingValue('order_cogs_expense_account', config('omniful.order_accounting.cogs_expense_account')),
                 'offset_account' => $this->resolveIntegrationSettingValue('order_cogs_inventory_offset_account', config('omniful.order_accounting.inventory_offset_account')),
             ]);
