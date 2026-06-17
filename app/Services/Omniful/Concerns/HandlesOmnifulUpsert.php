@@ -167,8 +167,12 @@ trait HandlesOmnifulUpsert
         $authMode = ($this->activeAuth['access_token'] ?? '') !== ''
             ? 'bearer'
             : ((($this->activeAuth['api_key'] ?? '') !== '' && ($this->activeAuth['api_secret'] ?? '') !== '') ? 'basic' : 'none');
+        $hasRefresh = ($this->activeAuth['refresh_token'] ?? '') !== '' ? 'yes' : 'no';
 
-        $body = '[' . strtoupper($method) . '] ' . $url . ' (auth=' . $authLabel . '/' . $authMode . ') :: ' . $response->body();
+        $body = '[' . strtoupper($method) . '] ' . $url
+            . ' (auth=' . $authLabel . '/' . $authMode
+            . ', env=' . $this->settingsEnvironment . '#' . ((string) ($this->settingsId ?? '?'))
+            . ', refresh=' . $hasRefresh . ') :: ' . $response->body();
         if ($response->status() === 401 && $this->lastRefreshError) {
             $body .= ' | Refresh error: ' . $this->lastRefreshError;
         }

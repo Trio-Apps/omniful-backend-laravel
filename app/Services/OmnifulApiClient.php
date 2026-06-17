@@ -13,6 +13,8 @@ class OmnifulApiClient
     private array $tenantAuth = [];
     private array $sellerAuth = [];
     private array $activeAuth = [];
+    private string $settingsEnvironment = 'unknown';
+    private ?int $settingsId = null;
     public function __construct()
     {
         // Use the ACTIVE environment profile (staging vs production), matching
@@ -21,6 +23,8 @@ class OmnifulApiClient
         // seller token against the production API), causing 401s.
         $settings = IntegrationSetting::active();
 
+        $this->settingsEnvironment = (string) ($settings?->environment ?? 'unknown');
+        $this->settingsId = $settings?->id;
         $this->baseUrl = rtrim((string) ($settings?->omniful_api_url ?? ''), '/');
         $this->timeout = (int) (config('omniful.sync_timeout', 20));
         $this->tenantAuth = [
