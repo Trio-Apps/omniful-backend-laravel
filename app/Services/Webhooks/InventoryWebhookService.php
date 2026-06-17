@@ -197,6 +197,10 @@ class InventoryWebhookService
                 $client = app(SapServiceLayerClient::class);
                 $isDirectDispose = $this->isDirectDisposeAdjustment($payload);
                 $adjustmentRemarks = $isDirectDispose ? 'Omniful inventory dispose' : 'Omniful manual edit';
+                // Disposal-only: carry the reason (-> line UDF U_Reason) and the
+                // Omniful adjustment id (-> header UDF U_omo) onto the Goods Issue.
+                $disposeReason = $isDirectDispose ? trim((string) data_get($payload, 'reason', '')) : '';
+                $disposeReference = $isDirectDispose ? $this->extractInventoryReference($payload) : '';
                 $deltas = $isDirectDispose
                     ? $this->buildDirectInventoryAdjustments($items)
                     : $this->calculateInventoryAdjustmentsFromSap($items, $hubCode, $client);
@@ -256,7 +260,7 @@ class InventoryWebhookService
                         );
                         if ($sync->wasRecentlyCreated || in_array((string) $sync->sap_status, ['pending', 'failed'], true)) {
                             $client->syncInventoryItems($deltas['issue']);
-                            $result = $client->createInventoryGoodsIssue($deltas['issue'], $hubCode, $adjustmentRemarks);
+                            $result = $client->createInventoryGoodsIssue($deltas['issue'], $hubCode, $adjustmentRemarks, $disposeReason, $disposeReference);
                             $summary['gi'] = $result['DocNum'] ?? null;
                             $sync->sap_status = 'created';
                             $sync->sap_doc_entry = $result['DocEntry'] ?? null;
@@ -607,6 +611,34 @@ class InventoryWebhookService
         }
 
         return ['receipt' => $receipt, 'issue' => $issue, 'reason' => $reason];
+    }
+
+    /**
+     * The Omniful identifier for this inventory adjustment, stamped onto the
+     * SAP Goods Issue header UDF (U_omo) for traceability back to Omniful.
+     *
+     * @param array<string,mixed> $payload
+     */
+    private function extractInventoryReference(array $payload): string
+    {
+        $candidates = [
+            data_get($payload, 'entity_identifier'),
+            data_get($payload, 'data.entity_identifier'),
+            data_get($payload, 'data.adjustment_id'),
+            data_get($payload, 'data.id'),
+            data_get($payload, 'id'),
+        ];
+
+        foreach ($candidates as $value) {
+            if (is_string($value) && trim($value) !== '') {
+                return trim($value);
+            }
+            if (is_numeric($value)) {
+                return (string) $value;
+            }
+        }
+
+        return '';
     }
 
     private function isDirectDisposeAdjustment(array $payload): bool

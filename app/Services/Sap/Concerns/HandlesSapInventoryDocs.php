@@ -201,13 +201,23 @@ trait HandlesSapInventoryDocs
     }
 
 
-    public function createInventoryGoodsIssue(array $items, ?string $hubCode, string $remarks): array
+    public function createInventoryGoodsIssue(array $items, ?string $hubCode, string $remarks, string $reason = '', string $reference = ''): array
     {
         $lines = $this->buildInventoryLinesForInventoryDoc($items, $hubCode, true);
         $lines = $this->applyDefaultCostCentersToLines($lines);
 
         if ($lines === []) {
             throw new \RuntimeException('No inventory lines found for Goods Issue');
+        }
+
+        // Stamp the Omniful disposal reason on each line UDF (default U_Reason).
+        // Requires the UDF to exist on the IGE1 (Goods Issue lines) table.
+        $reason = trim($reason);
+        $reasonUdf = trim((string) config('omniful.goods_issue.reason_udf_field', 'U_Reason'));
+        if ($reason !== '' && $reasonUdf !== '') {
+            foreach ($lines as $i => $line) {
+                $lines[$i][$reasonUdf] = $reason;
+            }
         }
 
         $docDate = now()->format('Y-m-d');
@@ -218,6 +228,15 @@ trait HandlesSapInventoryDocs
             'Comments' => $remarks,
             'DocumentLines' => $lines,
         ];
+
+        // Stamp the Omniful reference (inventory adjustment id) on the header UDF
+        // (default U_omo) — the same field used to trace orders/transfers back to
+        // Omniful. Requires the UDF on the OIGE (Goods Issue header) table.
+        $reference = trim($reference);
+        $referenceUdf = trim((string) config('omniful.goods_issue.reference_udf_field', 'U_omo'));
+        if ($reference !== '' && $referenceUdf !== '') {
+            $body[$referenceUdf] = $reference;
+        }
 
         $response = $this->post('/InventoryGenExits', $body);
 

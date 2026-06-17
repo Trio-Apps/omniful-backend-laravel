@@ -399,6 +399,13 @@ return [
         'project_code' => env('SAP_PROJECT_CODE', ''),
         'apply_to_stock_transfer' => (bool) env('SAP_COST_CENTER_STOCK_TRANSFER', false),
     ],
+    'goods_issue' => [
+        // Disposal (action=dispose) Goods Issue UDFs. Set empty to omit.
+        // reason_udf_field must exist on IGE1 (lines); reference_udf_field on
+        // OIGE (header).
+        'reason_udf_field' => env('OMNIFUL_GOODS_ISSUE_REASON_UDF_FIELD', 'U_Reason'),
+        'reference_udf_field' => env('OMNIFUL_GOODS_ISSUE_REFERENCE_UDF_FIELD', 'U_omo'),
+    ],
     'stock_transfer' => [
         'in_transit_enabled' => (bool) env('OMNIFUL_IN_TRANSIT_ENABLED', false),
         'in_transit_warehouse' => env('OMNIFUL_IN_TRANSIT_WAREHOUSE', ''),
