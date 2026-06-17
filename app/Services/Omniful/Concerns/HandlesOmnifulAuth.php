@@ -78,14 +78,14 @@ trait HandlesOmnifulAuth
 
     private function selectAuthContext(string $resource): void
     {
-        // Auth context per Omniful endpoint:
-        //   - SKU creation ('items', /master/skus) uses the TENANT token.
-        //   - KIT creation ('kits', /master/skus/kits), supplier creation and
-        //     transfers use the SELLER token. Confirmed by the working kit cURL,
-        //     whose bearer JWT carries SellerID/SellerSalesChannelID (seller token).
+        // Auth context per Omniful endpoint. Catalog operations all use the
+        // SELLER token: SKU creation ('items', /master/skus), KIT creation
+        // ('kits', /master/skus/kits), supplier creation and transfers. Only the
+        // warehouse/hub sync ('warehouses', /tenants/hubs) uses the TENANT token,
+        // since that endpoint is tenant-scoped.
         // Refs: https://docs.omniful.tech/#761c6285-18b6-4e83-ba05-b081b8c9dc2d
         //       https://docs.omniful.tech/#66865a26-649e-4d85-8302-febff8568103
-        if (in_array($resource, ['kits', 'suppliers', 'transfers'], true)) {
+        if (in_array($resource, ['items', 'kits', 'suppliers', 'transfers'], true)) {
             $this->activeAuth = $this->sellerAuth;
         } else {
             $this->activeAuth = $this->tenantAuth;
