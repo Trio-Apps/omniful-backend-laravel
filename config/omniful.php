@@ -16,7 +16,7 @@ return [
     'sync_endpoints' => [
         'warehouses' => env('OMNIFUL_WAREHOUSES_ENDPOINT', '/sales-channel/public/v1/tenants/hubs'),
         'suppliers' => env('OMNIFUL_SUPPLIERS_ENDPOINT', '/sales-channel/public/v1/suppliers'),
-        'items' => env('OMNIFUL_ITEMS_ENDPOINT', '/sales-channel/public/v1/skus'),
+        'items' => env('OMNIFUL_ITEMS_ENDPOINT', '/sales-channel/public/v1/master/skus'),
         'kits' => env('OMNIFUL_KITS_ENDPOINT', '/sales-channel/public/v1/master/skus/kits'),
     ],
     'sync_methods' => [
