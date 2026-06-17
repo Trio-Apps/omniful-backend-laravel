@@ -2890,6 +2890,14 @@ trait HandlesSapPurchaseAndProducts
             }
         }
 
+        // No supplier on the Omniful payload — fall back to the configured
+        // default PO vendor (e.g. "Dokhon") so the PO/GRPO is raised against a
+        // real SAP supplier instead of a synthetic one.
+        $fallbackSupplier = trim((string) config('omniful.purchase_order.fallback_supplier_code', ''));
+        if ($fallbackSupplier !== '') {
+            return $fallbackSupplier;
+        }
+
         $seed = (string) (
             data_get($data, 'supplier.id')
             ?? data_get($data, 'supplier.email')

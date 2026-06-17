@@ -304,6 +304,12 @@ return [
         'order_number_udf_field' => 'U_omo',
         'channel_udf_field' => 'U_omChannel',
     ],
+    'purchase_order' => [
+        // SAP supplier (CardCode) used for Omniful POs/GRPOs when the Omniful
+        // payload carries no supplier. Set empty to keep the synthetic-vendor
+        // fallback. Must be an existing OCRD supplier CardCode.
+        'fallback_supplier_code' => env('OMNIFUL_PO_FALLBACK_SUPPLIER_CODE', 'Dokhon'),
+    ],
     'order_tax' => [
         'ksa_taxable_code' => 'SOV',
         'ksa_zero_tax_code' => 'EOV',
