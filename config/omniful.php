@@ -102,6 +102,8 @@ return [
     // Stamped as "created_by" on every Omniful catalog payload (items/kits/
     // suppliers) so records pushed from here are attributable to SAP.
     'created_by' => env('OMNIFUL_CREATED_BY', 'Sap'),
+    // Stamped as "updated_by" when an existing record is updated (the PUT path).
+    'updated_by' => env('OMNIFUL_UPDATED_BY', 'Sap'),
     'item_push_defaults' => [
         'type' => env('OMNIFUL_ITEM_TYPE', 'simple'),
         'status' => env('OMNIFUL_ITEM_STATUS', 'live'),

@@ -84,12 +84,42 @@ trait HandlesOmnifulUpsert
             return $response;
         }
 
-        // Already exists -> switch to update on the same endpoint.
+        // Already exists -> switch to update on the same endpoint, stamping
+        // updated_by (default "Sap") on the outgoing payload.
         if ($this->isAlreadyExistsResponse($response)) {
-            return $this->request($updateMethod, $base, $payload);
+            return $this->request($updateMethod, $base, $this->stampUpdatedBy($payload));
         }
 
         return $response;
+    }
+
+    /**
+     * Add updated_by to an update payload. Handles both a single object payload
+     * (suppliers) and a list payload (items/kits send [{...}]).
+     *
+     * @param array<string,mixed> $payload
+     * @return array<string,mixed>
+     */
+    private function stampUpdatedBy(array $payload): array
+    {
+        $updatedBy = trim((string) config('omniful.updated_by', 'Sap'));
+        if ($updatedBy === '') {
+            return $payload;
+        }
+
+        if (array_is_list($payload)) {
+            return array_map(static function ($row) use ($updatedBy) {
+                if (is_array($row)) {
+                    $row['updated_by'] = $updatedBy;
+                }
+
+                return $row;
+            }, $payload);
+        }
+
+        $payload['updated_by'] = $updatedBy;
+
+        return $payload;
     }
 
     /**
