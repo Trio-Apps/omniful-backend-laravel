@@ -71,58 +71,47 @@ trait HandlesOmnifulUpsert
             throw new \RuntimeException('Omniful endpoint is not configured for ' . $resource);
         }
 
-        $method = strtolower((string) config('omniful.sync_methods.' . $resource, 'put'));
-        $endpoint = '/' . ltrim($endpoint, '/');
-        $base = $this->baseUrl . $endpoint;
+        // True create-or-update: POST to create; if Omniful says the record
+        // already exists, update it on the SAME endpoint with PUT (per Omniful:
+        // same URL, PUT method). The identifier (sku_code / code) is carried in
+        // the payload, so no per-code URL is needed.
+        $createMethod = strtolower((string) config('omniful.sync_methods.' . $resource, 'post'));
+        $updateMethod = strtolower((string) config('omniful.sync_update_methods.' . $resource, 'put'));
+        $base = $this->baseUrl . '/' . ltrim($endpoint, '/');
 
-        $urlWithCode = str_contains($endpoint, '{code}')
-            ? $this->baseUrl . str_replace('{code}', $code, $endpoint)
-            : $base . '/' . $code;
-
-        if (array_is_list($payload)) {
-            $attempts = [
-                [$method, $base, $payload],
-                ['post', $base, $payload],
-            ];
-        } else {
-            $payloadWithCode = array_merge(['code' => $code], $payload);
-            $attempts = [
-                [$method, $method === 'put' ? $urlWithCode : $base, $payload],
-                ['post', $base, $payloadWithCode],
-                ['put', $urlWithCode, $payload],
-                ['patch', $urlWithCode, $payload],
-            ];
+        $response = $this->request($createMethod, $base, $payload);
+        if ($response['ok']) {
+            return $response;
         }
 
-        $last = null;
-        foreach ($attempts as [$tryMethod, $tryUrl, $tryPayload]) {
-            $response = $this->request($tryMethod, $tryUrl, $tryPayload);
-            $last = $response;
+        // Already exists -> switch to update on the same endpoint.
+        if ($this->isAlreadyExistsResponse($response)) {
+            return $this->request($updateMethod, $base, $payload);
+        }
 
-            if ($response['ok']) {
-                return $response;
-            }
+        return $response;
+    }
 
-            if ($response['status'] === 409 || str_contains($response['body'], 'already exists') || str_contains($response['body'], 'duplicate')) {
-                return [
-                    'ok' => true,
-                    'status' => $response['status'],
-                    'body' => $response['body'],
-                    'json' => $response['json'],
-                ];
-            }
+    /**
+     * Detect Omniful's "record already exists" conflict so a create can be
+     * retried as an update.
+     *
+     * @param array<string,mixed> $response
+     */
+    private function isAlreadyExistsResponse(array $response): bool
+    {
+        if ((int) ($response['status'] ?? 0) === 409) {
+            return true;
+        }
 
-            if ($response['status'] !== 404 && $response['status'] !== 405) {
-                break;
+        $body = strtolower((string) ($response['body'] ?? ''));
+        foreach (['already exist', 'already created', 'duplicate', 'has already been taken'] as $needle) {
+            if ($body !== '' && str_contains($body, $needle)) {
+                return true;
             }
         }
 
-        return $last ?? [
-            'ok' => false,
-            'status' => 0,
-            'body' => 'No response',
-            'json' => null,
-        ];
+        return false;
     }
 
     /**

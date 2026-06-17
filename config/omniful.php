@@ -25,6 +25,14 @@ return [
         'items' => env('OMNIFUL_ITEMS_METHOD', 'post'),
         'kits' => env('OMNIFUL_KITS_METHOD', 'post'),
     ],
+    // Method used to UPDATE an existing record (same endpoint as create) when
+    // Omniful reports it already exists — per Omniful this is PUT.
+    'sync_update_methods' => [
+        'warehouses' => env('OMNIFUL_WAREHOUSES_UPDATE_METHOD', 'put'),
+        'suppliers' => env('OMNIFUL_SUPPLIERS_UPDATE_METHOD', 'put'),
+        'items' => env('OMNIFUL_ITEMS_UPDATE_METHOD', 'put'),
+        'kits' => env('OMNIFUL_KITS_UPDATE_METHOD', 'put'),
+    ],
     // SAP -> Omniful item/bundle integration driven by item-master UDF flags.
     // We read OITM items whose integrated flag = "not integrated" and:
     //   * sales-only items (SalesItem=tYES, InventoryItem=tNO) are bundles:
