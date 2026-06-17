@@ -136,6 +136,11 @@ class SapItemIntegrationService
                 return ['outcome' => 'ignored', 'resource' => null, 'payload' => null, 'response' => null];
             }
 
+            // Omniful rejects a KIT whose child SKUs do not already exist as
+            // master SKUs ("SKU's failed to upsert"). Create each child as a SKU
+            // first, then create the kit.
+            $this->ensureKitChildSkusExist($omniful, $sap, $lines);
+
             $payload = $this->buildKitPayload($item, $lines);
             $response = $omniful->upsert('kits', (string) ($payload['sku_code'] ?? ''), [$payload]);
             if ($response['ok'] ?? false) {
@@ -157,6 +162,43 @@ class SapItemIntegrationService
         }
 
         return ['outcome' => 'skipped', 'resource' => null, 'payload' => null, 'response' => null];
+    }
+
+    /**
+     * Ensure every KIT child exists as an Omniful master SKU before the kit is
+     * created (Omniful requires the children to exist, otherwise it returns
+     * "SKU's failed to upsert"). Each child's SAP item is pushed as a SKU; an
+     * unresolvable child fails the whole kit with a clear message.
+     *
+     * @param array<int,array{item_code:string,quantity:float}> $lines
+     */
+    private function ensureKitChildSkusExist(OmnifulApiClient $omniful, SapServiceLayerClient $sap, array $lines): void
+    {
+        $errors = [];
+
+        foreach ($lines as $line) {
+            $childCode = trim((string) ($line['item_code'] ?? ''));
+            if ($childCode === '') {
+                continue;
+            }
+
+            // Use the child's SAP master data when available; otherwise fall
+            // back to a minimal payload so the child SKU still gets created.
+            $childItem = $sap->fetchItemByCode($childCode);
+            if (trim((string) ($childItem['ItemCode'] ?? '')) === '') {
+                $childItem['ItemCode'] = $childCode;
+            }
+
+            $childPayload = $this->buildSkuPayload($childItem);
+            $childResponse = $omniful->upsert('items', (string) ($childPayload['sku_code'] ?? $childCode), [$childPayload]);
+            if (!($childResponse['ok'] ?? false)) {
+                $errors[] = $childCode . ': HTTP ' . ($childResponse['status'] ?? 0) . ' ' . ($childResponse['body'] ?? '');
+            }
+        }
+
+        if ($errors !== []) {
+            throw new \RuntimeException('KIT child SKU creation failed: ' . implode(' | ', $errors));
+        }
     }
 
     /**

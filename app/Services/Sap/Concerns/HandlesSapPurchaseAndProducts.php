@@ -3951,6 +3951,33 @@ trait HandlesSapPurchaseAndProducts
     }
 
     /**
+     * Fetch a single OITM record by code with the fields needed to build an
+     * Omniful SKU payload. Returns [] when the item does not exist (404).
+     *
+     * @return array<string,mixed>
+     */
+    public function fetchItemByCode(string $itemCode): array
+    {
+        $itemCode = trim($itemCode);
+        if ($itemCode === '') {
+            return [];
+        }
+
+        $select = 'ItemCode,ItemName,ForeignName,BarCode,SalesUnit,InventoryUOM,PurchaseUnit,InventoryItem,SalesItem,AvgStdPrice,Valid';
+        $encoded = str_replace("'", "''", $itemCode);
+        $response = $this->get("/Items('{$encoded}')?\$select={$select}");
+
+        if ($response->status() === 404) {
+            return [];
+        }
+        if (!$response->successful()) {
+            throw new \RuntimeException('SAP item fetch failed for ' . $itemCode . ': ' . $response->status() . ' ' . $response->body());
+        }
+
+        return (array) ($response->json() ?? []);
+    }
+
+    /**
      * Read a combo/bundle definition from the ZIDCOMBO UDO by its parent item
      * code. Returns the sub-item lines as
      * [['item_code' => ..., 'quantity' => ...], ...] or [] when the item is
