@@ -25,11 +25,14 @@ return [
         'items' => env('OMNIFUL_ITEMS_METHOD', 'post'),
         'kits' => env('OMNIFUL_KITS_METHOD', 'post'),
     ],
-    // Method used to UPDATE an existing record (same endpoint as create) when
-    // Omniful reports it already exists — per Omniful this is PUT.
+    // Method used to UPDATE an existing record on the SAME collection endpoint
+    // when Omniful reports it already exists. Per the Omniful API, SKUs and kits
+    // update via PUT to /master/skus and /master/skus/kits. Suppliers and
+    // warehouses have NO update endpoint (create only) — left empty so an
+    // existing record is treated as already in sync instead of erroring.
     'sync_update_methods' => [
-        'warehouses' => env('OMNIFUL_WAREHOUSES_UPDATE_METHOD', 'put'),
-        'suppliers' => env('OMNIFUL_SUPPLIERS_UPDATE_METHOD', 'put'),
+        'warehouses' => env('OMNIFUL_WAREHOUSES_UPDATE_METHOD', ''),
+        'suppliers' => env('OMNIFUL_SUPPLIERS_UPDATE_METHOD', ''),
         'items' => env('OMNIFUL_ITEMS_UPDATE_METHOD', 'put'),
         'kits' => env('OMNIFUL_KITS_UPDATE_METHOD', 'put'),
     ],

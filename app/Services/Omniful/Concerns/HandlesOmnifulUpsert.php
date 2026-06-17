@@ -71,10 +71,14 @@ trait HandlesOmnifulUpsert
             throw new \RuntimeException('Omniful endpoint is not configured for ' . $resource);
         }
 
-        // True create-or-update: POST to create; if Omniful says the record
-        // already exists, update it with PUT.
+        // Create, then create-or-update. Per the Omniful API:
+        //   - SKU/Kit update = PUT to the SAME collection endpoint (sku_code in
+        //     the body identifies the record): /master/skus, /master/skus/kits.
+        //   - Suppliers have NO update endpoint (only create) — so an existing
+        //     supplier is treated as already in sync (left unchanged).
+        // sync_update_methods is empty for resources with no update endpoint.
         $createMethod = strtolower((string) config('omniful.sync_methods.' . $resource, 'post'));
-        $updateMethod = strtolower((string) config('omniful.sync_update_methods.' . $resource, 'put'));
+        $updateMethod = strtolower(trim((string) config('omniful.sync_update_methods.' . $resource, '')));
         $base = $this->baseUrl . '/' . ltrim($endpoint, '/');
 
         $response = $this->request($createMethod, $base, $payload);
@@ -83,52 +87,21 @@ trait HandlesOmnifulUpsert
         }
 
         if ($this->isAlreadyExistsResponse($response)) {
-            return $this->updateExisting($updateMethod, $base, $code, $payload);
+            if ($updateMethod === '') {
+                // No update endpoint for this resource (e.g. suppliers): the
+                // record already exists and cannot be updated via the API.
+                return [
+                    'ok' => true,
+                    'status' => $response['status'],
+                    'body' => $response['body'] . ' | already exists — no update endpoint, left unchanged',
+                    'json' => $response['json'],
+                ];
+            }
+
+            return $this->request($updateMethod, $base, $this->stampUpdatedBy($payload));
         }
 
         return $response;
-    }
-
-    /**
-     * Update an already-existing record, stamping updated_by. Tries the RESTful
-     * per-record route <base>/{code} first (with a single object body) — this is
-     * what suppliers AND single master SKUs/kits use — and falls back to the
-     * collection endpoint (with the original payload shape) on 404/405.
-     *
-     * @param array<string,mixed> $payload
-     * @return array<string,mixed>
-     */
-    private function updateExisting(string $method, string $base, string $code, array $payload): array
-    {
-        $payload = $this->stampUpdatedBy($payload);
-        $code = trim($code);
-        $isList = array_is_list($payload);
-
-        // The single object to update at <base>/{code}: the payload itself for
-        // an object body (suppliers), or the sole element for a one-item list
-        // (items/kits are pushed one at a time as [{...}]).
-        $single = null;
-        if (!$isList) {
-            $single = $payload;
-        } elseif (count($payload) === 1 && isset($payload[0]) && is_array($payload[0])) {
-            $single = $payload[0];
-        }
-
-        if ($single !== null && $code !== '') {
-            $response = $this->request($method, $base . '/' . rawurlencode($code), $single);
-
-            // Object payloads (suppliers) update only at /{code} — return it as
-            // is (no collection fallback, so the real result is not masked).
-            // List payloads (items/kits) may instead update on the collection,
-            // so fall back there only on a missing per-record route (404/405).
-            if (!$isList
-                || ($response['ok'] ?? false)
-                || !in_array((int) ($response['status'] ?? 0), [404, 405], true)) {
-                return $response;
-            }
-        }
-
-        return $this->request($method, $base, $payload);
     }
 
     /**
