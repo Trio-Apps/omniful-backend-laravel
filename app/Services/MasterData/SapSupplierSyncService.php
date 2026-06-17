@@ -261,12 +261,19 @@ class SapSupplierSyncService
             $usedFallbacks[] = 'phone';
         }
 
-        return [[
+        $payload = [
             'name' => $name,
             'email' => $email,
             'phone' => $phone,
             'code' => $record->code,
-        ], $usedFallbacks];
+        ];
+
+        $createdBy = trim((string) config('omniful.created_by', 'Sap'));
+        if ($createdBy !== '') {
+            $payload['created_by'] = $createdBy;
+        }
+
+        return [$payload, $usedFallbacks];
     }
 
     /**

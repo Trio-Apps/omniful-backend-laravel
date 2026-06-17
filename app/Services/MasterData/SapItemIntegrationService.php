@@ -320,6 +320,11 @@ class SapItemIntegrationService
             $payload['seller_code'] = $sellerCode;
         }
 
+        $createdBy = trim((string) config('omniful.created_by', 'Sap'));
+        if ($createdBy !== '') {
+            $payload['created_by'] = $createdBy;
+        }
+
         return $payload;
     }
 
@@ -344,7 +349,7 @@ class SapItemIntegrationService
             ];
         }
 
-        return [
+        $payload = [
             'sku_code' => $code,
             'name' => $name !== '' ? $name : $code,
             'description' => $description !== '' ? $description : $name,
@@ -353,6 +358,13 @@ class SapItemIntegrationService
             'currency' => (string) config('omniful.item_integration.kit_currency', 'SAR'),
             'child_skus' => $childSkus,
         ];
+
+        $createdBy = trim((string) config('omniful.created_by', 'Sap'));
+        if ($createdBy !== '') {
+            $payload['created_by'] = $createdBy;
+        }
+
+        return $payload;
     }
 
     private function normalizeUnit(string $unit): string

@@ -91,6 +91,9 @@ return [
         // Pause (ms) between batches to stay under the rate limit.
         'delay_ms' => (int) env('OMNIFUL_PUSH_BATCH_DELAY_MS', 200),
     ],
+    // Stamped as "created_by" on every Omniful catalog payload (items/kits/
+    // suppliers) so records pushed from here are attributable to SAP.
+    'created_by' => env('OMNIFUL_CREATED_BY', 'Sap'),
     'item_push_defaults' => [
         'type' => env('OMNIFUL_ITEM_TYPE', 'simple'),
         'status' => env('OMNIFUL_ITEM_STATUS', 'live'),
