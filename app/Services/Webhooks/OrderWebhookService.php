@@ -1454,8 +1454,8 @@ class OrderWebhookService
                 'credit_memo_doc_entry' => $creditMemoDocEntry,
                 'reference' => (string) ($order->external_id ?? ''),
                 'memo' => 'COGS reversal from canceled Omniful order ' . (string) ($order->external_id ?? ''),
-                'expense_account' => config('omniful.order_accounting.cogs_expense_account'),
-                'offset_account' => config('omniful.order_accounting.inventory_offset_account'),
+                'expense_account' => $this->resolveIntegrationSettingValue('order_cogs_expense_account', config('omniful.order_accounting.cogs_expense_account')),
+                'offset_account' => $this->resolveIntegrationSettingValue('order_cogs_inventory_offset_account', config('omniful.order_accounting.inventory_offset_account')),
             ]);
         } catch (SapRequestException $e) {
             $order->sap_cancel_cogs_status = 'failed';

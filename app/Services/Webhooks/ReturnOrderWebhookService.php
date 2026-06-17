@@ -3,6 +3,7 @@
 namespace App\Services\Webhooks;
 
 use App\Exceptions\SapRequestException;
+use App\Models\IntegrationSetting;
 use App\Models\OmnifulOrder;
 use App\Models\OmnifulReturnOrderEvent;
 use App\Services\SapServiceLayerClient;
@@ -250,6 +251,22 @@ class ReturnOrderWebhookService
         return '';
     }
 
+    /**
+     * Resolve a COGS GL account: prefer the value configured on the Integration
+     * Settings page (same accounts used by the order COGS journal), falling back
+     * to the env/config value so existing env-based setups keep working.
+     */
+    private function resolveCogsAccount(string $settingField, string $configKey): string
+    {
+        $settings = IntegrationSetting::query()->first();
+        $value = $settings?->{$settingField};
+        if (is_string($value) && trim($value) !== '') {
+            return trim($value);
+        }
+
+        return (string) config($configKey, '');
+    }
+
     private function createReturnCogsReversalIfEligible(OmnifulReturnOrderEvent $event): void
     {
         if (!(bool) config('omniful.order_accounting.return_cogs_reversal_enabled', false)) {
@@ -275,8 +292,8 @@ class ReturnOrderWebhookService
                 'credit_memo_doc_entry' => $creditMemoDocEntry,
                 'reference' => (string) ($event->external_id ?? ''),
                 'memo' => 'COGS reversal from Omniful return ' . (string) ($event->external_id ?? ''),
-                'expense_account' => config('omniful.order_accounting.cogs_expense_account'),
-                'offset_account' => config('omniful.order_accounting.inventory_offset_account'),
+                'expense_account' => $this->resolveCogsAccount('order_cogs_expense_account', 'omniful.order_accounting.cogs_expense_account'),
+                'offset_account' => $this->resolveCogsAccount('order_cogs_inventory_offset_account', 'omniful.order_accounting.inventory_offset_account'),
             ]);
         } catch (SapRequestException $e) {
             $event->sap_cogs_reversal_status = 'failed';
