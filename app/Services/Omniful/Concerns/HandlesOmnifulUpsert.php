@@ -102,12 +102,13 @@ trait HandlesOmnifulUpsert
     {
         $payload = $this->stampUpdatedBy($payload);
         $code = trim($code);
+        $isList = array_is_list($payload);
 
         // The single object to update at <base>/{code}: the payload itself for
         // an object body (suppliers), or the sole element for a one-item list
         // (items/kits are pushed one at a time as [{...}]).
         $single = null;
-        if (!array_is_list($payload)) {
+        if (!$isList) {
             $single = $payload;
         } elseif (count($payload) === 1 && isset($payload[0]) && is_array($payload[0])) {
             $single = $payload[0];
@@ -115,10 +116,16 @@ trait HandlesOmnifulUpsert
 
         if ($single !== null && $code !== '') {
             $response = $this->request($method, $base . '/' . rawurlencode($code), $single);
-            if (($response['ok'] ?? false) || !in_array((int) ($response['status'] ?? 0), [404, 405], true)) {
+
+            // Object payloads (suppliers) update only at /{code} — return it as
+            // is (no collection fallback, so the real result is not masked).
+            // List payloads (items/kits) may instead update on the collection,
+            // so fall back there only on a missing per-record route (404/405).
+            if (!$isList
+                || ($response['ok'] ?? false)
+                || !in_array((int) ($response['status'] ?? 0), [404, 405], true)) {
                 return $response;
             }
-            // Per-record route absent -> fall through to the collection update.
         }
 
         return $this->request($method, $base, $payload);
