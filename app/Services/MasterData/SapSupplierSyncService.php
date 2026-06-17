@@ -15,6 +15,25 @@ class SapSupplierSyncService
         return !app(IntegrationDirectionService::class)->isDomainEnabled('suppliers');
     }
 
+    /**
+     * Pick the supplier phone from SAP, preferring the mobile (Cellular) field
+     * — that is what suppliers are actually reached on here — and falling back
+     * to the landline Phone1/Phone2 only when no mobile is set.
+     *
+     * @param array<string,mixed> $row
+     */
+    private function extractSupplierPhone(array $row): ?string
+    {
+        foreach (['Cellular', 'Phone1', 'Phone2'] as $field) {
+            $value = trim((string) ($row[$field] ?? ''));
+            if ($value !== '') {
+                return $value;
+            }
+        }
+
+        return null;
+    }
+
     public function syncFromSap(SapServiceLayerClient $client): array
     {
         if ($this->syncDisabled()) {
@@ -37,7 +56,7 @@ class SapSupplierSyncService
                 [
                     'name' => $row['CardName'] ?? null,
                     'email' => $row['EmailAddress'] ?? null,
-                    'phone' => $row['Phone1'] ?? null,
+                    'phone' => $this->extractSupplierPhone($row),
                     'payload' => $row,
                     'synced_at' => now(),
                     'status' => 'synced',

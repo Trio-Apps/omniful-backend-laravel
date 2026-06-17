@@ -487,7 +487,7 @@ trait HandlesSapMasterDataFetch
         // SAP B1 Service Layer accepts 'S' in most companies, while some require
         // the enum literal 'cSupplier' — try both. CardType is kept in the
         // projection so we can also enforce supplier-only on the client side.
-        $select = 'CardCode,CardName,CardType,EmailAddress,Phone1';
+        $select = 'CardCode,CardName,CardType,EmailAddress,Phone1,Cellular,Phone2';
 
         $buildFilter = function (string $cardType) use ($udf, $pending): string {
             $expr = "CardType eq '" . str_replace("'", "''", $cardType) . "'";
