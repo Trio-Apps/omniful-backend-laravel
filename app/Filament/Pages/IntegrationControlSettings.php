@@ -165,6 +165,10 @@ class IntegrationControlSettings extends Page implements HasForms
                         TextInput::make('order_cogs_inventory_offset_account')
                             ->label('Inventory Offset Account')
                             ->placeholder('Credit account'),
+                        Toggle::make('return_cogs_reversal_enabled')
+                            ->label('Enable COGS Reversal on Returns / Cancellations')
+                            ->default(true)
+                            ->helperText('Reverses the COGS journal when a return or order-cancel credit memo is created. Uses the same COGS accounts above.'),
                     ])
                     ->columns(2),
             ])
@@ -212,6 +216,7 @@ class IntegrationControlSettings extends Page implements HasForms
                 'order_cogs_journal_enabled' => (bool) ($state['order_cogs_journal_enabled'] ?? false),
                 'order_cogs_expense_account' => $state['order_cogs_expense_account'] ?? null,
                 'order_cogs_inventory_offset_account' => $state['order_cogs_inventory_offset_account'] ?? null,
+                'return_cogs_reversal_enabled' => (bool) ($state['return_cogs_reversal_enabled'] ?? false),
             ];
 
         if ($existing !== null) {

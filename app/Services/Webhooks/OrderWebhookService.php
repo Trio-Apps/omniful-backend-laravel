@@ -1431,7 +1431,13 @@ class OrderWebhookService
 
     private function createCancelCogsReversalIfEligible(OmnifulOrder $order): void
     {
-        if (!(bool) config('omniful.order_accounting.return_cogs_reversal_enabled', false)) {
+        // Controlled by the Integration Settings toggle (return_cogs_reversal_enabled);
+        // env/config flag is only the fallback when the setting was never stored.
+        $reversalEnabled = $this->resolveIntegrationSettingValue(
+            'return_cogs_reversal_enabled',
+            config('omniful.order_accounting.return_cogs_reversal_enabled', false)
+        );
+        if (!(bool) $reversalEnabled) {
             return;
         }
 

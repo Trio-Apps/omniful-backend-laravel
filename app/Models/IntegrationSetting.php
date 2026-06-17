@@ -64,6 +64,7 @@ class IntegrationSetting extends Model
         'order_cogs_journal_enabled',
         'order_cogs_expense_account',
         'order_cogs_inventory_offset_account',
+        'return_cogs_reversal_enabled',
     ];
 
     protected $casts = [
@@ -108,6 +109,7 @@ class IntegrationSetting extends Model
         'order_cogs_journal_enabled' => 'boolean',
         'order_cogs_expense_account' => 'string',
         'order_cogs_inventory_offset_account' => 'string',
+        'return_cogs_reversal_enabled' => 'boolean',
     ];
 
     /**

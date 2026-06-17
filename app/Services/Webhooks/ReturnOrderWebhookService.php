@@ -252,6 +252,21 @@ class ReturnOrderWebhookService
     }
 
     /**
+     * Whether COGS reversal on returns is enabled. Controlled by the Integration
+     * Settings toggle (return_cogs_reversal_enabled); falls back to the env/config
+     * flag only when the setting has never been stored.
+     */
+    private function returnCogsReversalEnabled(): bool
+    {
+        $value = IntegrationSetting::query()->first()?->return_cogs_reversal_enabled;
+        if ($value !== null) {
+            return (bool) $value;
+        }
+
+        return (bool) config('omniful.order_accounting.return_cogs_reversal_enabled', false);
+    }
+
+    /**
      * Resolve a COGS GL account: prefer the value configured on the Integration
      * Settings page (same accounts used by the order COGS journal), falling back
      * to the env/config value so existing env-based setups keep working.
@@ -269,7 +284,7 @@ class ReturnOrderWebhookService
 
     private function createReturnCogsReversalIfEligible(OmnifulReturnOrderEvent $event): void
     {
-        if (!(bool) config('omniful.order_accounting.return_cogs_reversal_enabled', false)) {
+        if (!$this->returnCogsReversalEnabled()) {
             return;
         }
 
