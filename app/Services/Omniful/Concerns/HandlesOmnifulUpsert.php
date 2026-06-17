@@ -90,10 +90,10 @@ trait HandlesOmnifulUpsert
     }
 
     /**
-     * Update an already-existing record, stamping updated_by. A single-object
-     * payload (e.g. suppliers) is updated RESTfully at <base>/{code}; a list
-     * payload (items/kits) is updated on the collection. Falls back to the
-     * collection if the per-code URL is not found (404/405).
+     * Update an already-existing record, stamping updated_by. Tries the RESTful
+     * per-record route <base>/{code} first (with a single object body) — this is
+     * what suppliers AND single master SKUs/kits use — and falls back to the
+     * collection endpoint (with the original payload shape) on 404/405.
      *
      * @param array<string,mixed> $payload
      * @return array<string,mixed>
@@ -101,20 +101,27 @@ trait HandlesOmnifulUpsert
     private function updateExisting(string $method, string $base, string $code, array $payload): array
     {
         $payload = $this->stampUpdatedBy($payload);
+        $code = trim($code);
 
-        if (array_is_list($payload) || trim($code) === '') {
-            return $this->request($method, $base, $payload);
+        // The single object to update at <base>/{code}: the payload itself for
+        // an object body (suppliers), or the sole element for a one-item list
+        // (items/kits are pushed one at a time as [{...}]).
+        $single = null;
+        if (!array_is_list($payload)) {
+            $single = $payload;
+        } elseif (count($payload) === 1 && isset($payload[0]) && is_array($payload[0])) {
+            $single = $payload[0];
         }
 
-        $codedUrl = $base . '/' . rawurlencode(trim($code));
-        $response = $this->request($method, $codedUrl, $payload);
-
-        // Fall back to the collection endpoint if the per-code route is absent.
-        if (!($response['ok'] ?? false) && in_array((int) ($response['status'] ?? 0), [404, 405], true)) {
-            return $this->request($method, $base, $payload);
+        if ($single !== null && $code !== '') {
+            $response = $this->request($method, $base . '/' . rawurlencode($code), $single);
+            if (($response['ok'] ?? false) || !in_array((int) ($response['status'] ?? 0), [404, 405], true)) {
+                return $response;
+            }
+            // Per-record route absent -> fall through to the collection update.
         }
 
-        return $response;
+        return $this->request($method, $base, $payload);
     }
 
     /**
