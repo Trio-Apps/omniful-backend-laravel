@@ -222,12 +222,9 @@ class SapItemIntegrationService
             $barcode = $code;
         }
 
-        $uom = $this->normalizeUnit((string) (
-            ($item['SalesUnit'] ?? '')
-            ?: ($item['InventoryUOM'] ?? '')
-            ?: ($item['PurchaseUnit'] ?? '')
-            ?: ($defaults['uom'] ?? 'ea')
-        ));
+        // uom is always "ea" for item creation (config-driven default), not the
+        // SAP SalesUnit which is free-text/Arabic and not a valid Omniful uom.
+        $uom = $this->normalizeUnit((string) ($defaults['uom'] ?? 'ea'));
 
         $retailPrice = $this->normalizePrice(null, (float) ($defaults['retail_price'] ?? 1));
         $sellingPrice = $this->normalizePrice(null, (float) ($defaults['selling_price'] ?? $retailPrice));
@@ -242,7 +239,7 @@ class SapItemIntegrationService
         // is treated as "ea" by Omniful unless the tenant enables weighted SKUs.
         $dimensionUnit = (string) ($defaults['dimension_unit'] ?? 'cm');
 
-        return [
+        $payload = [
             'name' => $name !== '' ? $name : $code,
             'description' => $description !== '' ? $description : $name,
             'sku_code' => $code,
@@ -273,6 +270,15 @@ class SapItemIntegrationService
             'selling_price' => $sellingPrice,
             'is_perishable' => (bool) ($defaults['is_perishable'] ?? false),
         ];
+
+        // Optional seller scope for tenant-side SKU creation. Included only when
+        // configured (set OMNIFUL_ITEM_SELLER_CODE empty to omit it).
+        $sellerCode = trim((string) ($defaults['seller_code'] ?? ''));
+        if ($sellerCode !== '') {
+            $payload['seller_code'] = $sellerCode;
+        }
+
+        return $payload;
     }
 
     /**

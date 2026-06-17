@@ -95,6 +95,8 @@ return [
         'type' => env('OMNIFUL_ITEM_TYPE', 'simple'),
         'status' => env('OMNIFUL_ITEM_STATUS', 'live'),
         'uom' => env('OMNIFUL_ITEM_UOM', 'ea'),
+        // Seller scope for tenant-side SKU creation; set empty to omit the field.
+        'seller_code' => env('OMNIFUL_ITEM_SELLER_CODE', 'PL-873'),
         'is_perishable' => (bool) env('OMNIFUL_ITEM_IS_PERISHABLE', false),
         'retail_price' => (float) env('OMNIFUL_ITEM_RETAIL_PRICE', 1),
         'selling_price' => (float) env('OMNIFUL_ITEM_SELLING_PRICE', 1),
