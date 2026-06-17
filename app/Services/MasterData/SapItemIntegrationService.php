@@ -222,43 +222,56 @@ class SapItemIntegrationService
             $barcode = $code;
         }
 
-        $unit = $this->normalizeUnit((string) (
+        $uom = $this->normalizeUnit((string) (
             ($item['SalesUnit'] ?? '')
             ?: ($item['InventoryUOM'] ?? '')
             ?: ($item['PurchaseUnit'] ?? '')
-            ?: ($defaults['unit'] ?? 'pcs')
+            ?: ($defaults['uom'] ?? 'ea')
         ));
 
-        $cost = $this->normalizePrice($item['AvgStdPrice'] ?? null, (float) ($defaults['cost'] ?? 1));
-        $retailPrice = $this->normalizePrice(null, (float) ($defaults['retail_price'] ?? max($cost, 1)));
-        $sellingPrice = $this->normalizePrice(null, (float) ($defaults['selling_price'] ?? min($retailPrice, max($cost, 1))));
+        $retailPrice = $this->normalizePrice(null, (float) ($defaults['retail_price'] ?? 1));
+        $sellingPrice = $this->normalizePrice(null, (float) ($defaults['selling_price'] ?? $retailPrice));
 
         $status = strtolower((string) ($defaults['status'] ?? 'live'));
         if ((string) ($item['Valid'] ?? '') === 'tNO') {
             $status = 'draft';
         }
 
+        // Weight value/uom and dimensions are not exposed per-item by SAP OITM,
+        // so they come from config defaults. uom of the weight other than "ea"
+        // is treated as "ea" by Omniful unless the tenant enables weighted SKUs.
+        $dimensionUnit = (string) ($defaults['dimension_unit'] ?? 'cm');
+
         return [
             'name' => $name !== '' ? $name : $code,
             'description' => $description !== '' ? $description : $name,
             'sku_code' => $code,
-            'handling_type' => strtolower((string) ($defaults['handling_type'] ?? 'cold')),
+            'barcodes' => array_values(array_filter([$barcode])),
             'type' => strtolower((string) ($defaults['type'] ?? 'simple')),
             'status' => $status,
-            'unit' => $unit,
-            'barcodes' => array_values(array_filter([$barcode])),
-            'cost' => $cost,
+            'weight' => [
+                'value' => (float) ($defaults['weight_value'] ?? 1),
+                'uom' => (string) ($defaults['weight_uom'] ?? 'ea'),
+            ],
+            'uom' => $uom,
+            'dimensions' => [
+                'length' => [
+                    'length' => (float) ($defaults['dimension_length'] ?? 10),
+                    'unit' => $dimensionUnit,
+                ],
+                'breadth' => [
+                    'breadth' => (float) ($defaults['dimension_breadth'] ?? 5),
+                    'unit' => $dimensionUnit,
+                ],
+                'height' => [
+                    'height' => (float) ($defaults['dimension_height'] ?? 15),
+                    'unit' => $dimensionUnit,
+                ],
+            ],
+            'currency' => (string) ($defaults['currency'] ?? 'SAR'),
             'retail_price' => $retailPrice,
             'selling_price' => $sellingPrice,
             'is_perishable' => (bool) ($defaults['is_perishable'] ?? false),
-            'is_weighted' => (bool) ($defaults['is_weighted'] ?? false),
-            'configuration' => [
-                'weight' => [
-                    'min' => (string) ($defaults['weight_min'] ?? '0.1 kg'),
-                    'max' => (string) ($defaults['weight_max'] ?? '0.1 kg'),
-                    'type' => (string) ($defaults['weight_type'] ?? 'fixed'),
-                ],
-            ],
         ];
     }
 

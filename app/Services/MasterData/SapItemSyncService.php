@@ -7,7 +7,6 @@ use App\Models\SapSyncEvent;
 use App\Services\IntegrationDirectionService;
 use App\Services\OmnifulApiClient;
 use App\Services\SapServiceLayerClient;
-use Illuminate\Support\Arr;
 
 class SapItemSyncService
 {
@@ -181,36 +180,6 @@ class SapItemSyncService
         return ['outcome' => $outcome, 'ok' => false, 'error' => null];
     }
 
-    /**
-     * POST a bulk payload to Omniful, retrying with exponential backoff when
-     * the API returns 429 (Too Many Requests). The $code is irrelevant for a
-     * list payload (Omniful posts the whole array to the base endpoint).
-     *
-     * @param array<int,array<string,mixed>> $payloads
-     * @return array<string,mixed>
-     */
-    private function pushBatchWithBackoff(OmnifulApiClient $client, string $resource, array $payloads): array
-    {
-        $delays = [2, 5, 10]; // seconds
-        $attempt = 0;
-
-        while (true) {
-            $response = $client->upsert($resource, 'bulk', $payloads);
-            if ($response['ok'] ?? false) {
-                return $response;
-            }
-
-            $status = (int) ($response['status'] ?? 0);
-            if ($status === 429 && $attempt < count($delays)) {
-                sleep($delays[$attempt]);
-                $attempt++;
-                continue;
-            }
-
-            return $response;
-        }
-    }
-
     public function syncFromOmniful(OmnifulApiClient $omnifulClient, SapServiceLayerClient $sapClient): array
     {
         if ($this->syncDisabled()) {
@@ -259,95 +228,4 @@ class SapItemSyncService
         ];
     }
 
-    /**
-     * @return array<string,mixed>
-     */
-    private function buildOmnifulPayload(SapItem $record): array
-    {
-        $source = is_array($record->payload) ? $record->payload : [];
-        $defaults = (array) config('omniful.item_push_defaults', []);
-
-        $code = (string) $record->code;
-        $name = trim((string) ($record->name ?? Arr::get($source, 'ItemName', $code)));
-        $description = trim((string) (Arr::get($source, 'ForeignName') ?: ($defaults['description'] ?? $name)));
-        $barcode = trim((string) Arr::get($source, 'BarCode', ''));
-        if ($barcode === '' && (bool) ($defaults['barcode_fallback_to_code'] ?? true)) {
-            $barcode = $code;
-        }
-
-        $unit = $this->normalizeUnit(
-            (string) (Arr::get($source, 'SalesUnit')
-                ?: Arr::get($source, 'InventoryUOM')
-                ?: Arr::get($source, 'PurchaseUnit')
-                ?: ($defaults['unit'] ?? 'pcs'))
-        );
-
-        $cost = $this->normalizePrice(Arr::get($source, 'AvgStdPrice'), (float) ($defaults['cost'] ?? 1));
-        $retailPrice = $this->normalizePrice(null, (float) ($defaults['retail_price'] ?? max($cost, 1)));
-        $sellingPrice = $this->normalizePrice(null, (float) ($defaults['selling_price'] ?? min($retailPrice, max($cost, 1))));
-
-        $status = strtolower((string) ($defaults['status'] ?? 'live'));
-        if ((string) Arr::get($source, 'Valid') === 'tNO') {
-            $status = 'draft';
-        }
-
-        $payload = [
-            'name' => $name !== '' ? $name : $code,
-            'description' => $description !== '' ? $description : $name,
-            'sku_code' => $code,
-            'handling_type' => strtolower((string) ($defaults['handling_type'] ?? 'cold')),
-            'type' => strtolower((string) ($defaults['type'] ?? 'simple')),
-            'status' => $status,
-            'unit' => $unit,
-            'barcodes' => array_values(array_filter([$barcode])),
-            'cost' => $cost,
-            'retail_price' => $retailPrice,
-            'selling_price' => $sellingPrice,
-            'is_perishable' => (bool) ($defaults['is_perishable'] ?? false),
-            'is_weighted' => (bool) ($defaults['is_weighted'] ?? false),
-            'configuration' => [
-                'weight' => [
-                    'min' => (string) ($defaults['weight_min'] ?? '0.1 kg'),
-                    'max' => (string) ($defaults['weight_max'] ?? '0.1 kg'),
-                    'type' => (string) ($defaults['weight_type'] ?? 'fixed'),
-                ],
-            ],
-        ];
-
-        $manufacturer = trim((string) ($defaults['manufacturer_name'] ?? ''));
-        if ($manufacturer !== '') {
-            $payload['manufacturer_name'] = $manufacturer;
-        }
-
-        $brand = trim((string) ($defaults['brand_name'] ?? ''));
-        if ($brand !== '') {
-            $payload['brand_name'] = $brand;
-        }
-
-        $countryOfOrigin = trim((string) ($defaults['country_of_origin'] ?? ''));
-        if ($countryOfOrigin !== '') {
-            $payload['country_of_origin'] = $countryOfOrigin;
-        }
-
-        return $payload;
-    }
-
-    private function normalizeUnit(string $value): string
-    {
-        $value = trim($value);
-
-        return $value !== '' ? $value : 'pcs';
-    }
-
-    private function normalizePrice(mixed $value, float $fallback): float
-    {
-        if (is_numeric($value)) {
-            $number = (float) $value;
-            if ($number > 0) {
-                return $number;
-            }
-        }
-
-        return $fallback > 0 ? $fallback : 1.0;
-    }
 }

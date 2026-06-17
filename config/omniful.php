@@ -92,22 +92,23 @@ return [
         'delay_ms' => (int) env('OMNIFUL_PUSH_BATCH_DELAY_MS', 200),
     ],
     'item_push_defaults' => [
-        'handling_type' => env('OMNIFUL_ITEM_HANDLING_TYPE', 'cold'),
         'type' => env('OMNIFUL_ITEM_TYPE', 'simple'),
         'status' => env('OMNIFUL_ITEM_STATUS', 'live'),
-        'unit' => env('OMNIFUL_ITEM_UNIT', 'pcs'),
+        'uom' => env('OMNIFUL_ITEM_UOM', 'ea'),
         'is_perishable' => (bool) env('OMNIFUL_ITEM_IS_PERISHABLE', false),
-        'is_weighted' => (bool) env('OMNIFUL_ITEM_IS_WEIGHTED', false),
-        'cost' => (float) env('OMNIFUL_ITEM_COST', 1),
         'retail_price' => (float) env('OMNIFUL_ITEM_RETAIL_PRICE', 1),
         'selling_price' => (float) env('OMNIFUL_ITEM_SELLING_PRICE', 1),
+        'currency' => env('OMNIFUL_ITEM_CURRENCY', 'SAR'),
         'description' => env('OMNIFUL_ITEM_DESCRIPTION', 'N/A'),
-        'country_of_origin' => env('OMNIFUL_ITEM_COUNTRY_OF_ORIGIN', 'Saudi Arabia'),
-        'manufacturer_name' => env('OMNIFUL_ITEM_MANUFACTURER_NAME', ''),
-        'brand_name' => env('OMNIFUL_ITEM_BRAND_NAME', ''),
-        'weight_min' => env('OMNIFUL_ITEM_WEIGHT_MIN', '0.1 kg'),
-        'weight_max' => env('OMNIFUL_ITEM_WEIGHT_MAX', '0.1 kg'),
-        'weight_type' => env('OMNIFUL_ITEM_WEIGHT_TYPE', 'fixed'),
+        // Weight + dimensions are not provided per-item by SAP OITM, so these
+        // config defaults are sent for every SKU. A weight uom other than "ea"
+        // is treated as "ea" by Omniful unless weighted SKUs are enabled.
+        'weight_value' => (float) env('OMNIFUL_ITEM_WEIGHT_VALUE', 1),
+        'weight_uom' => env('OMNIFUL_ITEM_WEIGHT_UOM', 'ea'),
+        'dimension_length' => (float) env('OMNIFUL_ITEM_DIMENSION_LENGTH', 10),
+        'dimension_breadth' => (float) env('OMNIFUL_ITEM_DIMENSION_BREADTH', 5),
+        'dimension_height' => (float) env('OMNIFUL_ITEM_DIMENSION_HEIGHT', 15),
+        'dimension_unit' => env('OMNIFUL_ITEM_DIMENSION_UNIT', 'cm'),
         'barcode_fallback_to_code' => (bool) env('OMNIFUL_ITEM_BARCODE_FALLBACK_TO_CODE', true),
     ],
     'sap_item_defaults' => [
