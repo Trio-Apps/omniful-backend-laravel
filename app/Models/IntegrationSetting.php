@@ -65,6 +65,11 @@ class IntegrationSetting extends Model
         'order_cogs_expense_account',
         'order_cogs_inventory_offset_account',
         'return_cogs_reversal_enabled',
+        'auto_sync_enabled',
+        'auto_sync_items_enabled',
+        'auto_sync_suppliers_enabled',
+        'auto_sync_interval_minutes',
+        'auto_sync_last_run_at',
     ];
 
     protected $casts = [
@@ -110,6 +115,11 @@ class IntegrationSetting extends Model
         'order_cogs_expense_account' => 'string',
         'order_cogs_inventory_offset_account' => 'string',
         'return_cogs_reversal_enabled' => 'boolean',
+        'auto_sync_enabled' => 'boolean',
+        'auto_sync_items_enabled' => 'boolean',
+        'auto_sync_suppliers_enabled' => 'boolean',
+        'auto_sync_interval_minutes' => 'integer',
+        'auto_sync_last_run_at' => 'datetime',
     ];
 
     /**

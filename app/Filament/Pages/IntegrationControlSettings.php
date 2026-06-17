@@ -43,8 +43,10 @@ class IntegrationControlSettings extends Page implements HasForms
 
     public function mount(): void
     {
+        // Load the ACTIVE environment profile (matches where save() writes and
+        // where the runtime reads), so the form reflects the live settings.
         $this->form->fill(array_merge(
-            IntegrationSetting::first()?->toArray() ?? [],
+            IntegrationSetting::active()?->toArray() ?? [],
             SapCostCenterSetting::query()->whereNull('warehouse_code')->first()?->toArray() ?? []
         ));
     }
@@ -63,6 +65,29 @@ class IntegrationControlSettings extends Page implements HasForms
                             ->helperText('Warehouses/hubs are pushed from Omniful into SAP. Existing warehouses in SAP are updated (already-created are not duplicated).')
                             ->required(),
                     ]),
+                Section::make('Auto Sync (SAP → Omniful)')
+                    ->description('Automatically pull Items / Suppliers from SAP and push them to Omniful on a schedule, instead of doing it manually from their pages. Requires the server scheduler (php artisan schedule:run) to be running via cron.')
+                    ->schema([
+                        Toggle::make('auto_sync_enabled')
+                            ->label('Enable Auto Sync')
+                            ->default(false)
+                            ->helperText('Master switch. When off, nothing runs automatically and you keep using the manual Pull/Push buttons.'),
+                        TextInput::make('auto_sync_interval_minutes')
+                            ->label('Run every (minutes)')
+                            ->numeric()
+                            ->minValue(1)
+                            ->default(15)
+                            ->helperText('How often to run. Master data rarely changes — 15–30 min is plenty and keeps SAP load low.'),
+                        Toggle::make('auto_sync_items_enabled')
+                            ->label('Auto sync Items')
+                            ->default(true)
+                            ->helperText('Pull pending SAP items and push them to Omniful.'),
+                        Toggle::make('auto_sync_suppliers_enabled')
+                            ->label('Auto sync Suppliers')
+                            ->default(true)
+                            ->helperText('Pull pending SAP suppliers and push them to Omniful.'),
+                    ])
+                    ->columns(2),
                 Section::make('Warehouse Cost Centers')
                     ->description('Warehouse-specific cost center mapping is managed from the dedicated Warehouse Cost Centers page.')
                     ->schema([
@@ -217,6 +242,10 @@ class IntegrationControlSettings extends Page implements HasForms
                 'order_cogs_expense_account' => $state['order_cogs_expense_account'] ?? null,
                 'order_cogs_inventory_offset_account' => $state['order_cogs_inventory_offset_account'] ?? null,
                 'return_cogs_reversal_enabled' => (bool) ($state['return_cogs_reversal_enabled'] ?? false),
+                'auto_sync_enabled' => (bool) ($state['auto_sync_enabled'] ?? false),
+                'auto_sync_items_enabled' => (bool) ($state['auto_sync_items_enabled'] ?? false),
+                'auto_sync_suppliers_enabled' => (bool) ($state['auto_sync_suppliers_enabled'] ?? false),
+                'auto_sync_interval_minutes' => max(1, (int) ($state['auto_sync_interval_minutes'] ?? 15)),
             ];
 
         if ($existing !== null) {
