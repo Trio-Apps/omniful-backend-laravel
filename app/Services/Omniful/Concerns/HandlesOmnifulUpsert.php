@@ -158,7 +158,14 @@ trait HandlesOmnifulUpsert
             }
         }
 
-        $body = '[' . strtoupper($method) . '] ' . $url . ' :: ' . $response->body();
+        // Surface which auth context/token was actually used so 401s are
+        // diagnosable (e.g. seller vs tenant, bearer token present or not).
+        $authLabel = (string) ($this->activeAuth['label'] ?? 'unknown');
+        $authMode = ($this->activeAuth['access_token'] ?? '') !== ''
+            ? 'bearer'
+            : ((($this->activeAuth['api_key'] ?? '') !== '' && ($this->activeAuth['api_secret'] ?? '') !== '') ? 'basic' : 'none');
+
+        $body = '[' . strtoupper($method) . '] ' . $url . ' (auth=' . $authLabel . '/' . $authMode . ') :: ' . $response->body();
         if ($response->status() === 401 && $this->lastRefreshError) {
             $body .= ' | Refresh error: ' . $this->lastRefreshError;
         }
