@@ -78,12 +78,14 @@ trait HandlesOmnifulAuth
 
     private function selectAuthContext(string $resource): void
     {
-        // Per Omniful: use the tenant API for everything EXCEPT kit creation,
-        // supplier creation and transfers, which require the seller API.
-        // Notably SKU creation ('items') uses the tenant API.
+        // The whole master-data SKU namespace uses the TENANT API: both SKU
+        // creation (/master/skus) and KIT creation (/master/skus/kits). The
+        // seller token is rejected by the kit endpoint with HTTP 401 even though
+        // it works for suppliers, so kits must use the tenant token like items.
+        // Only supplier creation and transfers use the seller API.
         // Refs: https://docs.omniful.tech/#761c6285-18b6-4e83-ba05-b081b8c9dc2d
         //       https://docs.omniful.tech/#66865a26-649e-4d85-8302-febff8568103
-        if (in_array($resource, ['kits', 'suppliers', 'transfers'], true)) {
+        if (in_array($resource, ['suppliers', 'transfers'], true)) {
             $this->activeAuth = $this->sellerAuth;
         } else {
             $this->activeAuth = $this->tenantAuth;
