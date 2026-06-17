@@ -72,9 +72,7 @@ trait HandlesOmnifulUpsert
         }
 
         // True create-or-update: POST to create; if Omniful says the record
-        // already exists, update it on the SAME endpoint with PUT (per Omniful:
-        // same URL, PUT method). The identifier (sku_code / code) is carried in
-        // the payload, so no per-code URL is needed.
+        // already exists, update it with PUT.
         $createMethod = strtolower((string) config('omniful.sync_methods.' . $resource, 'post'));
         $updateMethod = strtolower((string) config('omniful.sync_update_methods.' . $resource, 'put'));
         $base = $this->baseUrl . '/' . ltrim($endpoint, '/');
@@ -84,10 +82,36 @@ trait HandlesOmnifulUpsert
             return $response;
         }
 
-        // Already exists -> switch to update on the same endpoint, stamping
-        // updated_by (default "Sap") on the outgoing payload.
         if ($this->isAlreadyExistsResponse($response)) {
-            return $this->request($updateMethod, $base, $this->stampUpdatedBy($payload));
+            return $this->updateExisting($updateMethod, $base, $code, $payload);
+        }
+
+        return $response;
+    }
+
+    /**
+     * Update an already-existing record, stamping updated_by. A single-object
+     * payload (e.g. suppliers) is updated RESTfully at <base>/{code}; a list
+     * payload (items/kits) is updated on the collection. Falls back to the
+     * collection if the per-code URL is not found (404/405).
+     *
+     * @param array<string,mixed> $payload
+     * @return array<string,mixed>
+     */
+    private function updateExisting(string $method, string $base, string $code, array $payload): array
+    {
+        $payload = $this->stampUpdatedBy($payload);
+
+        if (array_is_list($payload) || trim($code) === '') {
+            return $this->request($method, $base, $payload);
+        }
+
+        $codedUrl = $base . '/' . rawurlencode(trim($code));
+        $response = $this->request($method, $codedUrl, $payload);
+
+        // Fall back to the collection endpoint if the per-code route is absent.
+        if (!($response['ok'] ?? false) && in_array((int) ($response['status'] ?? 0), [404, 405], true)) {
+            return $this->request($method, $base, $payload);
         }
 
         return $response;
