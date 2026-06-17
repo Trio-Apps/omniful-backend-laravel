@@ -146,7 +146,10 @@ trait HandlesOmnifulUpsert
         }
 
         $response = $client->{$method}($url, $payload);
-        if ($response->status() === 401 && ($this->activeAuth['refresh_token'] ?? '') !== '' && $this->isAccessTokenExpired()) {
+        // A 401 means the server rejected the token regardless of our local
+        // expiry clock (the token may be stale/revoked, or our stored expiry is
+        // wrong). Attempt a single refresh whenever we have refresh credentials.
+        if ($response->status() === 401 && ($this->activeAuth['refresh_token'] ?? '') !== '') {
             if ($this->refreshAccessToken()) {
                 $client = Http::timeout($this->timeout)->acceptJson();
                 if (($this->activeAuth['access_token'] ?? '') !== '') {
