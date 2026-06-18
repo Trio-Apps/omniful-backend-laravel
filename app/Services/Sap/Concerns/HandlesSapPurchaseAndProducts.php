@@ -3806,11 +3806,19 @@ trait HandlesSapPurchaseAndProducts
             );
         }
 
-        $treeItems = array_map(fn ($component) => [
-            'ItemCode' => (string) $component['item_code'],
-            'Quantity' => (float) $component['quantity'],
-            'Warehouse' => (string) ($component['warehouse'] ?? ''),
-        ], $components);
+        $treeItems = array_map(function ($component) {
+            $componentWarehouse = trim((string) ($component['warehouse'] ?? ''));
+            if ($componentWarehouse !== '') {
+                // Match the real SAP warehouse code tolerant of letter case.
+                $componentWarehouse = $this->resolveExistingWarehouseCode($componentWarehouse) ?? $componentWarehouse;
+            }
+
+            return [
+                'ItemCode' => (string) $component['item_code'],
+                'Quantity' => (float) $component['quantity'],
+                'Warehouse' => $componentWarehouse,
+            ];
+        }, $components);
 
         $existing = $this->getProductTree((string) $bundleCode);
         $isUpdate = str_contains(strtolower($eventName), 'update');
