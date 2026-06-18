@@ -467,6 +467,9 @@ return [
     ],
     'warehouse_resolution' => [
         'auto_create' => (bool) env('SAP_WAREHOUSE_AUTO_CREATE', false),
+        // Minutes to cache a resolved (case-corrected) SAP warehouse code so
+        // repeated lookups across many orders don't re-hit SAP. 0 disables.
+        'cache_ttl_minutes' => (int) env('SAP_WAREHOUSE_RESOLVE_CACHE_MINUTES', 1440),
         'map' => (function () {
             $raw = trim((string) env('SAP_WAREHOUSE_MAP', ''));
             if ($raw === '') {

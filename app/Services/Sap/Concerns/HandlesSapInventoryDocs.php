@@ -3,6 +3,7 @@
 namespace App\Services\Sap\Concerns;
 
 use App\Models\SapCostCenterSetting;
+use Illuminate\Support\Facades\Cache;
 
 trait HandlesSapInventoryDocs
 {
@@ -888,6 +889,32 @@ trait HandlesSapInventoryDocs
             return null;
         }
 
+        // Resolve each code once and cache the real SAP code (acts as a learned
+        // hub -> SAP-warehouse map), so high order volume does not repeat the
+        // case-variant lookups. Cache is scoped per SAP company. Successful
+        // resolutions only — misses are not cached so a newly created warehouse
+        // is picked up on the next attempt.
+        $ttl = (int) config('omniful.warehouse_resolution.cache_ttl_minutes', 1440);
+        $cacheKey = 'sap:wh_resolve:' . md5($this->companyDb . '|' . strtolower($warehouseCode));
+
+        if ($ttl > 0) {
+            $cached = Cache::get($cacheKey);
+            if (is_string($cached) && $cached !== '') {
+                return $cached;
+            }
+        }
+
+        $resolved = $this->lookupWarehouseCodeIgnoreCase($warehouseCode);
+
+        if ($ttl > 0 && is_string($resolved) && $resolved !== '') {
+            Cache::put($cacheKey, $resolved, now()->addMinutes($ttl));
+        }
+
+        return $resolved;
+    }
+
+    private function lookupWarehouseCodeIgnoreCase(string $warehouseCode): ?string
+    {
         $tried = [];
         foreach ([$warehouseCode, strtoupper($warehouseCode), strtolower($warehouseCode)] as $variant) {
             if ($variant === '' || isset($tried[$variant])) {
