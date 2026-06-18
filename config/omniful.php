@@ -319,6 +319,10 @@ return [
         'updated_at_udf_field' => env('OMNIFUL_ORDER_UPDATED_AT_UDF_FIELD', ''),
         'order_number_udf_field' => 'U_omo',
         'channel_udf_field' => 'U_omChannel',
+        // Only push orders whose Omniful order id is fully numeric to SAP.
+        // Non-numeric ids (e.g. STO_..., RS_234) are internal/non-sales and are
+        // ignored. UI toggle order_numeric_id_only overrides this fallback.
+        'numeric_order_id_only' => (bool) env('OMNIFUL_ORDER_NUMERIC_ID_ONLY', true),
     ],
     'purchase_order' => [
         // SAP supplier (CardCode) used for Omniful POs/GRPOs when the Omniful

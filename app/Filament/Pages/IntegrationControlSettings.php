@@ -88,6 +88,14 @@ class IntegrationControlSettings extends Page implements HasForms
                             ->helperText('Pull pending SAP suppliers and push them to Omniful.'),
                     ])
                     ->columns(2),
+                Section::make('Orders')
+                    ->description('Control which Omniful orders are turned into SAP documents.')
+                    ->schema([
+                        Toggle::make('order_numeric_id_only')
+                            ->label('Only sync numeric order IDs to SAP')
+                            ->default(true)
+                            ->helperText('When on, orders whose id is not fully numeric (e.g. STO_..., RS_234) are ignored — only numeric order ids are pushed to SAP.'),
+                    ]),
                 Section::make('Purchase Orders')
                     ->description('Control how Omniful Purchase Order / GRPO webhooks are turned into SAP documents.')
                     ->schema([
@@ -256,6 +264,7 @@ class IntegrationControlSettings extends Page implements HasForms
                 'auto_sync_suppliers_enabled' => (bool) ($state['auto_sync_suppliers_enabled'] ?? false),
                 'auto_sync_interval_minutes' => max(1, (int) ($state['auto_sync_interval_minutes'] ?? 15)),
                 'po_ignored_supplier_codes' => $state['po_ignored_supplier_codes'] ?? null,
+                'order_numeric_id_only' => (bool) ($state['order_numeric_id_only'] ?? false),
             ];
 
         if ($existing !== null) {

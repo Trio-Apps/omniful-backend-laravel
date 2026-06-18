@@ -155,6 +155,21 @@ class OrderWebhookService
         $payload = (array) ($event->payload ?? []);
         $data = (array) data_get($payload, 'data', []);
         $eventName = (string) data_get($payload, 'event_name', '');
+
+        // Only push numeric order ids to SAP. Non-numeric ids (e.g. STO_...,
+        // RS_234 — stock transfers / internal) are ignored.
+        $orderId = trim((string) (
+            data_get($data, 'order_id')
+            ?? data_get($data, 'order_alias')
+            ?? $externalId
+        ));
+        if ($this->numericOrderIdOnly() && $orderId !== '' && !ctype_digit($orderId)) {
+            $order->sap_status = 'ignored';
+            $order->sap_error = 'Ignored: non-numeric order id (' . $orderId . ') excluded from SAP sync';
+            $order->save();
+            return;
+        }
+
         $primaryStatus = $this->extractStatusValue($data, [
             'status_code',
             'status',
@@ -818,6 +833,14 @@ class OrderWebhookService
         }
 
         return (bool) config('omniful.order_payment.card_fee_journal_enabled', false);
+    }
+
+    private function numericOrderIdOnly(): bool
+    {
+        return (bool) $this->resolveIntegrationSettingValue(
+            'order_numeric_id_only',
+            config('omniful.order_sync.numeric_order_id_only', true)
+        );
     }
 
     private function isCogsJournalEnabled(): bool

@@ -71,6 +71,7 @@ class IntegrationSetting extends Model
         'auto_sync_interval_minutes',
         'auto_sync_last_run_at',
         'po_ignored_supplier_codes',
+        'order_numeric_id_only',
     ];
 
     protected $casts = [
@@ -122,6 +123,7 @@ class IntegrationSetting extends Model
         'auto_sync_interval_minutes' => 'integer',
         'auto_sync_last_run_at' => 'datetime',
         'po_ignored_supplier_codes' => 'string',
+        'order_numeric_id_only' => 'boolean',
     ];
 
     /**
