@@ -325,6 +325,10 @@ return [
         // payload carries no supplier. Set empty to keep the synthetic-vendor
         // fallback. Must be an existing OCRD supplier CardCode.
         'fallback_supplier_code' => env('OMNIFUL_PO_FALLBACK_SUPPLIER_CODE', 'Dokhon'),
+        // Supplier codes whose PO/GRPO webhooks are IGNORED (not created in SAP).
+        // Comma/space separated. Managed from the Integration Settings page; this
+        // env value is only a fallback. Matched case-insensitively.
+        'ignored_supplier_codes' => env('OMNIFUL_PO_IGNORED_SUPPLIER_CODES', ''),
     ],
     'order_tax' => [
         'ksa_taxable_code' => 'SOV',

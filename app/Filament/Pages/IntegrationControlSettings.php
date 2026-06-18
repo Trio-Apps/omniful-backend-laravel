@@ -88,6 +88,15 @@ class IntegrationControlSettings extends Page implements HasForms
                             ->helperText('Pull pending SAP suppliers and push them to Omniful.'),
                     ])
                     ->columns(2),
+                Section::make('Purchase Orders')
+                    ->description('Control how Omniful Purchase Order / GRPO webhooks are turned into SAP documents.')
+                    ->schema([
+                        Textarea::make('po_ignored_supplier_codes')
+                            ->label('Ignored supplier codes (PO/GRPO)')
+                            ->rows(2)
+                            ->placeholder('RU-415, M130')
+                            ->helperText('PO/GRPO webhooks whose supplier code is in this list are ignored — not created in SAP. Separate codes by comma, space or new line. Matched case-insensitively.'),
+                    ]),
                 Section::make('Warehouse Cost Centers')
                     ->description('Warehouse-specific cost center mapping is managed from the dedicated Warehouse Cost Centers page.')
                     ->schema([
@@ -246,6 +255,7 @@ class IntegrationControlSettings extends Page implements HasForms
                 'auto_sync_items_enabled' => (bool) ($state['auto_sync_items_enabled'] ?? false),
                 'auto_sync_suppliers_enabled' => (bool) ($state['auto_sync_suppliers_enabled'] ?? false),
                 'auto_sync_interval_minutes' => max(1, (int) ($state['auto_sync_interval_minutes'] ?? 15)),
+                'po_ignored_supplier_codes' => $state['po_ignored_supplier_codes'] ?? null,
             ];
 
         if ($existing !== null) {

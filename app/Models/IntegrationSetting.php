@@ -70,6 +70,7 @@ class IntegrationSetting extends Model
         'auto_sync_suppliers_enabled',
         'auto_sync_interval_minutes',
         'auto_sync_last_run_at',
+        'po_ignored_supplier_codes',
     ];
 
     protected $casts = [
@@ -120,7 +121,44 @@ class IntegrationSetting extends Model
         'auto_sync_suppliers_enabled' => 'boolean',
         'auto_sync_interval_minutes' => 'integer',
         'auto_sync_last_run_at' => 'datetime',
+        'po_ignored_supplier_codes' => 'string',
     ];
+
+    /**
+     * Normalised (upper-cased) list of supplier codes whose PO/GRPO webhooks
+     * must be ignored. Uses the active profile's setting, falling back to the
+     * env/config value.
+     *
+     * @return array<int,string>
+     */
+    public static function ignoredPurchaseOrderSupplierCodes(): array
+    {
+        $raw = (string) (self::active()?->po_ignored_supplier_codes ?? '');
+        if (trim($raw) === '') {
+            $raw = (string) config('omniful.purchase_order.ignored_supplier_codes', '');
+        }
+
+        $parts = preg_split('/[\s,;]+/', $raw) ?: [];
+
+        return array_values(array_unique(array_filter(
+            array_map(static fn ($c) => strtoupper(trim((string) $c)), $parts),
+            static fn ($c) => $c !== ''
+        )));
+    }
+
+    /**
+     * Whether a PO/GRPO from the given supplier code should be ignored
+     * (not created in SAP). Matched case-insensitively.
+     */
+    public static function isPurchaseOrderSupplierIgnored(?string $supplierCode): bool
+    {
+        $supplierCode = strtoupper(trim((string) $supplierCode));
+        if ($supplierCode === '') {
+            return false;
+        }
+
+        return in_array($supplierCode, self::ignoredPurchaseOrderSupplierCodes(), true);
+    }
 
     /**
      * Make the ACTIVE environment profile the default record everywhere.

@@ -26,6 +26,17 @@ class PurchaseOrderWebhookService
             $data = data_get($payload, 'data', []);
             $eventName = (string) data_get($payload, 'event_name', '');
             $status = $this->extractStatus($data);
+
+            // Skip PO/GRPO from suppliers excluded in the Integration Settings —
+            // these are not created in SAP.
+            $supplierCode = $this->extractSupplierCode((array) $data);
+            if (\App\Models\IntegrationSetting::isPurchaseOrderSupplierIgnored($supplierCode)) {
+                $mark('ignored: supplier excluded');
+                $event->sap_status = 'ignored';
+                $event->sap_error = 'Ignored: supplier ' . $supplierCode . ' is excluded from PO/GRPO sync to SAP';
+                $event->save();
+                return;
+            }
             $mark('mapping status');
             $mapping = $mapper->resolvePurchaseOrderStatus($eventName, $status, $event->sap_status);
 
@@ -102,6 +113,32 @@ class PurchaseOrderWebhookService
                 'steps' => $steps,
             ]);
         }
+    }
+
+    /**
+     * The Omniful supplier code on a PO/GRPO payload (nested or flat).
+     *
+     * @param array<string,mixed> $data
+     */
+    private function extractSupplierCode(array $data): string
+    {
+        $candidates = [
+            data_get($data, 'supplier.code'),
+            data_get($data, 'supplier.supplier_code'),
+            data_get($data, 'supplier.vendor_code'),
+            data_get($data, 'supplier.card_code'),
+            data_get($data, 'supplier_code'),
+            data_get($data, 'vendor_code'),
+        ];
+
+        foreach ($candidates as $candidate) {
+            $value = trim((string) $candidate);
+            if ($value !== '') {
+                return $value;
+            }
+        }
+
+        return '';
     }
 
     /**

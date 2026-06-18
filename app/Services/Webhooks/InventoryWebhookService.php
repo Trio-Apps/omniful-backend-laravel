@@ -26,6 +26,15 @@ class InventoryWebhookService
             $route = $mapper->mapInventoryRoute($eventName, $action, $entity);
 
             if (($route['sap_action'] ?? null) === 'grpo') {
+                // Skip GRPO from suppliers excluded in the Integration Settings.
+                $supplierCode = $this->extractSupplierCode($data, $payload);
+                if (\App\Models\IntegrationSetting::isPurchaseOrderSupplierIgnored($supplierCode)) {
+                    $event->sap_status = 'ignored';
+                    $event->sap_error = 'Ignored: supplier ' . $supplierCode . ' is excluded from PO/GRPO sync to SAP';
+                    $event->save();
+                    return;
+                }
+
                 $displayId = $this->extractPurchaseOrderDisplayId($payload);
                 $poEvent = null;
                 $eventKey = $this->buildInventoryEventKey($payload, $items, $displayId);
@@ -319,6 +328,34 @@ class InventoryWebhookService
             }
             throw $e;
         }
+    }
+
+    /**
+     * The Omniful supplier code on a GRPO payload (nested or flat).
+     *
+     * @param mixed $data
+     * @param array<string,mixed> $payload
+     */
+    private function extractSupplierCode($data, array $payload): string
+    {
+        $candidates = [
+            data_get($data, 'supplier.code'),
+            data_get($data, 'supplier.supplier_code'),
+            data_get($data, 'supplier.vendor_code'),
+            data_get($data, 'supplier.card_code'),
+            data_get($data, 'supplier_code'),
+            data_get($payload, 'data.supplier.code'),
+            data_get($payload, 'data.supplier_code'),
+        ];
+
+        foreach ($candidates as $candidate) {
+            $value = trim((string) $candidate);
+            if ($value !== '') {
+                return $value;
+            }
+        }
+
+        return '';
     }
 
     private function extractPurchaseOrderDisplayId(array $payload): ?string
