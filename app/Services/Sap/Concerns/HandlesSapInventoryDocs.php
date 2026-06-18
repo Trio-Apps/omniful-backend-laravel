@@ -874,6 +874,46 @@ trait HandlesSapInventoryDocs
     }
 
 
+    /**
+     * Return the real SAP warehouse code for the given code, tolerant of letter
+     * case. The Service Layer key lookup (/Warehouses('CODE')) is case-sensitive,
+     * but Omniful hub codes can differ in case from the OWHS code (e.g. the hub
+     * "M130" maps to SAP warehouse "m130"). Tries the code as-is, then upper- and
+     * lower-case variants, and returns SAP's actual code, or null if none exist.
+     */
+    private function resolveExistingWarehouseCode(string $warehouseCode): ?string
+    {
+        $warehouseCode = trim($warehouseCode);
+        if ($warehouseCode === '') {
+            return null;
+        }
+
+        $tried = [];
+        foreach ([$warehouseCode, strtoupper($warehouseCode), strtolower($warehouseCode)] as $variant) {
+            if ($variant === '' || isset($tried[$variant])) {
+                continue;
+            }
+            $tried[$variant] = true;
+
+            $encoded = str_replace("'", "''", $variant);
+            $response = $this->get("/Warehouses('{$encoded}')?\$select=WarehouseCode");
+
+            if ($response->status() === 404) {
+                continue;
+            }
+            if (!$response->successful()) {
+                throw new \RuntimeException('SAP warehouse lookup failed: ' . $response->status() . ' ' . $response->body());
+            }
+
+            $code = trim((string) ($response->json('WarehouseCode') ?? ''));
+
+            return $code !== '' ? $code : $variant;
+        }
+
+        return null;
+    }
+
+
     private function isValidWarehouse(string $warehouseCode): bool
     {
         $encoded = str_replace("'", "''", $warehouseCode);
@@ -899,8 +939,13 @@ trait HandlesSapInventoryDocs
         }
 
         $warehouseCode = $this->resolveWarehouseCode($sourceCode);
-        if ($this->isValidWarehouse($warehouseCode)) {
-            return $warehouseCode;
+
+        // Resolve to the actual SAP warehouse code, tolerant of letter case:
+        // the Service Layer key lookup is case-sensitive, but an Omniful hub
+        // code may differ in case from the SAP OWHS code (e.g. M130 vs m130).
+        $actualCode = $this->resolveExistingWarehouseCode($warehouseCode);
+        if ($actualCode !== null) {
+            return $actualCode;
         }
 
         if (!$this->shouldAutoCreateWarehouse()) {
