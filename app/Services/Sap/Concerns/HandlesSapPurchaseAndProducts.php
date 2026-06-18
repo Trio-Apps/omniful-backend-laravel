@@ -140,6 +140,33 @@ trait HandlesSapPurchaseAndProducts
 
             $lines[] = $line;
             $lineTaxPercents[] = $linePerUnitTaxPercent;
+
+            // Bundle explosion: if this item is a combo in the ZID_COMBOS UDO,
+            // append its child ingredients as zero-priced lines (price stays on
+            // the parent for revenue) so SAP issues the real components' stock.
+            // Quantity = UDO component quantity x ordered bundle quantity.
+            foreach ($this->fetchComboLinesFromUdo($itemCode) as $combo) {
+                $childCode = trim((string) ($combo['item_code'] ?? ''));
+                $childQty = (float) ($combo['quantity'] ?? 0) * $qty;
+                if ($childCode === '' || $childQty <= 0) {
+                    continue;
+                }
+
+                $lineIndex++;
+                $this->ensureItemReadyForSale($childCode, ['sku_code' => $childCode], $lineIndex);
+
+                $childLine = [
+                    'ItemCode' => $childCode,
+                    'Quantity' => $this->roundSapQuantity($childQty),
+                    'UnitPrice' => 0,
+                ];
+                if ($hubCode) {
+                    $childLine['WarehouseCode'] = (string) $hubCode;
+                }
+
+                $lines[] = $childLine;
+                $lineTaxPercents[] = 0.0;
+            }
         }
 
         if ($lines === []) {
@@ -2053,6 +2080,19 @@ trait HandlesSapPurchaseAndProducts
             }
 
             $quantities[$itemCode] += $qty;
+
+            // Explode bundles the same way the AR invoice does: request the UDO
+            // child ingredients (component qty x ordered qty) so the components
+            // (which carry the stock) are delivered, not just the parent.
+            foreach ($this->fetchComboLinesFromUdo($itemCode) as $combo) {
+                $childCode = trim((string) ($combo['item_code'] ?? ''));
+                $childQty = (float) ($combo['quantity'] ?? 0) * $qty;
+                if ($childCode === '' || $childQty <= 0) {
+                    continue;
+                }
+
+                $quantities[$childCode] = ($quantities[$childCode] ?? 0.0) + $childQty;
+            }
         }
 
         return $quantities;
