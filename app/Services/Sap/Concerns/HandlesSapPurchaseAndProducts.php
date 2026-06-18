@@ -35,6 +35,17 @@ trait HandlesSapPurchaseAndProducts
         $lineIndex = 0;
         $salesItemChecked = [];
         $items = data_get($data, 'order_items', data_get($data, 'items', []));
+
+        // A merchandise-level discount that is NOT baked into the per-line totals
+        // breaks the PriceAfterVAT shortcut: it pins each line gross to Omniful's
+        // line.total (the UNDISCOUNTED gross), silently dropping the discount.
+        // When such a discount exists, skip PriceAfterVAT so the rebalancing path
+        // prices each line to the discounted target subtotal (subtotal − discount).
+        $invoiceDiscount = (float) (data_get($data, 'invoice.discount') ?? 0);
+        $discountInclusive = filter_var(data_get($data, 'invoice.sub_total_discount_inclusive', false), FILTER_VALIDATE_BOOL);
+        $merchandiseDiscount = $invoiceDiscount - $this->extractOrderFreightDiscountAmount($data);
+        $hasMerchandiseDiscount = !$discountInclusive && $merchandiseDiscount > 0.0;
+
         foreach ((array) $items as $item) {
             $lineIndex++;
             $itemCode = data_get($item, 'sku_code')
@@ -118,7 +129,7 @@ trait HandlesSapPurchaseAndProducts
             // If both are present SAP prefers UnitPrice and silently ignores
             // PriceAfterVAT, defeating the entire approach. We trade the
             // explicit net price (which SAP can derive) for an exact gross.
-            if ($omnifulLineGross !== null && $linePerUnitTaxPercent > 0) {
+            if ($omnifulLineGross !== null && $linePerUnitTaxPercent > 0 && !$hasMerchandiseDiscount) {
                 $line['PriceAfterVAT'] = $this->roundSapAmount($omnifulLineGross);
                 unset($line['UnitPrice']);
             }
