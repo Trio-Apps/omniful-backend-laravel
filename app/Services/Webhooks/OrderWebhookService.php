@@ -827,12 +827,10 @@ class OrderWebhookService
 
     private function isCardFeeJournalEnabled(): bool
     {
-        $settings = IntegrationSetting::query()->first();
-        if ($settings && $settings->order_card_fee_journal_enabled !== null) {
-            return (bool) $settings->order_card_fee_journal_enabled;
-        }
-
-        return (bool) config('omniful.order_payment.card_fee_journal_enabled', false);
+        // Card fee journal is disabled entirely per business decision — it must
+        // never be sent to SAP, only the COGS journal runs. Hard-off here so the
+        // step is skipped regardless of the (now inert) settings/config toggle.
+        return false;
     }
 
     private function numericOrderIdOnly(): bool
