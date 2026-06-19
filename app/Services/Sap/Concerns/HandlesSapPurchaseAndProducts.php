@@ -1712,6 +1712,29 @@ trait HandlesSapPurchaseAndProducts
                 continue;
             }
 
+            // Bundles: COGS is the cost of the UDO components, not the parent.
+            // The bundle parent is a sales/service item with no inventory cost,
+            // so summing its cost yields 0. Explode it and sum the children's
+            // average cost (component cost x component qty x ordered qty).
+            $comboLines = $this->fetchComboLinesFromUdo($itemCode);
+            if ($comboLines !== []) {
+                foreach ($comboLines as $combo) {
+                    $childCode = trim((string) ($combo['item_code'] ?? ''));
+                    $childQty = (float) ($combo['quantity'] ?? 0) * $qty;
+                    if ($childCode === '' || $childQty <= 0) {
+                        continue;
+                    }
+
+                    if (!array_key_exists($childCode, $costByItem)) {
+                        $costByItem[$childCode] = $this->fetchItemAverageCost($childCode);
+                    }
+
+                    $total += $childQty * $costByItem[$childCode];
+                }
+
+                continue;
+            }
+
             if (!array_key_exists($itemCode, $costByItem)) {
                 $costByItem[$itemCode] = $this->fetchItemAverageCost($itemCode);
             }
