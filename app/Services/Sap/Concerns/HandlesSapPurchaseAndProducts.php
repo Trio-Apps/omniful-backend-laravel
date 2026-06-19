@@ -5546,9 +5546,48 @@ trait HandlesSapPurchaseAndProducts
             $expenseLine['VatGroup'] = $freightTaxCode;
         }
 
+        // Stamp the same cost center on the freight expense as on the item
+        // lines. On the freight (DocumentAdditionalExpenses / INV3) the cost
+        // center dimensions are DistributionRule..DistributionRule5 (OcrCode..
+        // OcrCode5), not CostingCode. Resolve from the document's warehouse.
+        $freightWarehouse = $this->resolveWarehouseCodeFromDocumentLines($body)
+            ?? $this->resolveOrderWarehouseCode($data['hub_code'] ?? null);
+        $expenseLine = array_merge($expenseLine, $this->freightExpenseDistributionRuleFields($freightWarehouse));
+
         $body['DocumentAdditionalExpenses'] = [$expenseLine];
 
         return $body;
+    }
+
+    /**
+     * Map the warehouse's default cost-center dimensions onto the field names
+     * SAP's DocumentAdditionalExpenses (freight) uses: DistributionRule
+     * (OcrCode) .. DistributionRule5 (OcrCode5). Document lines use
+     * CostingCode..CostingCode5; the freight table uses DistributionRule*.
+     *
+     * @return array<string,string>
+     */
+    private function freightExpenseDistributionRuleFields(?string $warehouseCode): array
+    {
+        $costCenters = $this->getDefaultCostCenterFields($warehouseCode);
+
+        $map = [
+            'CostingCode' => 'DistributionRule',
+            'CostingCode2' => 'DistributionRule2',
+            'CostingCode3' => 'DistributionRule3',
+            'CostingCode4' => 'DistributionRule4',
+            'CostingCode5' => 'DistributionRule5',
+        ];
+
+        $fields = [];
+        foreach ($map as $costKey => $ruleKey) {
+            $value = trim((string) ($costCenters[$costKey] ?? ''));
+            if ($value !== '') {
+                $fields[$ruleKey] = $value;
+            }
+        }
+
+        return $fields;
     }
 
     /**
@@ -5618,6 +5657,24 @@ trait HandlesSapPurchaseAndProducts
             if (isset($expense['VatGroup']) && trim((string) $expense['VatGroup']) !== '') {
                 $line['VatGroup'] = $expense['VatGroup'];
             }
+
+            // Carry the cost center onto the delivery freight: prefer the
+            // dimensions already on the invoice expense, else resolve from the
+            // delivery's warehouse. DocumentAdditionalExpenses uses
+            // DistributionRule..DistributionRule5 (OcrCode..OcrCode5).
+            $copiedRules = [];
+            foreach (['DistributionRule', 'DistributionRule2', 'DistributionRule3', 'DistributionRule4', 'DistributionRule5'] as $ruleKey) {
+                if (isset($expense[$ruleKey]) && trim((string) $expense[$ruleKey]) !== '') {
+                    $copiedRules[$ruleKey] = $expense[$ruleKey];
+                }
+            }
+            if ($copiedRules === []) {
+                $deliveryWarehouse = $this->resolveWarehouseCodeFromDocumentLines($body)
+                    ?? $this->resolveOrderWarehouseCode($data['hub_code'] ?? null);
+                $copiedRules = $this->freightExpenseDistributionRuleFields($deliveryWarehouse);
+            }
+            $line = array_merge($line, $copiedRules);
+
             $expenses[] = $line;
         }
 
