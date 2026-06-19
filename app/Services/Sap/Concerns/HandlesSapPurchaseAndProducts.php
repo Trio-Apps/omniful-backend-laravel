@@ -186,10 +186,23 @@ trait HandlesSapPurchaseAndProducts
             true,
         );
 
-        if (!$allLinesUsePriceAfterVat) {
+        // Represent the Omniful merchandise discount as a real per-line
+        // DiscountPercent (UnitPrice stays the gross/list price; SAP records
+        // gross + discount% + net) — accounting-correct — instead of baking the
+        // discounted net into the price. The percent is computed from the gross
+        // lines BEFORE it is stamped on them. Only rebalance (bake net into the
+        // price) when there is no discount to show.
+        $lineDiscountPercent = $this->resolveOrderDocumentDiscountPercent($data, $lines);
+
+        if ($lineDiscountPercent > 0) {
+            foreach ($lines as $i => $line) {
+                if ((float) ($line['UnitPrice'] ?? 0) > 0) {
+                    $lines[$i]['DiscountPercent'] = $lineDiscountPercent;
+                }
+            }
+        } elseif (!$allLinesUsePriceAfterVat) {
             $lines = $this->rebalanceOrderLinesForInvoiceTotals($lines, $data, $lineTaxPercents);
         }
-        $documentDiscountPercent = 0.0;
 
         $lines = $this->normalizeSapDocumentLines(
             $this->applyDefaultCostCentersToLines($lines)
@@ -211,10 +224,6 @@ trait HandlesSapPurchaseAndProducts
             // SAP B1 AR Reserve Invoice via Invoices with ReserveInvoice = tYES
             'ReserveInvoice' => 'tYES',
         ];
-
-        if ($documentDiscountPercent > 0) {
-            $body['DiscountPercent'] = $documentDiscountPercent;
-        }
 
         if ($currency) {
             $body['DocCurrency'] = $currency;
@@ -6060,7 +6069,9 @@ trait HandlesSapPurchaseAndProducts
             return 0.0;
         }
 
-        return round(min(($merchandiseDiscount / $discountBase) * 100, 100), 2);
+        // High precision so SAP's net (gross x (1 - pct)) lands on the exact
+        // post-discount amount; the document-rounding pin absorbs any residual.
+        return round(min(($merchandiseDiscount / $discountBase) * 100, 100), 6);
     }
 
     private function sumSapLineMerchandiseTotals(array $lines): float
@@ -6140,7 +6151,19 @@ trait HandlesSapPurchaseAndProducts
             return 0.0;
         }
 
-        return $qty * $unitPrice;
+        $gross = $qty * $unitPrice;
+
+        // Honor a line-level DiscountPercent so callers (tax stamping, subtotal
+        // targets) operate on the post-discount net, while SAP still shows the
+        // gross price and the discount separately.
+        $discountPercent = isset($line['DiscountPercent']) && is_numeric($line['DiscountPercent'])
+            ? (float) $line['DiscountPercent']
+            : 0.0;
+        if ($discountPercent > 0 && $discountPercent < 100) {
+            $gross *= (100 - $discountPercent) / 100;
+        }
+
+        return $gross;
     }
 
     private function resolveOrderWarehouseCode(mixed $hubCode): ?string
