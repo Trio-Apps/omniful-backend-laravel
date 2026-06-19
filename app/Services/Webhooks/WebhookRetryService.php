@@ -60,6 +60,35 @@ class WebhookRetryService
     }
 
     /**
+     * Manual full resend of one order to SAP, identified by its Omniful Order ID.
+     * Forces the complete flow even if the order was already processed
+     * successfully: re-binds the existing SAP invoice and completes any missing
+     * payment / delivery / COGS, or recreates everything only if the invoice was
+     * removed from SAP. Never creates a duplicate invoice. Runs on the queue.
+     *
+     * @return array{ok:bool,message:string}
+     */
+    public function forceResendOrder(OmnifulOrder $order): array
+    {
+        $event = OmnifulOrderEvent::query()
+            ->where('external_id', $order->external_id)
+            ->orderByDesc('received_at')
+            ->first();
+
+        if (!$event) {
+            return ['ok' => false, 'message' => 'No stored event/payload found for this order to resend'];
+        }
+
+        $order->sap_status = 'retrying';
+        $order->sap_error = null;
+        $order->save();
+
+        ProcessOmnifulOrderEvent::dispatch($event->id, true);
+
+        return ['ok' => true, 'message' => 'Full resend queued for order ' . $order->external_id];
+    }
+
+    /**
      * @return array{ok:bool,message:string}
      */
     public function retryReturnOrderEvent(OmnifulReturnOrderEvent $event): array

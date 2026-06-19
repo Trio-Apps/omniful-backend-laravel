@@ -140,7 +140,14 @@ class OrderWebhookService
         ];
     }
 
-    public function process(OmnifulOrderEvent $event): void
+    /**
+     * @param bool $force When true (manual "Resend Order" action), re-run the
+     *   full SAP flow even if the order was already processed: re-verify the AR
+     *   invoice against SAP and re-bind it (completing any missing payment /
+     *   delivery / COGS), or recreate it only if it no longer exists in SAP.
+     *   Never creates a duplicate invoice.
+     */
+    public function process(OmnifulOrderEvent $event, bool $force = false): void
     {
         $externalId = (string) ($event->external_id ?? '');
         if ($externalId === '') {
@@ -203,8 +210,11 @@ class OrderWebhookService
         $deliveryEligibility = $mapper->resolveOrderDeliveryEligibility($eventName, $deliveryStatus);
         $creditEligibility = $mapper->resolveOrderCreditEligibility($eventName, $creditStatus);
 
+        // A manual force-resend always proceeds to (re)ensure the AR invoice and
+        // its follow-ups, regardless of the dispatched event's eligibility.
         if (
-            !($invoiceEligibility['eligible'] ?? false)
+            !$force
+            && !($invoiceEligibility['eligible'] ?? false)
             && !($deliveryEligibility['eligible'] ?? false)
             && !($creditEligibility['eligible'] ?? false)
         ) {
@@ -229,27 +239,65 @@ class OrderWebhookService
 
         $client = app(SapServiceLayerClient::class);
         $invoiceResult = null;
-        if (($invoiceEligibility['eligible'] ?? false) && empty($order->sap_doc_entry)) {
+        // On a normal webhook we only touch the invoice when it is eligible and
+        // not yet created locally. A force-resend always re-checks SAP.
+        $shouldEnsureInvoice = $force
+            || (($invoiceEligibility['eligible'] ?? false) && empty($order->sap_doc_entry));
+        if ($shouldEnsureInvoice) {
             // Idempotency recovery: an earlier worker may have created the AR reserve invoice
             // in SAP but failed to persist the resulting DocEntry/DocNum locally (worker crash,
             // queue restart, or local truncate). Before issuing a new POST, ask SAP directly
             // via the order UDFs (U_omo / U_ZidId / U_SallaOrderId / NumAtCard / Comments).
             $recoveredInvoice = $client->findExistingArReserveInvoiceForOmnifulOrderReference($data, $externalId);
             if (is_array($recoveredInvoice) && !empty($recoveredInvoice['DocEntry'])) {
-                // The AR Reserve Invoice already exists in SAP for this order.
-                // Per business decision: do NOT re-bind it and continue the
-                // remaining steps — just ignore this order (already created).
-                $order->sap_status = 'ignored';
-                $order->sap_error = 'Ignored: AR reserve invoice already exists in SAP (DocNum '
-                    . (string) ($recoveredInvoice['DocNum'] ?? '?') . ')';
-                $recoveredInvoice['ignored'] = true;
+                if (!$force) {
+                    // The AR Reserve Invoice already exists in SAP for this order.
+                    // Per business decision: do NOT re-bind it and continue the
+                    // remaining steps — just ignore this order (already created).
+                    $order->sap_status = 'ignored';
+                    $order->sap_error = 'Ignored: AR reserve invoice already exists in SAP (DocNum '
+                        . (string) ($recoveredInvoice['DocNum'] ?? '?') . ')';
+                    $recoveredInvoice['ignored'] = true;
+                    $recoveredInvoice['reused_existing'] = true;
+                    $recoveredInvoice['recovered_before_post'] = true;
+                    $order->sap_order_response = $recoveredInvoice;
+                    $order->save();
+
+                    return;
+                }
+
+                // FORCE RESEND: the invoice still exists in SAP — re-bind it and
+                // fall through so any MISSING follow-up steps (payment / delivery
+                // / COGS) get completed. No duplicate invoice is created.
+                $order->sap_status = 'created';
+                $order->sap_doc_entry = (string) ($recoveredInvoice['DocEntry'] ?? '');
+                $order->sap_doc_num = (string) ($recoveredInvoice['DocNum'] ?? '');
+                $order->sap_error = null;
+                $recoveredInvoice['ignored'] = false;
                 $recoveredInvoice['reused_existing'] = true;
-                $recoveredInvoice['recovered_before_post'] = true;
                 $order->sap_order_response = $recoveredInvoice;
                 $order->save();
-
-                return;
+                $invoiceResult = $recoveredInvoice;
             } else {
+                // FORCE RESEND with a stale local invoice reference: the AR invoice
+                // is no longer in SAP (deleted). Clear the now-orphaned follow-up
+                // references so the fresh invoice gets its own payment / delivery /
+                // COGS — there is nothing left in SAP to duplicate.
+                if ($force && !empty($order->sap_doc_entry)) {
+                    $order->forceFill([
+                        'sap_doc_entry' => null,
+                        'sap_doc_num' => null,
+                        'sap_payment_status' => null,
+                        'sap_payment_doc_entry' => null,
+                        'sap_payment_doc_num' => null,
+                        'sap_delivery_status' => null,
+                        'sap_delivery_doc_entry' => null,
+                        'sap_delivery_doc_num' => null,
+                        'sap_cogs_status' => null,
+                        'sap_cogs_journal_entry' => null,
+                        'sap_cogs_journal_num' => null,
+                    ])->save();
+                }
                 try {
                     $invoiceResult = $client->createArReserveInvoiceFromOmnifulOrder($data, $externalId);
                 } catch (SapRequestException $e) {

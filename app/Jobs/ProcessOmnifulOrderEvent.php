@@ -19,7 +19,8 @@ class ProcessOmnifulOrderEvent implements ShouldQueue
     public int $tries = 3;
 
     public function __construct(
-        public int $eventId
+        public int $eventId,
+        public bool $force = false,
     ) {
         $this->onQueue('omniful-orders');
     }
@@ -33,7 +34,7 @@ class ProcessOmnifulOrderEvent implements ShouldQueue
 
         $externalId = trim((string) ($event->external_id ?? ''));
         if ($externalId === '') {
-            $service->process($event);
+            $service->process($event, $this->force);
             return;
         }
 
@@ -51,10 +52,15 @@ class ProcessOmnifulOrderEvent implements ShouldQueue
             // produced by a sibling worker that just finished for the same order.
             $event->refresh();
 
-            $classification = $service->classifyEventForProcessing($event);
-            if (!($classification['queue'] ?? false)) {
-                $service->applyNoOpEventOutcome($event);
-                return;
+            // A manual force-resend skips the no-op classification gate and runs
+            // the full SAP flow (re-bind existing docs, complete missing steps,
+            // or recreate only if the invoice was removed from SAP).
+            if (!$this->force) {
+                $classification = $service->classifyEventForProcessing($event);
+                if (!($classification['queue'] ?? false)) {
+                    $service->applyNoOpEventOutcome($event);
+                    return;
+                }
             }
 
             OmnifulOrder::where('external_id', $externalId)->update([
@@ -62,7 +68,7 @@ class ProcessOmnifulOrderEvent implements ShouldQueue
                 'sap_error' => null,
             ]);
 
-            $service->process($event);
+            $service->process($event, $this->force);
         } catch (\Throwable $e) {
             Log::error('Queued SAP order sync failed', [
                 'event_id' => $event->id,

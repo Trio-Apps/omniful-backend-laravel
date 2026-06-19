@@ -367,6 +367,52 @@ class OmnifulOrderMonitor extends Page implements HasTable
                 ->icon('heroicon-o-exclamation-triangle')
                 ->color('gray')
                 ->url(OmnifulOrderErrorMonitor::getUrl()),
+            Action::make('resendOrderById')
+                ->label('Resend Order by ID')
+                ->icon('heroicon-o-paper-airplane')
+                ->color('primary')
+                ->modalHeading('Resend Full Order to SAP')
+                ->modalDescription(
+                    'Re-runs the full SAP flow for one order by its Omniful Order ID '
+                    . '(the "Order ID" column value, not the internal DB id). If the order '
+                    . 'already exists in SAP it is re-bound and only missing steps '
+                    . '(payment / delivery / COGS) are completed — no duplicate invoice. '
+                    . 'If its SAP invoice was removed, it is recreated from scratch.'
+                )
+                ->modalSubmitActionLabel('Resend Order')
+                ->form([
+                    TextInput::make('order_id')
+                        ->label('Omniful Order ID')
+                        ->required()
+                        ->placeholder('e.g. 70882676')
+                        ->helperText('The Order ID shown in the table.'),
+                ])
+                ->action(function (array $data) {
+                    $orderId = trim((string) ($data['order_id'] ?? ''));
+                    if ($orderId === '') {
+                        Notification::make()->title('Order ID is required')->danger()->send();
+
+                        return;
+                    }
+
+                    $order = OmnifulOrder::where('external_id', $orderId)->first();
+                    if (!$order) {
+                        Notification::make()
+                            ->title('Order not found')
+                            ->body('No order with Order ID ' . $orderId . ' exists in the dashboard.')
+                            ->danger()
+                            ->send();
+
+                        return;
+                    }
+
+                    $result = app(WebhookRetryService::class)->forceResendOrder($order);
+                    Notification::make()
+                        ->title($result['ok'] ? 'Resend queued' : 'Resend failed')
+                        ->body($result['message'])
+                        ->{$result['ok'] ? 'success' : 'danger'}()
+                        ->send();
+                }),
             Action::make('retryFailedOrders')
                 ->label('Retry Failed Orders')
                 ->icon('heroicon-o-arrow-path')
