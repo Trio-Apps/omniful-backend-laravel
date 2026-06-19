@@ -236,17 +236,19 @@ class OrderWebhookService
             // via the order UDFs (U_omo / U_ZidId / U_SallaOrderId / NumAtCard / Comments).
             $recoveredInvoice = $client->findExistingArReserveInvoiceForOmnifulOrderReference($data, $externalId);
             if (is_array($recoveredInvoice) && !empty($recoveredInvoice['DocEntry'])) {
-                $order->sap_status = 'created';
-                $order->sap_doc_entry = (string) ($recoveredInvoice['DocEntry'] ?? '');
-                $order->sap_doc_num = (string) ($recoveredInvoice['DocNum'] ?? '');
-                $order->sap_error = null;
-                $recoveredInvoice['ignored'] = false;
+                // The AR Reserve Invoice already exists in SAP for this order.
+                // Per business decision: do NOT re-bind it and continue the
+                // remaining steps — just ignore this order (already created).
+                $order->sap_status = 'ignored';
+                $order->sap_error = 'Ignored: AR reserve invoice already exists in SAP (DocNum '
+                    . (string) ($recoveredInvoice['DocNum'] ?? '?') . ')';
+                $recoveredInvoice['ignored'] = true;
                 $recoveredInvoice['reused_existing'] = true;
                 $recoveredInvoice['recovered_before_post'] = true;
                 $order->sap_order_response = $recoveredInvoice;
                 $order->save();
 
-                $invoiceResult = $recoveredInvoice;
+                return;
             } else {
                 try {
                     $invoiceResult = $client->createArReserveInvoiceFromOmnifulOrder($data, $externalId);
