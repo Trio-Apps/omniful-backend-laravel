@@ -17,9 +17,7 @@ use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
-use Throwable;
 
 class OmnifulOrderMonitor extends Page implements HasTable
 {
@@ -403,67 +401,6 @@ class OmnifulOrderMonitor extends Page implements HasTable
                         ->success()
                         ->send();
                 }),
-            Action::make('resetOrdersAndQueue')
-                ->label('Reset Orders & Queue')
-                ->icon('heroicon-o-trash')
-                ->color('danger')
-                ->requiresConfirmation()
-                ->modalHeading('Delete All Orders And Reset Queue')
-                ->modalDescription('This will stop queue workers gracefully, delete all Omniful orders/events, clear pending and failed jobs for queue "omniful-orders", then trigger workers restart.')
-                ->modalSubmitActionLabel('Delete And Reset')
-                ->form([
-                    TextInput::make('confirm_text')
-                        ->label('Type RESET to confirm')
-                        ->required()
-                        ->rules(['in:RESET']),
-                ])
-                ->action(function () {
-                    try {
-                        // Ask active workers to stop gracefully before cleanup.
-                        Artisan::call('queue:restart');
-
-                        $this->truncateOrderTables();
-                        DB::table('jobs')->where('queue', 'omniful-orders')->delete();
-                        if (DB::getSchemaBuilder()->hasTable('failed_jobs')) {
-                            DB::table('failed_jobs')->where('queue', 'omniful-orders')->delete();
-                        }
-
-                        // Trigger workers restart after cleanup (for supervisor-managed workers).
-                        Artisan::call('queue:restart');
-
-                        Notification::make()
-                            ->title('Orders and queue reset completed')
-                            ->body('All Omniful orders/events were deleted and queue "omniful-orders" was cleared. Workers received restart signal.')
-                            ->success()
-                            ->send();
-                    } catch (Throwable $e) {
-                        Notification::make()
-                            ->title('Reset failed')
-                            ->body($e->getMessage())
-                            ->danger()
-                            ->send();
-                    }
-                }),
         ];
-    }
-
-    private function truncateOrderTables(): void
-    {
-        $driver = DB::getDriverName();
-
-        if (in_array($driver, ['mysql', 'mariadb'], true)) {
-            DB::statement('SET FOREIGN_KEY_CHECKS=0');
-            try {
-                DB::table('omniful_order_events')->truncate();
-                DB::table('omniful_orders')->truncate();
-            } finally {
-                DB::statement('SET FOREIGN_KEY_CHECKS=1');
-            }
-
-            return;
-        }
-
-        DB::table('omniful_order_events')->delete();
-        DB::table('omniful_orders')->delete();
     }
 }
