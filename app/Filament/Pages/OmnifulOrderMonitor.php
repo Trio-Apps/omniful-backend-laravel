@@ -447,6 +447,44 @@ class OmnifulOrderMonitor extends Page implements HasTable
                         ->success()
                         ->send();
                 }),
+            Action::make('resyncFailedOrders')
+                ->label('Re-sync Failed Orders')
+                ->icon('heroicon-o-paper-airplane')
+                ->color('primary')
+                ->visible(fn () => $this->getFailedOrdersCount() > 0)
+                ->requiresConfirmation()
+                ->modalHeading('Re-sync Failed Orders to SAP')
+                ->modalDescription(fn () => 'Force-resends ' . number_format($this->getFailedOrdersCount())
+                    . ' failed order(s). For each: if its documents already exist in SAP they are re-bound '
+                    . '(no duplicate) and the order is marked created; only missing steps are completed; '
+                    . 'and it is recreated only if its SAP invoice was removed. Use this to clear false '
+                    . 'failures left by a transient SAP connection error. Nothing is deleted.')
+                ->modalSubmitActionLabel('Re-sync Failed Orders')
+                ->action(function () {
+                    $retryService = app(WebhookRetryService::class);
+                    $queued = 0;
+                    $skipped = 0;
+
+                    OmnifulOrder::query()
+                        ->where('sap_status', 'failed')
+                        ->orderBy('id')
+                        ->chunkById(100, function ($orders) use ($retryService, &$queued, &$skipped) {
+                            foreach ($orders as $order) {
+                                $result = $retryService->forceResendOrder($order);
+                                if ($result['ok']) {
+                                    $queued++;
+                                } else {
+                                    $skipped++;
+                                }
+                            }
+                        });
+
+                    Notification::make()
+                        ->title('Failed order re-sync queued')
+                        ->body('Queued: ' . number_format($queued) . ($skipped > 0 ? ' | Skipped (no stored event): ' . number_format($skipped) : ''))
+                        ->success()
+                        ->send();
+                }),
         ];
     }
 }
