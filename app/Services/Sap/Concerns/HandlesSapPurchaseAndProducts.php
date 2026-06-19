@@ -186,32 +186,45 @@ trait HandlesSapPurchaseAndProducts
             true,
         );
 
-        // Represent the Omniful merchandise discount as a real discount while
-        // keeping the gross/list UnitPrice, WITHOUT relying on SAP's discount
-        // percent precision.
+        // Document-level merchandise discount.
         //
-        // This SAP company rounds DiscountPercent to 2 decimals (verified on
-        // DOKHON_DEV3: we sent 80.185494 and SAP stored 80.19). A 2-dp percent
-        // drifts the net off Omniful's figure (e.g. 1312.17 -> 259.94 instead
-        // of 260.00), leaving a ~0.07 gap that never settles (Balance Due
-        // 0.002). So instead of sending a percent, we pin each priced line's
-        // EXACT post-discount net via LineTotal, computed straight from
-        // Omniful's amounts (subtotal - merchandise discount). SAP keeps the
-        // gross UnitPrice, uses our exact LineTotal as the net, and DERIVES the
-        // row discount % for display — so the line shows price + discount% + net
-        // AND the DocTotal lands exactly on Omniful's total (verified: 308.00).
+        // SAP rounds a sent DiscountPercent to its PercentageAccuracy (2 dp on
+        // this company: 80.185494 -> 80.19), which misses Omniful's net by a few
+        // cents and leaves a Balance Due that never closes. Instead we keep the
+        // gross/list UnitPrice on every line and pin the document GRAND TOTAL
+        // (DocTotal = Omniful's exact invoice total). SAP then back-computes the
+        // document discount needed to balance the document to that total — at
+        // FULL precision — so the posted invoice shows Total-Before-Discount
+        // (gross) -> Discount -> net, the discount AMOUNT equals Omniful's
+        // exactly, and the DocTotal lands on Omniful's total. No SAP setting
+        // change required.
+        //
+        // Verified on DOKHON_DEV3 (DocNum 260160010/260160011): UnitPrice
+        // 1312.17, DocTotal 308.00, TotalDiscount 1052.17, DiscountPercent
+        // 80.185494, line net 260 / tax 39 / freight 9. The forced total is
+        // ALWAYS Omniful's own grand total, so the derived discount is always
+        // the correct one (a wrong total would derive a wrong discount).
         $documentDiscountPercent = $this->resolveOrderDocumentDiscountPercent($data, $lines);
+        $forcedDocTotal = $documentDiscountPercent > 0
+            ? $this->resolveTargetInvoiceGrossTotal($data)
+            : null;
+        $useForcedDocTotalDiscount = $documentDiscountPercent > 0
+            && $forcedDocTotal !== null
+            && $forcedDocTotal > 0;
 
-        if ($documentDiscountPercent > 0) {
+        if ($useForcedDocTotalDiscount) {
+            // Keep the gross UnitPrice; the discount is pinned via DocTotal on
+            // the body below.
+        } elseif ($documentDiscountPercent > 0) {
+            // Fallback (Omniful sent a discount but no usable grand total): pin
+            // each priced line's exact net via LineTotal so the document still
+            // closes (discount then shows on the row instead of the footer).
             $targetNet = $this->resolveTargetOrderMerchandiseSubtotal($data, $lines, $lineTaxPercents);
             $grossSum = $this->sumSapLineMerchandiseTotals($lines);
             if ($targetNet !== null && $targetNet > 0 && $grossSum > 0) {
                 foreach ($lines as $i => $line) {
                     $gross = $this->extractSapLineMerchandiseTotal($line);
                     if ($gross > 0 && (float) ($line['UnitPrice'] ?? 0) > 0) {
-                        // Distribute the discounted net across priced lines in
-                        // proportion to each line's gross, so multi-line orders
-                        // stay balanced and sum exactly to the target net.
                         $lines[$i]['LineTotal'] = round($gross / $grossSum * $targetNet, 4);
                     }
                 }
@@ -266,25 +279,38 @@ trait HandlesSapPurchaseAndProducts
         $body = $this->appendOmnifulDocumentUdfs($body, $data, $externalId);
         $body = $this->appendFreightToMarketingDocument($body, $data);
 
-        // Force 2-dp tax on every taxable line and freight expense, so the
-        // computed DocTotal stays on the same 2-dp grid Omniful's invoice
-        // total uses. SAP B1 line VAT is otherwise computed at currency
-        // precision (3-4 dp), which leaves a sub-cent residual that the
-        // tenant's PaymentInvoices.SumApplied (2-dp on this SAP setup)
-        // cannot fully settle.
-        $body = $this->applyTwoDecimalTaxAmounts($body, $data, $lineTaxPercents);
+        if ($useForcedDocTotalDiscount) {
+            // Pin the document grand total so SAP derives the exact document
+            // discount (see the discount note above). DocTotalSys mirrors
+            // DocTotal only when the document is in local currency; for a
+            // foreign-currency order we leave DocTotalSys for SAP to compute
+            // from DocRate so the local-currency total stays consistent.
+            $body['DiscountPercent'] = $documentDiscountPercent;
+            $body['DocTotal'] = $forcedDocTotal;
+            if (!isset($body['DocRate'])) {
+                $body['DocTotalSys'] = $forcedDocTotal;
+            }
+        } else {
+            // Force 2-dp tax on every taxable line and freight expense, so the
+            // computed DocTotal stays on the same 2-dp grid Omniful's invoice
+            // total uses. SAP B1 line VAT is otherwise computed at currency
+            // precision (3-4 dp), which leaves a sub-cent residual that the
+            // tenant's PaymentInvoices.SumApplied (2-dp on this SAP setup)
+            // cannot fully settle.
+            $body = $this->applyTwoDecimalTaxAmounts($body, $data, $lineTaxPercents);
 
-        // Document Rounding: when SAP's natural DocTotal computation diverges
-        // from Omniful's 2-dp total by a small amount (e.g. 15% VAT on a 2-dp
-        // subtotal yields 3-dp tax), enable SAP's automatic rounding so the
-        // stored DocTotal matches the 2-dp gross Omniful billed. The
-        // resulting 0.00X SAR rounding adjustment is posted to the company's
-        // configured Rounding G/L Account (Administration -> Setup ->
-        // Financials -> G/L Account Determination -> Sales -> General ->
-        // Rounding Account). Without rounding the Incoming Payment posts
-        // 222.50 against a DocTotal of 222.502 and leaves a 0.002 Balance
-        // Due that never closes.
-        $body = $this->applyDocumentRoundingIfNeeded($body, $data);
+            // Document Rounding: when SAP's natural DocTotal computation diverges
+            // from Omniful's 2-dp total by a small amount (e.g. 15% VAT on a 2-dp
+            // subtotal yields 3-dp tax), enable SAP's automatic rounding so the
+            // stored DocTotal matches the 2-dp gross Omniful billed. The
+            // resulting 0.00X SAR rounding adjustment is posted to the company's
+            // configured Rounding G/L Account (Administration -> Setup ->
+            // Financials -> G/L Account Determination -> Sales -> General ->
+            // Rounding Account). Without rounding the Incoming Payment posts
+            // 222.50 against a DocTotal of 222.502 and leaves a 0.002 Balance
+            // Due that never closes.
+            $body = $this->applyDocumentRoundingIfNeeded($body, $data);
+        }
 
         $existingInvoice = $this->findExistingArReserveInvoiceForOmnifulOrder($body, $data, $externalId);
         if ($existingInvoice !== null) {
