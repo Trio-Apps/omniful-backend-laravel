@@ -186,20 +186,37 @@ trait HandlesSapPurchaseAndProducts
             true,
         );
 
-        // Represent the Omniful merchandise discount as a real DOCUMENT-level
-        // discount (set on the header further below). Each line keeps its
-        // gross/list UnitPrice, and SAP's footer then shows
-        // Total-Before-Discount (gross) -> Discount% -> net, exactly mirroring
-        // Omniful's invoice (Sub Total / Total Discount).
+        // Represent the Omniful merchandise discount as a real discount while
+        // keeping the gross/list UnitPrice, WITHOUT relying on SAP's discount
+        // percent precision.
         //
-        // We do NOT use a per-line DiscountPercent: in SAP B1 a row discount
-        // collapses the footer's "Total Before Discount" to the NET and shows
-        // no discount at the document level — which is the symptom the client
-        // flagged (footer showed 259.94 with no discount line). Only rebalance
-        // (bake the net into the price) when there is no discount to show.
+        // This SAP company rounds DiscountPercent to 2 decimals (verified on
+        // DOKHON_DEV3: we sent 80.185494 and SAP stored 80.19). A 2-dp percent
+        // drifts the net off Omniful's figure (e.g. 1312.17 -> 259.94 instead
+        // of 260.00), leaving a ~0.07 gap that never settles (Balance Due
+        // 0.002). So instead of sending a percent, we pin each priced line's
+        // EXACT post-discount net via LineTotal, computed straight from
+        // Omniful's amounts (subtotal - merchandise discount). SAP keeps the
+        // gross UnitPrice, uses our exact LineTotal as the net, and DERIVES the
+        // row discount % for display — so the line shows price + discount% + net
+        // AND the DocTotal lands exactly on Omniful's total (verified: 308.00).
         $documentDiscountPercent = $this->resolveOrderDocumentDiscountPercent($data, $lines);
 
-        if ($documentDiscountPercent <= 0 && !$allLinesUsePriceAfterVat) {
+        if ($documentDiscountPercent > 0) {
+            $targetNet = $this->resolveTargetOrderMerchandiseSubtotal($data, $lines, $lineTaxPercents);
+            $grossSum = $this->sumSapLineMerchandiseTotals($lines);
+            if ($targetNet !== null && $targetNet > 0 && $grossSum > 0) {
+                foreach ($lines as $i => $line) {
+                    $gross = $this->extractSapLineMerchandiseTotal($line);
+                    if ($gross > 0 && (float) ($line['UnitPrice'] ?? 0) > 0) {
+                        // Distribute the discounted net across priced lines in
+                        // proportion to each line's gross, so multi-line orders
+                        // stay balanced and sum exactly to the target net.
+                        $lines[$i]['LineTotal'] = round($gross / $grossSum * $targetNet, 4);
+                    }
+                }
+            }
+        } elseif (!$allLinesUsePriceAfterVat) {
             $lines = $this->rebalanceOrderLinesForInvoiceTotals($lines, $data, $lineTaxPercents);
         }
 
@@ -223,16 +240,6 @@ trait HandlesSapPurchaseAndProducts
             // SAP B1 AR Reserve Invoice via Invoices with ReserveInvoice = tYES
             'ReserveInvoice' => 'tYES',
         ];
-
-        // Document-level merchandise discount: SAP applies it to the net
-        // subtotal, so the posted invoice shows Total-Before-Discount (the gross
-        // sum of the list-priced lines) -> Discount% -> discounted net, matching
-        // Omniful's Sub Total / Total Discount. Must be set BEFORE the tax /
-        // rounding helpers below, which read $body['DiscountPercent'] to compute
-        // the post-discount taxable base.
-        if ($documentDiscountPercent > 0) {
-            $body['DiscountPercent'] = $documentDiscountPercent;
-        }
 
         if ($currency) {
             $body['DocCurrency'] = $currency;
@@ -5195,11 +5202,6 @@ trait HandlesSapPurchaseAndProducts
             $stampedTaxTotal = 0.0;
             $lastTaxableIndex = null;
 
-            // A document-level DiscountPercent reduces the taxable base of every
-            // line proportionally, so the stamped TaxAmount must be computed on
-            // the POST-discount net (gross line total x discount multiplier).
-            $docDiscMult = $this->documentDiscountMultiplier($body);
-
             foreach ($lines as $index => $line) {
                 $line = (array) $line;
                 $itemCode = trim((string) ($line['ItemCode'] ?? ''));
@@ -5208,7 +5210,7 @@ trait HandlesSapPurchaseAndProducts
                     continue;
                 }
 
-                $lineNet = $this->extractSapLineMerchandiseTotal($line) * $docDiscMult;
+                $lineNet = $this->extractSapLineMerchandiseTotal($line);
                 if ($lineNet <= 0) {
                     continue;
                 }
@@ -5280,14 +5282,6 @@ trait HandlesSapPurchaseAndProducts
             $taxByItemCode[$itemCode] = (float) $this->extractOrderLineTaxPercent((array) $item);
         }
 
-        // A document-level DiscountPercent scales each line's gross by this
-        // multiplier, so to move the DocTotal by $difference we must change the
-        // pre-discount line amount by $difference / (taxMultiplier x mult).
-        $docDiscMult = $this->documentDiscountMultiplier($body);
-        if ($docDiscMult <= 0) {
-            $docDiscMult = 1.0;
-        }
-
         for ($index = count($lines) - 1; $index >= 0; $index--) {
             $line = (array) $lines[$index];
             $itemCode = trim((string) ($line['ItemCode'] ?? ''));
@@ -5303,7 +5297,7 @@ trait HandlesSapPurchaseAndProducts
             // moves by the desired $difference at the gross level.
             if (isset($line['PriceAfterVAT']) && is_numeric($line['PriceAfterVAT']) && $qty > 0) {
                 $currentPriceAfterVat = (float) $line['PriceAfterVAT'];
-                $newPriceAfterVat = round($currentPriceAfterVat + ($difference / ($qty * $docDiscMult)), 4);
+                $newPriceAfterVat = round($currentPriceAfterVat + ($difference / $qty), 4);
                 if ($newPriceAfterVat <= 0) {
                     continue;
                 }
@@ -5317,7 +5311,7 @@ trait HandlesSapPurchaseAndProducts
                 continue;
             }
 
-            $newLineNet = round($currentLineNet + ($difference / ($taxMultiplier * $docDiscMult)), 4);
+            $newLineNet = round($currentLineNet + ($difference / $taxMultiplier), 4);
             if ($newLineNet <= 0) {
                 continue;
             }
@@ -5389,11 +5383,6 @@ trait HandlesSapPurchaseAndProducts
             }
         }
 
-        // A document-level DiscountPercent reduces each line's net (and thus its
-        // gross) proportionally. Apply it per line so it composes correctly with
-        // the explicit post-discount TaxAmount we already stamped on each line.
-        $docDiscMult = $this->documentDiscountMultiplier($body);
-
         $merchandiseGross = 0.0;
         foreach ($lines as $index => $line) {
             // PriceAfterVAT wins when present: SAP will use it to back-compute
@@ -5401,7 +5390,7 @@ trait HandlesSapPurchaseAndProducts
             if (isset($line['PriceAfterVAT']) && is_numeric($line['PriceAfterVAT'])) {
                 $qty = (float) ($line['Quantity'] ?? 0);
                 if ($qty > 0) {
-                    $merchandiseGross += $qty * (float) $line['PriceAfterVAT'] * $docDiscMult;
+                    $merchandiseGross += $qty * (float) $line['PriceAfterVAT'];
                     continue;
                 }
             }
@@ -5413,10 +5402,9 @@ trait HandlesSapPurchaseAndProducts
 
             // If we have already stamped an explicit 2-dp TaxAmount on the
             // line (applyTwoDecimalTaxAmounts), trust it — it overrides
-            // SAP's per-line VAT computation and was already computed on the
-            // post-discount net, so only the net portion gets the multiplier.
+            // SAP's per-line VAT computation.
             if (isset($line['TaxAmount']) && is_numeric($line['TaxAmount'])) {
-                $merchandiseGross += ($lineNet * $docDiscMult) + (float) $line['TaxAmount'];
+                $merchandiseGross += $lineNet + (float) $line['TaxAmount'];
                 continue;
             }
 
@@ -5428,11 +5416,18 @@ trait HandlesSapPurchaseAndProducts
                 $taxPercent = $taxByIndex[$index];
             }
 
-            $merchandiseGross += ($lineNet * $docDiscMult) * (1 + ($taxPercent / 100));
+            $merchandiseGross += $lineNet * (1 + ($taxPercent / 100));
         }
 
         if ($merchandiseGross <= 0) {
             return null;
+        }
+
+        $discountPercent = isset($body['DiscountPercent']) && is_numeric($body['DiscountPercent'])
+            ? (float) $body['DiscountPercent']
+            : 0.0;
+        if ($discountPercent > 0 && $discountPercent < 100) {
+            $merchandiseGross *= (100 - $discountPercent) / 100;
         }
 
         $freightGross = 0.0;
@@ -6180,20 +6175,6 @@ trait HandlesSapPurchaseAndProducts
         $target = (float) $invoiceTotal - $freightGross;
 
         return $target >= 0 ? $this->roundSapAmount($target) : 0.0;
-    }
-
-    /**
-     * Net-retention multiplier for a document-level DiscountPercent on the
-     * body (e.g. 80.1857% discount -> 0.198143). Returns 1.0 when there is no
-     * document discount, so callers can multiply unconditionally.
-     */
-    private function documentDiscountMultiplier(array $body): float
-    {
-        $pct = isset($body['DiscountPercent']) && is_numeric($body['DiscountPercent'])
-            ? (float) $body['DiscountPercent']
-            : 0.0;
-
-        return ($pct > 0 && $pct < 100) ? (100 - $pct) / 100 : 1.0;
     }
 
     private function extractSapLineMerchandiseTotal(array $line): float
