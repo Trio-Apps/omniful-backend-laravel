@@ -567,7 +567,9 @@ class OrderWebhookService
 
     private function isNoOpOrderStatus(string $status): bool
     {
-        return in_array($this->normalizeStatusValue($status), ['picked', 'packed'], true);
+        // on_hold orders are ignored entirely (no SAP action) until they move
+        // to an active status.
+        return in_array($this->normalizeStatusValue($status), ['picked', 'packed', 'on_hold', 'on hold', 'onhold'], true);
     }
 
     private function normalizeStatusValue(string $value): string

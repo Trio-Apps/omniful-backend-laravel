@@ -233,7 +233,9 @@ return [
             'strict' => true,
             'invoice_event_contains' => ['create', 'new'],
             'invoice_statuses' => ['created', 'new', 'pending', 'confirmed'],
-            'initial_statuses' => ['created', 'new', 'pending', 'confirmed', 'on_hold'],
+            // NOTE: on_hold is intentionally NOT here — on-hold orders are
+            // ignored (no SAP document) until they leave hold (new/confirmed).
+            'initial_statuses' => ['created', 'new', 'pending', 'confirmed'],
             'delivery_event_contains' => ['ship', 'deliver'],
             'delivery_statuses' => ['shipped'],
             'credit_note_event_contains' => ['cancel'],
