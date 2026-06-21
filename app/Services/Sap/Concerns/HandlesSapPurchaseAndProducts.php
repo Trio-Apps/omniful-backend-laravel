@@ -271,6 +271,17 @@ trait HandlesSapPurchaseAndProducts
             $localCurrency = trim((string) data_get($data, 'invoice.exchange_rate.store_currency', ''));
             $orderCurrency = trim((string) data_get($data, 'invoice.exchange_rate.order_currency', $currency));
             $isForeignCurrency = $localCurrency !== '' && strtoupper($localCurrency) !== strtoupper($orderCurrency);
+
+            // Push Omniful's live rate into SAP's daily rate table for the invoice
+            // date so SAP books the invoice at THIS rate (no manual SAP entry, no
+            // "Update the exchange rate"), and the later payment — pushed to the
+            // same rate — settles to the cent with no realized FX / no 4101005.
+            if ($isForeignCurrency) {
+                $orderRate = (float) data_get($data, 'invoice.exchange_rate.rate', 0);
+                if ($orderRate > 0) {
+                    $this->setSapDailyCurrencyRate($currency, $orderRate, $docDate);
+                }
+            }
         }
 
         $body = $this->appendOmnifulDocumentUdfs($body, $data, $externalId);
@@ -1023,6 +1034,13 @@ trait HandlesSapPurchaseAndProducts
         // rate — so the payment closes the receivable to the cent with no
         // realized exchange difference, avoiding the -5002 on G/L 4101005. Sending
         // our own DocRate here reintroduces the mismatch against SAP's table rate.
+        //
+        // Push the invoice's booked rate into SAP's daily table for the payment
+        // date so SAP settles this foreign payment at the EXACT rate the invoice
+        // was booked at (no "Update the exchange rate", no realized FX).
+        if ($invoiceCurrency !== '' && $invoiceRate > 0 && $invoiceDocTotalFc > 0) {
+            $this->setSapDailyCurrencyRate($invoiceCurrency, $invoiceRate, $transferDate);
+        }
 
         $body = $this->appendOmnifulDocumentUdfs($body, $data, $reference);
 
@@ -4658,6 +4676,48 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return in_array($value, $allowed, true);
+    }
+
+    /**
+     * Push a daily exchange rate into SAP's currency rate table for a date, so a
+     * foreign-currency AR reserve invoice and its incoming payment can post
+     * without the "Update the exchange rate" error AND settle at the exact same
+     * rate (no realized exchange difference → no -5002 on G/L 4101005).
+     *
+     * Best-effort: a failure is logged, not thrown — the document create that
+     * follows surfaces the real error if the rate is genuinely unusable.
+     */
+    private function setSapDailyCurrencyRate(string $currency, float $rate, string $date): void
+    {
+        $currency = strtoupper(trim($currency));
+        $date = trim($date);
+        if ($currency === '' || $rate <= 0 || $date === '') {
+            return;
+        }
+
+        $response = $this->post('/SBOBobService_SetCurrencyRate', [
+            'Currency' => $currency,
+            'Rate' => $rate,
+            'RateDate' => $date,
+        ]);
+
+        if ($response->successful() || $response->status() === 204) {
+            Log::info('SAP daily currency rate set', [
+                'currency' => $currency,
+                'rate' => $rate,
+                'date' => $date,
+            ]);
+
+            return;
+        }
+
+        Log::warning('SAP SetCurrencyRate failed', [
+            'currency' => $currency,
+            'rate' => $rate,
+            'date' => $date,
+            'status' => $response->status(),
+            'body' => $response->body(),
+        ]);
     }
 
     private function getSalesOrder(int $docEntry): array
