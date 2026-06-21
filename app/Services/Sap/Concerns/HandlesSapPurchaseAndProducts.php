@@ -872,38 +872,51 @@ trait HandlesSapPurchaseAndProducts
         // 125.25 leaves a 0.001 SAR Balance Due and prevents the invoice
         // from closing. The unrounded SAP DocTotal makes the settlement
         // exact and the balance hit zero.
-        // Authoritative settlement amount is the invoice's DocTotal in its OWN
-        // document currency (KWD/AED/etc.). SAP's PaymentInvoices.SumApplied
-        // (and the cash-side CreditSum/TransferSum) for a payment that inherits
-        // the invoice's DocCurrency MUST be in that document currency.
+        // Authoritative settlement amount: the invoice total expressed in the
+        // payment's DocCurrency. The payment inherits the invoice's DocCurrency,
+        // so SumApplied (and the cash-side CreditSum/TransferSum) MUST be in
+        // that document currency.
         //
-        // Every payment we create here settles a fully-prepaid Omniful order
+        // CRITICAL SAP field semantics: on OINV/Invoices, `DocTotal` is stored
+        // in the company LOCAL currency, while `DocTotalFc` holds the total in
+        // the document's FOREIGN currency. For a SAR company:
+        //   * AED invoice -> DocTotal = 178.00 (SAR), DocTotalFc = 174.22 (AED)
+        //   * SAR invoice -> DocTotal = 282.39 (SAR), DocTotalFc = 0
+        // So for a FOREIGN-currency invoice the document-currency total is
+        // DocTotalFc, NOT DocTotal. Sending DocTotal (the local value) under a
+        // foreign DocCurrency made SAP read e.g. 178.00 as AED, convert it by
+        // DocRate, over-collect by the FX spread, and dump the remainder to a
+        // revenue/over-payment account (4101005) — which carries a mandatory
+        // cost-center dimension and fails the post with -5002.
+        //
+        // Every payment we create settles a fully-prepaid Omniful order
         // (payment_method = prepaid, total_paid == total), so it is always a
-        // FULL settlement of the invoice. We therefore use the invoice's own
-        // DocTotal verbatim and deliberately IGNORE $data['sum_applied'] for
-        // the amount: that value frequently arrives contaminated with the
-        // LOCAL-currency total (DocTotal * DocRate — e.g. 111.26 SAR for a
-        // 109.25 AED invoice, or 742.06 SAR for a 61.45 KWD invoice). Trusting
-        // it made SAP over-collect by the FX spread and dump the remainder to
-        // Payment-on-Account. Using DocTotal removes any dependency on the
-        // requested amount or on re-deriving the rate.
-        $invoiceDocTotal = is_numeric($salesDoc['DocTotal'] ?? null) ? (float) $salesDoc['DocTotal'] : 0.0;
+        // FULL settlement. We deliberately IGNORE $data['sum_applied'] for the
+        // amount: it frequently arrives contaminated with the local-currency
+        // total. Using the invoice's stored totals removes any dependency on
+        // the requested amount or on re-deriving the rate.
+        $invoiceDocTotalLocal = is_numeric($salesDoc['DocTotal'] ?? null) ? (float) $salesDoc['DocTotal'] : 0.0;
+        $invoiceDocTotalFc = is_numeric($salesDoc['DocTotalFc'] ?? null) ? (float) $salesDoc['DocTotalFc'] : 0.0;
         $requestedAmount = is_numeric($data['sum_applied'] ?? null) ? (float) $data['sum_applied'] : 0.0;
 
-        if ($invoiceDocTotal > 0) {
-            // Full settlement in document currency (the only case for prepaid
-            // orders). SAP's exact DocTotal also closes any tax-rounding tail.
-            $sumApplied = $invoiceDocTotal;
+        if ($invoiceDocTotalFc > 0) {
+            // Foreign-currency invoice: settle in the document currency.
+            $sumApplied = $invoiceDocTotalFc;
+        } elseif ($invoiceDocTotalLocal > 0) {
+            // Local-currency invoice: DocTotal already IS the document-currency
+            // total. SAP's exact DocTotal also closes any tax-rounding tail.
+            $sumApplied = $invoiceDocTotalLocal;
         } else {
-            // Defensive fallback only when SAP did not return a DocTotal.
+            // Defensive fallback only when SAP did not return a total.
             $sumApplied = $this->roundSapAmount($requestedAmount);
         }
 
         Log::info('SAP incoming payment settlement amount', [
-            'fix_marker' => 'sumApplied=DocTotal@v3',
+            'fix_marker' => 'sumApplied=DocTotalFc@v4',
             'order' => trim((string) ($data['external_id'] ?? $data['reference'] ?? '')),
             'invoice_doc_currency' => trim((string) ($salesDoc['DocCurrency'] ?? '')),
-            'invoice_doc_total' => $invoiceDocTotal,
+            'invoice_doc_total_local' => $invoiceDocTotalLocal,
+            'invoice_doc_total_fc' => $invoiceDocTotalFc,
             'invoice_doc_rate' => $salesDoc['DocRate'] ?? null,
             'invoice_doc_total_sys' => $salesDoc['DocTotalSys'] ?? null,
             'requested_amount_in' => $requestedAmount,
