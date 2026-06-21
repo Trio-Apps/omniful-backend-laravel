@@ -263,7 +263,12 @@ class OrderWebhookService
             // Gated by the "Cancel & reverse existing invoice" checkbox ($cancelOld).
             // SAFETY: only when the invoice has NO successful dependent document
             // (payment / delivery / COGS); otherwise we leave it and just rebind.
-            if ($force && $cancelOld && is_array($recoveredInvoice) && !empty($recoveredInvoice['DocEntry'])) {
+            // IMPORTANT: do NOT gate this on findExisting returning an invoice. For
+            // a broken order whose every invoice is already cancelled/reversed,
+            // findExisting (which skips those) returns null — yet SAP's duplicate
+            // guards still see them and block a new create. So when $cancelOld is
+            // set we ALWAYS run the order-reference scan + free, independently.
+            if ($force && $cancelOld) {
                 $hasDependents = !empty($order->sap_payment_doc_entry)
                     || !empty($order->sap_delivery_doc_entry)
                     || !empty($order->sap_cogs_journal_entry);
@@ -271,7 +276,7 @@ class OrderWebhookService
                 if ($hasDependents) {
                     \Illuminate\Support\Facades\Log::warning('Resend: invoice reversal skipped (has dependents); rebinding only', [
                         'order' => $externalId,
-                        'doc_entry' => $recoveredInvoice['DocEntry'],
+                        'doc_entry' => $recoveredInvoice['DocEntry'] ?? null,
                         'has_payment' => !empty($order->sap_payment_doc_entry),
                         'has_delivery' => !empty($order->sap_delivery_doc_entry),
                         'has_cogs' => !empty($order->sap_cogs_journal_entry),
