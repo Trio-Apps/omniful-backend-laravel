@@ -249,6 +249,72 @@ class OrderWebhookService
             // queue restart, or local truncate). Before issuing a new POST, ask SAP directly
             // via the order UDFs (U_omo / U_ZidId / U_SallaOrderId / NumAtCard / Comments).
             $recoveredInvoice = $client->findExistingArReserveInvoiceForOmnifulOrderReference($data, $externalId);
+
+            // FORCE RESEND — refresh the invoice itself when it carries stale data
+            // (e.g. a wrong exchange rate). SAP cannot edit a posted invoice's
+            // DocRate/totals/lines, so the only way to push corrected data is to
+            // CANCEL the stale invoice and CREATE a fresh one with current data.
+            //
+            // SAFETY: only recreate when the invoice has NO successful dependent
+            // document (incoming payment / delivery / COGS). If any exist,
+            // recreating would orphan posted financial docs — so we leave the
+            // invoice in place and fall through to rebind + complete missing steps.
+            if ($force && is_array($recoveredInvoice) && !empty($recoveredInvoice['DocEntry'])) {
+                $hasDependents = !empty($order->sap_payment_doc_entry)
+                    || !empty($order->sap_delivery_doc_entry)
+                    || !empty($order->sap_cogs_journal_entry);
+
+                if ($hasDependents) {
+                    \Illuminate\Support\Facades\Log::warning('Resend: AR invoice recreation skipped (has dependents); rebinding only', [
+                        'order' => $externalId,
+                        'doc_entry' => $recoveredInvoice['DocEntry'],
+                        'has_payment' => !empty($order->sap_payment_doc_entry),
+                        'has_delivery' => !empty($order->sap_delivery_doc_entry),
+                        'has_cogs' => !empty($order->sap_cogs_journal_entry),
+                    ]);
+                } else {
+                    $cancelled = false;
+                    try {
+                        $cancelled = $client->cancelArReserveInvoice((int) $recoveredInvoice['DocEntry']);
+                    } catch (\Throwable $e) {
+                        $order->sap_status = 'failed';
+                        $order->sap_error = 'Resend: failed to cancel existing AR invoice DocEntry '
+                            . (string) $recoveredInvoice['DocEntry'] . ' for refresh — ' . $e->getMessage();
+                        $order->save();
+
+                        return;
+                    }
+
+                    if ($cancelled) {
+                        // The stale invoice is cancelled. Clear local refs so the
+                        // create path below issues a fresh invoice + follow-ups.
+                        $order->forceFill([
+                            'sap_doc_entry' => null,
+                            'sap_doc_num' => null,
+                            'sap_payment_status' => null,
+                            'sap_payment_doc_entry' => null,
+                            'sap_payment_doc_num' => null,
+                            'sap_delivery_status' => null,
+                            'sap_delivery_doc_entry' => null,
+                            'sap_delivery_doc_num' => null,
+                            'sap_cogs_status' => null,
+                            'sap_cogs_journal_entry' => null,
+                            'sap_cogs_journal_num' => null,
+                        ])->save();
+
+                        \Illuminate\Support\Facades\Log::info('Resend: AR invoice cancelled for recreation', [
+                            'order' => $externalId,
+                            'old_doc_entry' => $recoveredInvoice['DocEntry'],
+                        ]);
+
+                        // Treat as if no invoice exists so the create path runs.
+                        $recoveredInvoice = null;
+                    }
+                    // If cancel returned false, keep $recoveredInvoice so the code
+                    // below rebinds the existing invoice instead of recreating.
+                }
+            }
+
             if (is_array($recoveredInvoice) && !empty($recoveredInvoice['DocEntry'])) {
                 if (!$force) {
                     // The AR Reserve Invoice already exists in SAP for this order.

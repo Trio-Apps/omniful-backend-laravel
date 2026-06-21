@@ -638,8 +638,21 @@ trait HandlesSapPurchaseAndProducts
         return null;
     }
 
-    private function normalizeFoundArInvoice(array $invoice): array
+    private function normalizeFoundArInvoice(array $invoice): ?array
     {
+        // Never reuse a CANCELLED invoice — treat it as if it does not exist.
+        // Critical for the manual Resend flow: after cancelling a stale-rate
+        // invoice, the idempotency lookup must NOT rebind the cancelled doc, so a
+        // fresh invoice gets created with the corrected data.
+        if ((string) ($invoice['Cancelled'] ?? 'tNO') === 'tYES') {
+            Log::info('Skipping cancelled SAP AR invoice in lookup', [
+                'doc_entry' => $invoice['DocEntry'] ?? null,
+                'doc_num' => $invoice['DocNum'] ?? null,
+            ]);
+
+            return null;
+        }
+
         if ((string) ($invoice['ReserveInvoice'] ?? '') !== 'tYES') {
             Log::warning('Reusing existing SAP AR invoice that is not marked as reserve invoice', [
                 'doc_entry' => $invoice['DocEntry'] ?? null,
@@ -4642,6 +4655,42 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return $response->json() ?? [];
+    }
+
+    /**
+     * Cancel a posted AR Reserve Invoice via the Service Layer Cancel action.
+     * Used by the manual "Resend Order by ID" flow to drop a stale invoice
+     * (e.g. wrong exchange rate) before recreating it with current data — SAP
+     * does not allow editing a posted invoice's DocRate/totals/lines.
+     *
+     * Returns true on success (HTTP 204/2xx), false if SAP refuses the cancel
+     * (e.g. the invoice is already closed by a dependent document). The caller
+     * must only invoke this when the invoice has no successful dependents.
+     */
+    public function cancelArReserveInvoice(int $docEntry): bool
+    {
+        if ($docEntry <= 0) {
+            return false;
+        }
+
+        $response = $this->post('/Invoices(' . $docEntry . ')/Cancel', (object) []);
+
+        if ($response->successful() || $response->status() === 204) {
+            Log::info('SAP AR reserve invoice cancelled for resend recreation', [
+                'doc_entry' => $docEntry,
+                'status' => $response->status(),
+            ]);
+
+            return true;
+        }
+
+        Log::warning('SAP AR reserve invoice cancel failed', [
+            'doc_entry' => $docEntry,
+            'status' => $response->status(),
+            'body' => $response->body(),
+        ]);
+
+        return false;
     }
 
     private function resolveSapTransferAccountValue(string $configured): string
