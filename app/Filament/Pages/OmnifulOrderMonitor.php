@@ -8,7 +8,11 @@ use App\Filament\Pages\OmnifulOrderErrorMonitor;
 use App\Services\Webhooks\WebhookRetryService;
 use Filament\Actions\Action;
 use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\DateTimePicker;
+use Filament\Forms\Components\Select;
+use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
+use Filament\Forms\Get;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Tables\Columns\TextColumn;
@@ -371,47 +375,165 @@ class OmnifulOrderMonitor extends Page implements HasTable
                 ->label('Resend Order by ID')
                 ->icon('heroicon-o-paper-airplane')
                 ->color('primary')
-                ->modalHeading('Resend Full Order to SAP')
+                ->modalHeading('Resend Orders to SAP')
                 ->modalDescription(
-                    'Re-runs the full SAP flow for one order by its Omniful Order ID '
-                    . '(the "Order ID" column value, not the internal DB id). If the order '
-                    . 'already exists in SAP it is re-bound and only missing steps '
-                    . '(payment / delivery / COGS) are completed — no duplicate invoice. '
-                    . 'If its SAP invoice was removed, it is recreated from scratch.'
+                    'Force re-runs the full SAP flow (invoice → payment → COGS → delivery). '
+                    . 'Pick a mode: a single Order ID, a list, an Order ID range, or a created-at '
+                    . 'date/time range. Existing SAP docs are re-bound (no duplicate); a stale '
+                    . 'invoice with no payment/delivery is cancelled & recreated. '
+                    . 'WARNING: confirm ONE order completes end-to-end (payment succeeds) before '
+                    . 'bulk-resending, or stale-rate invoices get repeatedly cancelled + recreated.'
                 )
-                ->modalSubmitActionLabel('Resend Order')
+                ->modalSubmitActionLabel('Resend')
                 ->form([
+                    Select::make('mode')
+                        ->label('Mode')
+                        ->required()
+                        ->default('single')
+                        ->live()
+                        ->options([
+                            'single' => 'Single Order ID',
+                            'list' => 'Multiple Order IDs (list)',
+                            'range' => 'Order ID range',
+                            'dates' => 'Created-at date/time range',
+                        ]),
                     TextInput::make('order_id')
                         ->label('Omniful Order ID')
-                        ->required()
                         ->placeholder('e.g. 70882676')
-                        ->helperText('The Order ID shown in the table.'),
+                        ->helperText('The Order ID shown in the table.')
+                        ->visible(fn (Get $get) => $get('mode') === 'single')
+                        ->required(fn (Get $get) => $get('mode') === 'single'),
+                    Textarea::make('order_ids')
+                        ->label('Order IDs')
+                        ->rows(4)
+                        ->placeholder("70868015, 70879904\n70931496")
+                        ->helperText('Separate by comma, space, semicolon, or new line.')
+                        ->visible(fn (Get $get) => $get('mode') === 'list')
+                        ->required(fn (Get $get) => $get('mode') === 'list'),
+                    TextInput::make('from_id')
+                        ->label('From Order ID')
+                        ->numeric()
+                        ->placeholder('e.g. 100001')
+                        ->visible(fn (Get $get) => $get('mode') === 'range')
+                        ->required(fn (Get $get) => $get('mode') === 'range'),
+                    TextInput::make('to_id')
+                        ->label('To Order ID')
+                        ->numeric()
+                        ->placeholder('e.g. 100010')
+                        ->visible(fn (Get $get) => $get('mode') === 'range')
+                        ->required(fn (Get $get) => $get('mode') === 'range'),
+                    DateTimePicker::make('from_date')
+                        ->label('From (created at)')
+                        ->seconds(false)
+                        ->visible(fn (Get $get) => $get('mode') === 'dates')
+                        ->required(fn (Get $get) => $get('mode') === 'dates'),
+                    DateTimePicker::make('to_date')
+                        ->label('To (created at)')
+                        ->seconds(false)
+                        ->visible(fn (Get $get) => $get('mode') === 'dates')
+                        ->required(fn (Get $get) => $get('mode') === 'dates'),
                 ])
                 ->action(function (array $data) {
-                    $orderId = trim((string) ($data['order_id'] ?? ''));
-                    if ($orderId === '') {
-                        Notification::make()->title('Order ID is required')->danger()->send();
+                    $mode = (string) ($data['mode'] ?? 'single');
+                    $retry = app(WebhookRetryService::class);
+
+                    $queued = 0;
+                    $skipped = 0;
+                    $notFound = 0;
+
+                    $process = function (OmnifulOrder $order) use ($retry, &$queued, &$skipped) {
+                        $result = $retry->forceResendOrder($order);
+                        if ($result['ok'] ?? false) {
+                            $queued++;
+                        } else {
+                            $skipped++;
+                        }
+                    };
+
+                    // Explicit-id modes (single / list) resolve each id directly.
+                    $explicitIds = null;
+                    if ($mode === 'single') {
+                        $id = trim((string) ($data['order_id'] ?? ''));
+                        if ($id === '') {
+                            Notification::make()->title('Order ID is required')->danger()->send();
+
+                            return;
+                        }
+                        $explicitIds = [$id];
+                    } elseif ($mode === 'list') {
+                        $explicitIds = array_values(array_unique(array_filter(
+                            array_map('trim', preg_split('/[\s,;]+/', (string) ($data['order_ids'] ?? ''))),
+                            fn ($v) => $v !== '',
+                        )));
+                        if ($explicitIds === []) {
+                            Notification::make()->title('No order IDs provided')->danger()->send();
+
+                            return;
+                        }
+                    }
+
+                    if ($explicitIds !== null) {
+                        foreach ($explicitIds as $id) {
+                            $order = OmnifulOrder::where('external_id', $id)->first();
+                            if (!$order) {
+                                $notFound++;
+                                continue;
+                            }
+                            $process($order);
+                        }
+
+                        $body = 'Queued: ' . number_format($queued)
+                            . ($skipped > 0 ? ' | Skipped: ' . number_format($skipped) : '')
+                            . ($notFound > 0 ? ' | Not found: ' . number_format($notFound) : '');
+                        Notification::make()->title('Resend queued')->body($body)->success()->send();
 
                         return;
                     }
 
-                    $order = OmnifulOrder::where('external_id', $orderId)->first();
-                    if (!$order) {
-                        Notification::make()
-                            ->title('Order not found')
-                            ->body('No order with Order ID ' . $orderId . ' exists in the dashboard.')
-                            ->danger()
-                            ->send();
+                    // Query modes (range / dates) — force-resend EVERY matching order.
+                    $query = OmnifulOrder::query();
+                    if ($mode === 'range') {
+                        $from = trim((string) ($data['from_id'] ?? ''));
+                        $to = trim((string) ($data['to_id'] ?? ''));
+                        if (!ctype_digit($from) || !ctype_digit($to)) {
+                            Notification::make()->title('Range must be numeric')->danger()->send();
+
+                            return;
+                        }
+                        $low = min((int) $from, (int) $to);
+                        $high = max((int) $from, (int) $to);
+                        $query->whereRaw("external_id REGEXP '^[0-9]+$'")
+                            ->whereRaw('CAST(external_id AS UNSIGNED) BETWEEN ? AND ?', [$low, $high]);
+                    } elseif ($mode === 'dates') {
+                        $from = $data['from_date'] ?? null;
+                        $to = $data['to_date'] ?? null;
+                        if (!$from || !$to) {
+                            Notification::make()->title('Both dates are required')->danger()->send();
+
+                            return;
+                        }
+                        $query->whereBetween('created_at', [$from, $to]);
+                    } else {
+                        Notification::make()->title('Unknown resend mode')->danger()->send();
 
                         return;
                     }
 
-                    $result = app(WebhookRetryService::class)->forceResendOrder($order);
-                    Notification::make()
-                        ->title($result['ok'] ? 'Resend queued' : 'Resend failed')
-                        ->body($result['message'])
-                        ->{$result['ok'] ? 'success' : 'danger'}()
-                        ->send();
+                    $query->orderBy('id')->chunkById(200, function ($orders) use ($process) {
+                        foreach ($orders as $order) {
+                            $process($order);
+                        }
+                    });
+
+                    if ($queued === 0 && $skipped === 0) {
+                        Notification::make()->title('No matching orders found')->warning()->send();
+
+                        return;
+                    }
+
+                    $body = 'Queued: ' . number_format($queued)
+                        . ($skipped > 0 ? ' | Skipped (no stored event): ' . number_format($skipped) : '');
+                    Notification::make()->title('Resend queued')->body($body)->success()->send();
                 }),
             Action::make('retryFailedOrders')
                 ->label('Retry Failed Orders')
