@@ -640,14 +640,25 @@ trait HandlesSapPurchaseAndProducts
 
     private function normalizeFoundArInvoice(array $invoice): ?array
     {
-        // Never reuse a CANCELLED invoice — treat it as if it does not exist.
-        // Critical for the manual Resend flow: after cancelling a stale-rate
-        // invoice, the idempotency lookup must NOT rebind the cancelled doc, so a
-        // fresh invoice gets created with the corrected data.
-        if ((string) ($invoice['Cancelled'] ?? 'tNO') === 'tYES') {
-            Log::info('Skipping cancelled SAP AR invoice in lookup', [
+        // Never reuse a CANCELLED invoice OR a CANCELLATION (reversing) document —
+        // treat them as if they do not exist. Critical for the Resend flow: when
+        // we cancel a stale invoice, SAP creates a cancellation document that
+        // inherits the same U_omo. CancelStatus values: csNo (live invoice),
+        // csYes (the cancelled original), csCancellation (the reversing doc — it
+        // is NOT flagged Cancelled=tYES but IS closed). Rebinding either the
+        // cancelled original or the closed cancellation doc makes the incoming
+        // payment fail with -10 "Invoice is already closed or blocked". Skip both
+        // so the recreate issues a fresh OPEN invoice.
+        $cancelStatus = (string) ($invoice['CancelStatus'] ?? '');
+        if ((string) ($invoice['Cancelled'] ?? 'tNO') === 'tYES'
+            || $cancelStatus === 'csYes'
+            || $cancelStatus === 'csCancellation'
+        ) {
+            Log::info('Skipping cancelled/cancellation SAP AR invoice in lookup', [
                 'doc_entry' => $invoice['DocEntry'] ?? null,
                 'doc_num' => $invoice['DocNum'] ?? null,
+                'cancel_status' => $cancelStatus,
+                'cancelled' => $invoice['Cancelled'] ?? null,
             ]);
 
             return null;
