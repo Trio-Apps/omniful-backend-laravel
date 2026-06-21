@@ -23,6 +23,14 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        // Behind an HTTPS-terminating reverse proxy the app sees plain HTTP, so
+        // asset()/url() generate http:// links the browser blocks as mixed
+        // content. Force the https scheme whenever the app is configured for
+        // https (APP_URL), regardless of the proxied request scheme.
+        if (str_starts_with((string) config('app.url'), 'https://')) {
+            \Illuminate\Support\Facades\URL::forceScheme('https');
+        }
+
         $this->registerFilamentCoreAliases();
         $this->registerFilamentAuthAliases();
         $this->registerFilamentPageAliases();
