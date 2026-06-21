@@ -254,26 +254,23 @@ trait HandlesSapPurchaseAndProducts
             'ReserveInvoice' => 'tYES',
         ];
 
+        $isForeignCurrency = false;
         if ($currency) {
             $body['DocCurrency'] = $currency;
 
-            // When the order is in a foreign currency, pin the exchange rate
-            // from Omniful's payload so the AR reserve invoice and the
-            // downstream incoming payment both use the same rate. Without an
-            // explicit DocRate SAP picks the system rate at posting time and
-            // a small drift between the two postings produces the
-            // "Unbalanced Transaction" (-5012) error.
-            $orderRate = data_get($data, 'invoice.exchange_rate.rate');
-            if (is_numeric($orderRate) && (float) $orderRate > 0) {
-                $localCurrency = trim((string) data_get($data, 'invoice.exchange_rate.store_currency', ''));
-                $orderCurrency = trim((string) data_get($data, 'invoice.exchange_rate.order_currency', $currency));
-                // Only set DocRate when the rate maps from order currency to a
-                // *different* local currency. SAP rejects DocRate when the
-                // document and company currencies match.
-                if ($localCurrency !== '' && strtoupper($localCurrency) !== strtoupper($orderCurrency)) {
-                    $body['DocRate'] = (float) $orderRate;
-                }
-            }
+            // Deliberately do NOT send DocRate. SAP computes the realized exchange
+            // difference on the incoming payment against ITS OWN daily rate table
+            // (foreign payments require the table rate — "Update the exchange
+            // rate"), NOT against the DocRate we send. If we book the invoice at
+            // Omniful's order rate while SAP settles the payment at its table rate,
+            // the gap posts to G/L 4101005 (which carries a mandatory cost-center
+            // dimension) and fails with -5002. By omitting DocRate on BOTH the
+            // invoice and the payment, SAP books each at the same table rate, so
+            // the payment settles to the cent (PaidToDate == DocTotalSys) with no
+            // realized FX line and no 4101005. Verified on the test company.
+            $localCurrency = trim((string) data_get($data, 'invoice.exchange_rate.store_currency', ''));
+            $orderCurrency = trim((string) data_get($data, 'invoice.exchange_rate.order_currency', $currency));
+            $isForeignCurrency = $localCurrency !== '' && strtoupper($localCurrency) !== strtoupper($orderCurrency);
         }
 
         $body = $this->appendOmnifulDocumentUdfs($body, $data, $externalId);
@@ -287,7 +284,11 @@ trait HandlesSapPurchaseAndProducts
             // from DocRate so the local-currency total stays consistent.
             $body['DiscountPercent'] = $documentDiscountPercent;
             $body['DocTotal'] = $forcedDocTotal;
-            if (!isset($body['DocRate'])) {
+            // Only pin DocTotalSys for a local-currency document. For a foreign
+            // order we no longer send DocRate, so SAP computes DocTotalSys from
+            // its daily table rate — pinning it here would wrongly stamp the
+            // foreign total as the local total.
+            if (!$isForeignCurrency) {
                 $body['DocTotalSys'] = $forcedDocTotal;
             }
         } else {
@@ -1016,9 +1017,12 @@ trait HandlesSapPurchaseAndProducts
             $body['DocCurrency'] = $invoiceCurrency;
             $docCurrencyIsSet = true;
         }
-        if ($invoiceRate > 0) {
-            $body['DocRate'] = $invoiceRate;
-        }
+        // Deliberately do NOT send DocRate on the payment either. SAP settles a
+        // foreign-currency incoming payment at its own daily table rate, and the
+        // invoice (also created without DocRate) was booked at that same table
+        // rate — so the payment closes the receivable to the cent with no
+        // realized exchange difference, avoiding the -5002 on G/L 4101005. Sending
+        // our own DocRate here reintroduces the mismatch against SAP's table rate.
 
         $body = $this->appendOmnifulDocumentUdfs($body, $data, $reference);
 
