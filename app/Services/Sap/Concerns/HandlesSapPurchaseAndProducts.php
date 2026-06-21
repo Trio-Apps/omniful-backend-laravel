@@ -4713,10 +4713,19 @@ trait HandlesSapPurchaseAndProducts
             if (!is_array($line)) {
                 continue;
             }
+            // Copy the line quantity explicitly: when base-referencing a
+            // multi-line invoice SAP requires Quantity per line (otherwise it
+            // defaults to 0 and rejects with "Value in Quantity cannot be zero").
+            // Skip any zero-quantity line (nothing to reverse on it).
+            $lineQty = (float) ($line['Quantity'] ?? 0);
+            if ($lineQty <= 0) {
+                continue;
+            }
             $creditLines[] = [
                 'BaseType' => 13, // A/R Invoice object type
                 'BaseEntry' => $docEntry,
                 'BaseLine' => (int) ($line['LineNum'] ?? 0),
+                'Quantity' => $lineQty,
             ];
         }
 
