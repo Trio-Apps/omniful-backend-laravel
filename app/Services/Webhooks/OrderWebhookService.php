@@ -147,7 +147,7 @@ class OrderWebhookService
      *   delivery / COGS), or recreate it only if it no longer exists in SAP.
      *   Never creates a duplicate invoice.
      */
-    public function process(OmnifulOrderEvent $event, bool $force = false): void
+    public function process(OmnifulOrderEvent $event, bool $force = false, bool $cancelOld = false): void
     {
         $externalId = (string) ($event->external_id ?? '');
         if ($externalId === '') {
@@ -250,22 +250,26 @@ class OrderWebhookService
             // via the order UDFs (U_omo / U_ZidId / U_SallaOrderId / NumAtCard / Comments).
             $recoveredInvoice = $client->findExistingArReserveInvoiceForOmnifulOrderReference($data, $externalId);
 
-            // FORCE RESEND — refresh the invoice itself when it carries stale data
-            // (e.g. a wrong exchange rate). SAP cannot edit a posted invoice's
-            // DocRate/totals/lines, so the only way to push corrected data is to
-            // CANCEL the stale invoice and CREATE a fresh one with current data.
+            // FORCE RESEND with "cancel old" — refresh the invoice when it carries
+            // stale data (e.g. a wrong exchange rate). SAP cannot edit a posted
+            // invoice, so we REVERSE the old one the same way the SAP team does
+            // manually — a base-referenced AR credit memo to reverse the
+            // financials, plus renaming its order UDFs to "<id>-reversed" (with a
+            // -1/-2 suffix on collision) so the idempotency lookup no longer
+            // matches it — then create a fresh invoice with current data.
+            // (No SL Cancel: that produced closed cancellation documents that the
+            // payment then hit with -10 "Invoice is already closed or blocked".)
             //
-            // SAFETY: only recreate when the invoice has NO successful dependent
-            // document (incoming payment / delivery / COGS). If any exist,
-            // recreating would orphan posted financial docs — so we leave the
-            // invoice in place and fall through to rebind + complete missing steps.
-            if ($force && is_array($recoveredInvoice) && !empty($recoveredInvoice['DocEntry'])) {
+            // Gated by the "Cancel & reverse existing invoice" checkbox ($cancelOld).
+            // SAFETY: only when the invoice has NO successful dependent document
+            // (payment / delivery / COGS); otherwise we leave it and just rebind.
+            if ($force && $cancelOld && is_array($recoveredInvoice) && !empty($recoveredInvoice['DocEntry'])) {
                 $hasDependents = !empty($order->sap_payment_doc_entry)
                     || !empty($order->sap_delivery_doc_entry)
                     || !empty($order->sap_cogs_journal_entry);
 
                 if ($hasDependents) {
-                    \Illuminate\Support\Facades\Log::warning('Resend: AR invoice recreation skipped (has dependents); rebinding only', [
+                    \Illuminate\Support\Facades\Log::warning('Resend: invoice reversal skipped (has dependents); rebinding only', [
                         'order' => $externalId,
                         'doc_entry' => $recoveredInvoice['DocEntry'],
                         'has_payment' => !empty($order->sap_payment_doc_entry),
@@ -273,20 +277,23 @@ class OrderWebhookService
                         'has_cogs' => !empty($order->sap_cogs_journal_entry),
                     ]);
                 } else {
-                    $cancelled = false;
+                    $reversal = null;
                     try {
-                        $cancelled = $client->cancelArReserveInvoice((int) $recoveredInvoice['DocEntry']);
+                        $reversal = $client->reverseArReserveInvoiceForResend(
+                            (int) $recoveredInvoice['DocEntry'],
+                            $externalId,
+                        );
                     } catch (\Throwable $e) {
                         $order->sap_status = 'failed';
-                        $order->sap_error = 'Resend: failed to cancel existing AR invoice DocEntry '
-                            . (string) $recoveredInvoice['DocEntry'] . ' for refresh — ' . $e->getMessage();
+                        $order->sap_error = 'Resend: failed to reverse existing AR invoice DocEntry '
+                            . (string) $recoveredInvoice['DocEntry'] . ' — ' . $e->getMessage();
                         $order->save();
 
                         return;
                     }
 
-                    if ($cancelled) {
-                        // The stale invoice is cancelled. Clear local refs so the
+                    if (($reversal['ok'] ?? false) === true) {
+                        // Old invoice reversed + renamed. Clear local refs so the
                         // create path below issues a fresh invoice + follow-ups.
                         $order->forceFill([
                             'sap_doc_entry' => null,
@@ -302,16 +309,23 @@ class OrderWebhookService
                             'sap_cogs_journal_num' => null,
                         ])->save();
 
-                        \Illuminate\Support\Facades\Log::info('Resend: AR invoice cancelled for recreation', [
+                        \Illuminate\Support\Facades\Log::info('Resend: AR invoice reversed for recreation', [
                             'order' => $externalId,
                             'old_doc_entry' => $recoveredInvoice['DocEntry'],
+                            'credit_memo' => $reversal['credit_memo']['DocEntry'] ?? null,
+                            'new_ref' => $reversal['new_ref'] ?? null,
                         ]);
 
                         // Treat as if no invoice exists so the create path runs.
                         $recoveredInvoice = null;
+                    } else {
+                        $order->sap_status = 'failed';
+                        $order->sap_error = 'Resend: invoice reversal not completed — '
+                            . (string) ($reversal['reason'] ?? 'unknown');
+                        $order->save();
+
+                        return;
                     }
-                    // If cancel returned false, keep $recoveredInvoice so the code
-                    // below rebinds the existing invoice instead of recreating.
                 }
             }
 

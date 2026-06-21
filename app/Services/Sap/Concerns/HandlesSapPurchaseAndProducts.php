@@ -4669,39 +4669,147 @@ trait HandlesSapPurchaseAndProducts
     }
 
     /**
-     * Cancel a posted AR Reserve Invoice via the Service Layer Cancel action.
-     * Used by the manual "Resend Order by ID" flow to drop a stale invoice
-     * (e.g. wrong exchange rate) before recreating it with current data — SAP
-     * does not allow editing a posted invoice's DocRate/totals/lines.
+     * Reverse a posted AR Reserve Invoice the same way the SAP team does manually,
+     * so the manual "Resend Order by ID" flow can replace a stale invoice (e.g.
+     * wrong exchange rate) — SAP does not allow editing a posted invoice's
+     * DocRate/totals/lines. We deliberately AVOID the Service Layer Cancel action
+     * (it created closed cancellation documents the payment then hit with -10).
      *
-     * Returns true on success (HTTP 204/2xx), false if SAP refuses the cancel
-     * (e.g. the invoice is already closed by a dependent document). The caller
-     * must only invoke this when the invoice has no successful dependents.
+     * Steps:
+     *   1) Post a base-referenced AR Credit Memo (copies the invoice lines and
+     *      amounts) to reverse the financials.
+     *   2) Rename the invoice's order UDFs to "<externalId>-reversed" (with a
+     *      -1/-2 ... suffix if that value is already taken) so the idempotency
+     *      lookup no longer matches it and a fresh invoice gets created.
+     *
+     * Caller must only invoke this when the invoice has no successful dependents.
+     *
+     * @return array{ok:bool,reason?:string,credit_memo?:array,new_ref?:string,already?:bool}
      */
-    public function cancelArReserveInvoice(int $docEntry): bool
+    public function reverseArReserveInvoiceForResend(int $docEntry, string $externalId): array
     {
         if ($docEntry <= 0) {
+            return ['ok' => false, 'reason' => 'Missing invoice doc entry'];
+        }
+
+        $invoice = $this->getArReserveInvoice($docEntry);
+        if ($invoice === []) {
+            return ['ok' => false, 'reason' => 'Invoice not found in SAP'];
+        }
+
+        // Already reversed/cancelled — nothing to do; treat as success so the
+        // caller proceeds to create a fresh invoice.
+        $cancelStatus = (string) ($invoice['CancelStatus'] ?? '');
+        if ((string) ($invoice['Cancelled'] ?? 'tNO') === 'tYES'
+            || $cancelStatus === 'csYes'
+            || $cancelStatus === 'csCancellation'
+        ) {
+            return ['ok' => true, 'already' => true, 'reason' => 'Invoice already cancelled'];
+        }
+
+        // 1) Reverse financials via a base-referenced AR Credit Memo.
+        $creditLines = [];
+        foreach ((array) ($invoice['DocumentLines'] ?? []) as $line) {
+            if (!is_array($line)) {
+                continue;
+            }
+            $creditLines[] = [
+                'BaseType' => 13, // A/R Invoice object type
+                'BaseEntry' => $docEntry,
+                'BaseLine' => (int) ($line['LineNum'] ?? 0),
+            ];
+        }
+
+        if ($creditLines === []) {
+            return ['ok' => false, 'reason' => 'Invoice has no lines to reverse'];
+        }
+
+        $today = now()->format('Y-m-d');
+        $creditBody = [
+            'CardCode' => (string) ($invoice['CardCode'] ?? ''),
+            'DocDate' => $today,
+            'DocDueDate' => $today,
+            'TaxDate' => $today,
+            'DocumentLines' => $creditLines,
+            'Comments' => 'Auto-reversal of AR reserve invoice DocNum '
+                . (string) ($invoice['DocNum'] ?? $docEntry) . ' for Omniful order '
+                . $externalId . ' (resend)',
+        ];
+
+        $creditResponse = $this->post('/CreditNotes', $creditBody);
+        if (!$creditResponse->successful()) {
+            return [
+                'ok' => false,
+                'reason' => 'Credit memo create failed: ' . $creditResponse->status()
+                    . ' ' . $creditResponse->body(),
+            ];
+        }
+        $creditMemo = $creditResponse->json() ?? [];
+
+        // 2) Rename the order UDFs so the idempotency lookup no longer matches the
+        //    old invoice (mirrors the SAP team's manual "-reversed" rename).
+        $udfField = trim((string) config('omniful.order_sync.order_number_udf_field', 'U_omo'));
+        if ($udfField === '') {
+            $udfField = 'U_omo';
+        }
+        $newRef = $this->resolveFreeReversedInvoiceRef($udfField, $externalId);
+
+        $patchBody = [$udfField => $newRef];
+        if ($udfField !== 'U_ZidId') {
+            $patchBody['U_ZidId'] = $newRef;
+        }
+
+        $patch = $this->patch('/Invoices(' . $docEntry . ')', $patchBody);
+        if (!$patch->successful()) {
+            // Financials are already reversed; the rename is best-effort. Log and
+            // continue — the cancelled/closed state still helps avoid re-binding.
+            Log::warning('Resend reversal: failed to rename invoice order UDF', [
+                'doc_entry' => $docEntry,
+                'status' => $patch->status(),
+                'body' => $patch->body(),
+            ]);
+        }
+
+        Log::info('Resend reversal complete', [
+            'invoice_doc_entry' => $docEntry,
+            'credit_memo_doc_entry' => $creditMemo['DocEntry'] ?? null,
+            'new_ref' => $newRef,
+        ]);
+
+        return ['ok' => true, 'credit_memo' => $creditMemo, 'new_ref' => $newRef];
+    }
+
+    /**
+     * Find a free "<externalId>-reversed" order-reference value for the renamed
+     * invoice, appending -1, -2 ... when an invoice with that value already
+     * exists (so repeated reversals of the same order do not collide).
+     */
+    private function resolveFreeReversedInvoiceRef(string $udfField, string $externalId): string
+    {
+        $base = $externalId . '-reversed';
+        $candidate = $base;
+        $suffix = 0;
+
+        while ($suffix <= 50 && $this->arInvoiceExistsByUdfValue($udfField, $candidate)) {
+            $suffix++;
+            $candidate = $base . '-' . $suffix;
+        }
+
+        return $candidate;
+    }
+
+    private function arInvoiceExistsByUdfValue(string $field, string $value): bool
+    {
+        $escapedField = str_replace("'", "''", $field);
+        $escapedValue = str_replace("'", "''", $value);
+        $filter = rawurlencode("{$escapedField} eq '{$escapedValue}'");
+        $response = $this->get("/Invoices?\$filter={$filter}&\$top=1");
+
+        if (!$response->successful()) {
             return false;
         }
 
-        $response = $this->post('/Invoices(' . $docEntry . ')/Cancel', (object) []);
-
-        if ($response->successful() || $response->status() === 204) {
-            Log::info('SAP AR reserve invoice cancelled for resend recreation', [
-                'doc_entry' => $docEntry,
-                'status' => $response->status(),
-            ]);
-
-            return true;
-        }
-
-        Log::warning('SAP AR reserve invoice cancel failed', [
-            'doc_entry' => $docEntry,
-            'status' => $response->status(),
-            'body' => $response->body(),
-        ]);
-
-        return false;
+        return !empty((array) ($response->json('value') ?? []));
     }
 
     private function resolveSapTransferAccountValue(string $configured): string

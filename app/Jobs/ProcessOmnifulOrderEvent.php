@@ -21,6 +21,7 @@ class ProcessOmnifulOrderEvent implements ShouldQueue
     public function __construct(
         public int $eventId,
         public bool $force = false,
+        public bool $cancelOld = false,
     ) {
         $this->onQueue('omniful-orders');
     }
@@ -34,7 +35,7 @@ class ProcessOmnifulOrderEvent implements ShouldQueue
 
         $externalId = trim((string) ($event->external_id ?? ''));
         if ($externalId === '') {
-            $service->process($event, $this->force);
+            $service->process($event, $this->force, $this->cancelOld);
             return;
         }
 
@@ -68,7 +69,7 @@ class ProcessOmnifulOrderEvent implements ShouldQueue
                 'sap_error' => null,
             ]);
 
-            $service->process($event, $this->force);
+            $service->process($event, $this->force, $this->cancelOld);
         } catch (\Throwable $e) {
             Log::error('Queued SAP order sync failed', [
                 'event_id' => $event->id,

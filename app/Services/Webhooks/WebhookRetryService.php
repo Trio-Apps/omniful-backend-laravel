@@ -68,7 +68,7 @@ class WebhookRetryService
      *
      * @return array{ok:bool,message:string}
      */
-    public function forceResendOrder(OmnifulOrder $order): array
+    public function forceResendOrder(OmnifulOrder $order, bool $cancelOld = false): array
     {
         $event = OmnifulOrderEvent::query()
             ->where('external_id', $order->external_id)
@@ -83,9 +83,13 @@ class WebhookRetryService
         $order->sap_error = null;
         $order->save();
 
-        ProcessOmnifulOrderEvent::dispatch($event->id, true);
+        ProcessOmnifulOrderEvent::dispatch($event->id, true, $cancelOld);
 
-        return ['ok' => true, 'message' => 'Full resend queued for order ' . $order->external_id];
+        return [
+            'ok' => true,
+            'message' => 'Full resend queued for order ' . $order->external_id
+                . ($cancelOld ? ' (will reverse existing invoice)' : ''),
+        ];
     }
 
     /**

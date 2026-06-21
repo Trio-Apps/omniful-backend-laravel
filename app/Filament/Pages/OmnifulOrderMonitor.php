@@ -7,6 +7,7 @@ use App\Filament\Pages\OmnifulOrderView;
 use App\Filament\Pages\OmnifulOrderErrorMonitor;
 use App\Services\Webhooks\WebhookRetryService;
 use Filament\Actions\Action;
+use Filament\Forms\Components\Checkbox;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\DateTimePicker;
 use Filament\Forms\Components\Select;
@@ -432,17 +433,25 @@ class OmnifulOrderMonitor extends Page implements HasTable
                         ->seconds(false)
                         ->visible(fn (Get $get) => $get('mode') === 'dates')
                         ->required(fn (Get $get) => $get('mode') === 'dates'),
+                    Checkbox::make('cancel_old')
+                        ->label('Cancel & reverse the existing SAP invoice')
+                        ->helperText('Reverses the old invoice (credit memo + renames its order ref to '
+                            . '"<id>-reversed") then creates a fresh one — use when the existing invoice '
+                            . 'has the wrong rate. Skipped automatically for orders that already have a '
+                            . 'successful payment/delivery. Leave OFF to only rebind & complete missing steps.')
+                        ->default(false),
                 ])
                 ->action(function (array $data) {
                     $mode = (string) ($data['mode'] ?? 'single');
+                    $cancelOld = (bool) ($data['cancel_old'] ?? false);
                     $retry = app(WebhookRetryService::class);
 
                     $queued = 0;
                     $skipped = 0;
                     $notFound = 0;
 
-                    $process = function (OmnifulOrder $order) use ($retry, &$queued, &$skipped) {
-                        $result = $retry->forceResendOrder($order);
+                    $process = function (OmnifulOrder $order) use ($retry, $cancelOld, &$queued, &$skipped) {
+                        $result = $retry->forceResendOrder($order, $cancelOld);
                         if ($result['ok'] ?? false) {
                             $queued++;
                         } else {
