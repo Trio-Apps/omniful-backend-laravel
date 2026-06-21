@@ -650,15 +650,25 @@ trait HandlesSapPurchaseAndProducts
         // payment fail with -10 "Invoice is already closed or blocked". Skip both
         // so the recreate issues a fresh OPEN invoice.
         $cancelStatus = (string) ($invoice['CancelStatus'] ?? '');
+        $orderUdf = trim((string) config('omniful.order_sync.order_number_udf_field', 'U_omo'));
+        if ($orderUdf === '') {
+            $orderUdf = 'U_omo';
+        }
+        // Also skip invoices we have reversed: the reversal renames the order UDF
+        // to "<id>-reversed", but a Comments/payload lookup can still surface them.
+        $isReversed = str_contains((string) ($invoice[$orderUdf] ?? ''), '-reversed')
+            || str_contains((string) ($invoice['NumAtCard'] ?? ''), '-reversed');
         if ((string) ($invoice['Cancelled'] ?? 'tNO') === 'tYES'
             || $cancelStatus === 'csYes'
             || $cancelStatus === 'csCancellation'
+            || $isReversed
         ) {
-            Log::info('Skipping cancelled/cancellation SAP AR invoice in lookup', [
+            Log::info('Skipping cancelled/cancellation/reversed SAP AR invoice in lookup', [
                 'doc_entry' => $invoice['DocEntry'] ?? null,
                 'doc_num' => $invoice['DocNum'] ?? null,
                 'cancel_status' => $cancelStatus,
                 'cancelled' => $invoice['Cancelled'] ?? null,
+                'reversed' => $isReversed,
             ]);
 
             return null;
@@ -4700,11 +4710,16 @@ trait HandlesSapPurchaseAndProducts
         // Already reversed/cancelled — nothing to do; treat as success so the
         // caller proceeds to create a fresh invoice.
         $cancelStatus = (string) ($invoice['CancelStatus'] ?? '');
+        $orderUdf = trim((string) config('omniful.order_sync.order_number_udf_field', 'U_omo'));
+        if ($orderUdf === '') {
+            $orderUdf = 'U_omo';
+        }
         if ((string) ($invoice['Cancelled'] ?? 'tNO') === 'tYES'
             || $cancelStatus === 'csYes'
             || $cancelStatus === 'csCancellation'
+            || str_contains((string) ($invoice[$orderUdf] ?? ''), '-reversed')
         ) {
-            return ['ok' => true, 'already' => true, 'reason' => 'Invoice already cancelled'];
+            return ['ok' => true, 'already' => true, 'reason' => 'Invoice already reversed/cancelled'];
         }
 
         // 1) Reverse financials via a base-referenced AR Credit Memo.
@@ -4763,7 +4778,13 @@ trait HandlesSapPurchaseAndProducts
         }
         $newRef = $this->resolveFreeReversedInvoiceRef($udfField, $externalId);
 
-        $patchBody = [$udfField => $newRef];
+        // Rename the order UDFs AND NumAtCard: SAP's duplicate guard ("AR invoice
+        // already exists") and the idempotency lookup both key on these, so all of
+        // them must stop matching the order id for a fresh invoice to be created.
+        $patchBody = [
+            $udfField => $newRef,
+            'NumAtCard' => $newRef,
+        ];
         if ($udfField !== 'U_ZidId') {
             $patchBody['U_ZidId'] = $newRef;
         }

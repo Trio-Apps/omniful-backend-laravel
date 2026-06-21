@@ -277,24 +277,60 @@ class OrderWebhookService
                         'has_cogs' => !empty($order->sap_cogs_journal_entry),
                     ]);
                 } else {
-                    $reversal = null;
-                    try {
-                        $reversal = $client->reverseArReserveInvoiceForResend(
-                            (int) $recoveredInvoice['DocEntry'],
-                            $externalId,
-                        );
-                    } catch (\Throwable $e) {
-                        $order->sap_status = 'failed';
-                        $order->sap_error = 'Resend: failed to reverse existing AR invoice DocEntry '
-                            . (string) $recoveredInvoice['DocEntry'] . ' — ' . $e->getMessage();
-                        $order->save();
+                    // Reverse EVERY active invoice still bound to this order. There
+                    // can be several from earlier attempts, and SAP blocks creating
+                    // a new invoice while ANY exists for the order ("AR invoice
+                    // already exists"). Each reversal renames the order refs, so the
+                    // next lookup returns the following one until none remain.
+                    $reversedAny = false;
+                    $guard = 0;
+                    $target = $recoveredInvoice;
+                    while (is_array($target) && !empty($target['DocEntry']) && $guard < 15) {
+                        $guard++;
+                        try {
+                            $reversal = $client->reverseArReserveInvoiceForResend(
+                                (int) $target['DocEntry'],
+                                $externalId,
+                            );
+                        } catch (\Throwable $e) {
+                            $order->sap_status = 'failed';
+                            $order->sap_error = 'Resend: failed to reverse existing AR invoice DocEntry '
+                                . (string) $target['DocEntry'] . ' — ' . $e->getMessage();
+                            $order->save();
 
-                        return;
+                            return;
+                        }
+
+                        if (($reversal['ok'] ?? false) !== true) {
+                            $order->sap_status = 'failed';
+                            $order->sap_error = 'Resend: invoice reversal not completed — '
+                                . (string) ($reversal['reason'] ?? 'unknown');
+                            $order->save();
+
+                            return;
+                        }
+
+                        \Illuminate\Support\Facades\Log::info('Resend: AR invoice reversed for recreation', [
+                            'order' => $externalId,
+                            'old_doc_entry' => $target['DocEntry'],
+                            'credit_memo' => $reversal['credit_memo']['DocEntry'] ?? null,
+                            'new_ref' => $reversal['new_ref'] ?? null,
+                            'already' => $reversal['already'] ?? false,
+                        ]);
+
+                        // A doc that was already reversed (stale Comments match) —
+                        // stop to avoid looping on it.
+                        if (($reversal['already'] ?? false) === true) {
+                            break;
+                        }
+
+                        $reversedAny = true;
+                        $target = $client->findExistingArReserveInvoiceForOmnifulOrderReference($data, $externalId);
                     }
 
-                    if (($reversal['ok'] ?? false) === true) {
-                        // Old invoice reversed + renamed. Clear local refs so the
-                        // create path below issues a fresh invoice + follow-ups.
+                    if ($reversedAny) {
+                        // All stale invoices reversed + renamed. Clear local refs so
+                        // the create path below issues a fresh invoice + follow-ups.
                         $order->forceFill([
                             'sap_doc_entry' => null,
                             'sap_doc_num' => null,
@@ -309,22 +345,8 @@ class OrderWebhookService
                             'sap_cogs_journal_num' => null,
                         ])->save();
 
-                        \Illuminate\Support\Facades\Log::info('Resend: AR invoice reversed for recreation', [
-                            'order' => $externalId,
-                            'old_doc_entry' => $recoveredInvoice['DocEntry'],
-                            'credit_memo' => $reversal['credit_memo']['DocEntry'] ?? null,
-                            'new_ref' => $reversal['new_ref'] ?? null,
-                        ]);
-
                         // Treat as if no invoice exists so the create path runs.
                         $recoveredInvoice = null;
-                    } else {
-                        $order->sap_status = 'failed';
-                        $order->sap_error = 'Resend: invoice reversal not completed — '
-                            . (string) ($reversal['reason'] ?? 'unknown');
-                        $order->save();
-
-                        return;
                     }
                 }
             }
