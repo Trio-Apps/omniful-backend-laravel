@@ -4707,101 +4707,107 @@ trait HandlesSapPurchaseAndProducts
             return ['ok' => false, 'reason' => 'Invoice not found in SAP'];
         }
 
-        // Already reversed/cancelled — nothing to do; treat as success so the
-        // caller proceeds to create a fresh invoice.
         $cancelStatus = (string) ($invoice['CancelStatus'] ?? '');
         $orderUdf = trim((string) config('omniful.order_sync.order_number_udf_field', 'U_omo'));
         if ($orderUdf === '') {
             $orderUdf = 'U_omo';
         }
-        if ((string) ($invoice['Cancelled'] ?? 'tNO') === 'tYES'
+
+        $omoVal = (string) ($invoice[$orderUdf] ?? '');
+        $numAtCard = (string) ($invoice['NumAtCard'] ?? '');
+
+        // Already freed (both order references renamed) — nothing to do.
+        if (str_contains($omoVal, '-reversed') && str_contains($numAtCard, '-reversed')) {
+            return ['ok' => true, 'already' => true, 'reason' => 'Invoice order refs already freed'];
+        }
+
+        $isCancelled = (string) ($invoice['Cancelled'] ?? 'tNO') === 'tYES'
             || $cancelStatus === 'csYes'
-            || $cancelStatus === 'csCancellation'
-            || str_contains((string) ($invoice[$orderUdf] ?? ''), '-reversed')
-        ) {
-            return ['ok' => true, 'already' => true, 'reason' => 'Invoice already reversed/cancelled'];
-        }
+            || $cancelStatus === 'csCancellation';
+        $isClosed = (string) ($invoice['DocumentStatus'] ?? '') === 'bost_Close';
 
-        // 1) Reverse financials via a base-referenced AR Credit Memo.
-        $creditLines = [];
-        foreach ((array) ($invoice['DocumentLines'] ?? []) as $line) {
-            if (!is_array($line)) {
-                continue;
+        $creditMemo = null;
+
+        // 1) Reverse financials with a base-referenced AR Credit Memo — ONLY for an
+        //    active, open invoice. A cancelled invoice is already reversed in SAP,
+        //    and a closed one (already credited / paid) must not be credited again;
+        //    in both cases we only free the order references below.
+        if (!$isCancelled && !$isClosed) {
+            $creditLines = [];
+            foreach ((array) ($invoice['DocumentLines'] ?? []) as $line) {
+                if (!is_array($line)) {
+                    continue;
+                }
+                // Copy the line quantity explicitly: base-referencing a multi-line
+                // invoice requires Quantity per line (else SAP rejects with "Value
+                // in Quantity cannot be zero"). Skip zero-quantity lines.
+                $lineQty = (float) ($line['Quantity'] ?? 0);
+                if ($lineQty <= 0) {
+                    continue;
+                }
+                $creditLines[] = [
+                    'BaseType' => 13, // A/R Invoice object type
+                    'BaseEntry' => $docEntry,
+                    'BaseLine' => (int) ($line['LineNum'] ?? 0),
+                    'Quantity' => $lineQty,
+                ];
             }
-            // Copy the line quantity explicitly: when base-referencing a
-            // multi-line invoice SAP requires Quantity per line (otherwise it
-            // defaults to 0 and rejects with "Value in Quantity cannot be zero").
-            // Skip any zero-quantity line (nothing to reverse on it).
-            $lineQty = (float) ($line['Quantity'] ?? 0);
-            if ($lineQty <= 0) {
-                continue;
+
+            if ($creditLines === []) {
+                return ['ok' => false, 'reason' => 'Invoice has no lines to reverse'];
             }
-            $creditLines[] = [
-                'BaseType' => 13, // A/R Invoice object type
-                'BaseEntry' => $docEntry,
-                'BaseLine' => (int) ($line['LineNum'] ?? 0),
-                'Quantity' => $lineQty,
+
+            $today = now()->format('Y-m-d');
+            $creditBody = [
+                'CardCode' => (string) ($invoice['CardCode'] ?? ''),
+                'DocDate' => $today,
+                'DocDueDate' => $today,
+                'TaxDate' => $today,
+                'DocumentLines' => $creditLines,
+                'Comments' => 'Auto-reversal of AR reserve invoice DocNum '
+                    . (string) ($invoice['DocNum'] ?? $docEntry) . ' for Omniful order '
+                    . $externalId . ' (resend)',
             ];
+
+            $creditResponse = $this->post('/CreditNotes', $creditBody);
+            if (!$creditResponse->successful()) {
+                return [
+                    'ok' => false,
+                    'reason' => 'Credit memo create failed: ' . $creditResponse->status()
+                        . ' ' . $creditResponse->body(),
+                ];
+            }
+            $creditMemo = $creditResponse->json() ?? [];
         }
 
-        if ($creditLines === []) {
-            return ['ok' => false, 'reason' => 'Invoice has no lines to reverse'];
-        }
-
-        $today = now()->format('Y-m-d');
-        $creditBody = [
-            'CardCode' => (string) ($invoice['CardCode'] ?? ''),
-            'DocDate' => $today,
-            'DocDueDate' => $today,
-            'TaxDate' => $today,
-            'DocumentLines' => $creditLines,
-            'Comments' => 'Auto-reversal of AR reserve invoice DocNum '
-                . (string) ($invoice['DocNum'] ?? $docEntry) . ' for Omniful order '
-                . $externalId . ' (resend)',
-        ];
-
-        $creditResponse = $this->post('/CreditNotes', $creditBody);
-        if (!$creditResponse->successful()) {
-            return [
-                'ok' => false,
-                'reason' => 'Credit memo create failed: ' . $creditResponse->status()
-                    . ' ' . $creditResponse->body(),
-            ];
-        }
-        $creditMemo = $creditResponse->json() ?? [];
-
-        // 2) Rename the order UDFs so the idempotency lookup no longer matches the
-        //    old invoice (mirrors the SAP team's manual "-reversed" rename).
-        $udfField = trim((string) config('omniful.order_sync.order_number_udf_field', 'U_omo'));
-        if ($udfField === '') {
-            $udfField = 'U_omo';
-        }
-        $newRef = $this->resolveFreeReversedInvoiceRef($udfField, $externalId);
-
-        // Rename the order UDFs AND NumAtCard: SAP's duplicate guard ("AR invoice
-        // already exists") and the idempotency lookup both key on these, so all of
-        // them must stop matching the order id for a fresh invoice to be created.
+        // 2) Free the order references on the invoice. SAP has TWO custom duplicate
+        //    guards — one on U_omo and one on NumAtCard ("Reference number already
+        //    exists") — and NEITHER excludes cancelled invoices. So both fields
+        //    (plus U_ZidId, used by the idempotency lookup) MUST stop matching the
+        //    order id for a fresh invoice to be created. This is mandatory, not
+        //    best-effort.
+        $newRef = $this->resolveFreeReversedInvoiceRef($orderUdf, $externalId);
         $patchBody = [
-            $udfField => $newRef,
+            $orderUdf => $newRef,
             'NumAtCard' => $newRef,
         ];
-        if ($udfField !== 'U_ZidId') {
+        if ($orderUdf !== 'U_ZidId') {
             $patchBody['U_ZidId'] = $newRef;
         }
 
         $patch = $this->patch('/Invoices(' . $docEntry . ')', $patchBody);
         if (!$patch->successful()) {
-            // Financials are already reversed; the rename is best-effort. Log and
-            // continue — the cancelled/closed state still helps avoid re-binding.
-            Log::warning('Resend reversal: failed to rename invoice order UDF', [
-                'doc_entry' => $docEntry,
-                'status' => $patch->status(),
-                'body' => $patch->body(),
-            ]);
+            return [
+                'ok' => false,
+                'reason' => 'Failed to free invoice order references on DocEntry '
+                    . $docEntry . ': ' . $patch->status() . ' ' . $patch->body(),
+            ];
         }
 
         Log::info('Resend reversal complete', [
             'invoice_doc_entry' => $docEntry,
+            'cancelled' => $isCancelled,
+            'closed' => $isClosed,
             'credit_memo_doc_entry' => $creditMemo['DocEntry'] ?? null,
             'new_ref' => $newRef,
         ]);
@@ -4814,6 +4820,51 @@ trait HandlesSapPurchaseAndProducts
      * invoice, appending -1, -2 ... when an invoice with that value already
      * exists (so repeated reversals of the same order do not collide).
      */
+    /**
+     * Return the DocEntries of ALL invoices that still hold the order reference in
+     * either the U_omo UDF OR NumAtCard — regardless of cancelled/closed state.
+     * Used by the resend reversal to free EVERY invoice blocking SAP's duplicate
+     * guards before a fresh invoice is created (cancelled invoices keep their refs
+     * and are skipped by the normal idempotency lookup, but the SP still sees them).
+     *
+     * @return int[]
+     */
+    public function findOrderInvoiceDocEntriesHoldingReference(string $externalId): array
+    {
+        $externalId = trim($externalId);
+        if ($externalId === '') {
+            return [];
+        }
+
+        $udf = trim((string) config('omniful.order_sync.order_number_udf_field', 'U_omo'));
+        if ($udf === '') {
+            $udf = 'U_omo';
+        }
+        $escapedUdf = str_replace("'", "''", $udf);
+        $escapedValue = str_replace("'", "''", $externalId);
+        $filter = rawurlencode("{$escapedUdf} eq '{$escapedValue}' or NumAtCard eq '{$escapedValue}'");
+        $response = $this->get("/Invoices?\$filter={$filter}&\$select=DocEntry&\$orderby=DocEntry desc&\$top=50");
+
+        if (!$response->successful()) {
+            Log::warning('SAP order-reference invoice scan failed', [
+                'external_id' => $externalId,
+                'status' => $response->status(),
+                'body' => $response->body(),
+            ]);
+
+            return [];
+        }
+
+        $entries = [];
+        foreach ((array) ($response->json('value') ?? []) as $row) {
+            if (is_array($row) && !empty($row['DocEntry'])) {
+                $entries[] = (int) $row['DocEntry'];
+            }
+        }
+
+        return $entries;
+    }
+
     private function resolveFreeReversedInvoiceRef(string $udfField, string $externalId): string
     {
         $base = $externalId . '-reversed';
