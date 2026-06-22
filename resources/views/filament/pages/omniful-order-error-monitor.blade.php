@@ -350,12 +350,26 @@
                                         <div class="oem-latest">Latest: {{ $case['latest_at'] }}</div>
                                     </td>
                                     <td>
-                                        <a
-                                            href="{{ \App\Filament\Pages\OmnifulOrderErrorCaseView::getUrl(['fingerprint' => $case['fingerprint']]) }}"
-                                            class="oem-action"
-                                        >
-                                            Open Case
-                                        </a>
+                                        <div style="display:flex;flex-direction:column;gap:6px;align-items:stretch;">
+                                            <a
+                                                href="{{ \App\Filament\Pages\OmnifulOrderErrorCaseView::getUrl(['fingerprint' => $case['fingerprint']]) }}"
+                                                class="oem-action"
+                                            >
+                                                Open Case
+                                            </a>
+                                            <button type="button"
+                                                wire:click="resendCaseOrders('{{ addslashes($case['fingerprint']) }}', false)"
+                                                wire:confirm="Resend ALL {{ $case['count'] }} order(s) in this case (no cancel)?"
+                                                style="padding:5px 10px;border-radius:8px;border:1px solid #2563eb;background:#2563eb;color:#fff;font-size:12px;cursor:pointer;">
+                                                Resend all
+                                            </button>
+                                            <button type="button"
+                                                wire:click="resendCaseOrders('{{ addslashes($case['fingerprint']) }}', true)"
+                                                wire:confirm="Resend ALL {{ $case['count'] }} order(s) AND reverse their existing SAP invoices? Destructive."
+                                                style="padding:5px 10px;border-radius:8px;border:1px solid #b91c1c;background:#fff;color:#b91c1c;font-size:12px;cursor:pointer;">
+                                                Resend + Cancel
+                                            </button>
+                                        </div>
                                     </td>
                                 </tr>
                             @endforeach

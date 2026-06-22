@@ -2,6 +2,8 @@
 
 namespace App\Filament\Pages;
 
+use App\Models\OmnifulOrder;
+use App\Services\Webhooks\WebhookRetryService;
 use App\Support\OrderErrorMonitoring;
 use Filament\Actions\Action;
 use Filament\Notifications\Notification;
@@ -66,6 +68,51 @@ class OmnifulOrderErrorMonitor extends Page
                         ->send();
                 }),
         ];
+    }
+
+    /**
+     * Re-queue every order grouped under one error case (fingerprint). $cancelOld
+     * reverses each order's existing invoice (credit memo + frees refs) then
+     * recreates clean; leave false to just rebind + complete missing steps.
+     */
+    public function resendCaseOrders(string $fingerprint, bool $cancelOld = false): void
+    {
+        $case = collect($this->errorCases)->firstWhere('fingerprint', $fingerprint);
+        if (!$case) {
+            Notification::make()->title('Error case not found')->danger()->send();
+
+            return;
+        }
+
+        $retry = app(WebhookRetryService::class);
+        $queued = 0;
+        $skipped = 0;
+        $seen = [];
+
+        foreach (($case['orders'] ?? []) as $row) {
+            $externalId = trim((string) ($row['external_id'] ?? ''));
+            if ($externalId === '' || isset($seen[$externalId])) {
+                continue;
+            }
+            $seen[$externalId] = true;
+
+            $order = OmnifulOrder::where('external_id', $externalId)->first();
+            if (!$order) {
+                $skipped++;
+                continue;
+            }
+            $result = $retry->forceResendOrder($order, $cancelOld);
+            ($result['ok'] ?? false) ? $queued++ : $skipped++;
+        }
+
+        Notification::make()
+            ->title('Resend queued')
+            ->body('Queued ' . $queued . ' order(s)' . ($skipped > 0 ? ', skipped ' . $skipped : '')
+                . ($cancelOld ? ' (cancel & reverse)' : '') . ' for: ' . (string) ($case['message'] ?? ''))
+            ->success()
+            ->send();
+
+        $this->loadDashboard();
     }
 
     private function loadDashboard(): void

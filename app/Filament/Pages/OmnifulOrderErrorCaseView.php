@@ -2,7 +2,10 @@
 
 namespace App\Filament\Pages;
 
+use App\Models\OmnifulOrder;
+use App\Services\Webhooks\WebhookRetryService;
 use App\Support\OrderErrorMonitoring;
+use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Support\Enums\Width;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -72,6 +75,61 @@ class OmnifulOrderErrorCaseView extends Page
     public function getTitle(): string
     {
         return 'Error Case';
+    }
+
+    /**
+     * Re-queue a single errored order's full SAP flow. $cancelOld reverses the
+     * existing invoice (credit memo + frees its order refs) then recreates clean.
+     */
+    public function resendOrder(string $externalId, bool $cancelOld = false): void
+    {
+        $externalId = trim($externalId);
+        $order = OmnifulOrder::where('external_id', $externalId)->first();
+        if (!$order) {
+            Notification::make()->title('Order not found')->body($externalId)->danger()->send();
+
+            return;
+        }
+
+        $result = app(WebhookRetryService::class)->forceResendOrder($order, $cancelOld);
+
+        Notification::make()
+            ->title(($result['ok'] ?? false) ? 'Resend queued' : 'Resend skipped')
+            ->body((string) ($result['message'] ?? ''))
+            ->{($result['ok'] ?? false) ? 'success' : 'warning'}()
+            ->send();
+    }
+
+    /**
+     * Re-queue every order currently listed in this case (after filters).
+     */
+    public function resendCaseOrders(bool $cancelOld = false): void
+    {
+        $retry = app(WebhookRetryService::class);
+        $queued = 0;
+        $skipped = 0;
+
+        foreach ($this->orders as $row) {
+            $externalId = trim((string) ($row['external_id'] ?? ''));
+            if ($externalId === '') {
+                $skipped++;
+                continue;
+            }
+            $order = OmnifulOrder::where('external_id', $externalId)->first();
+            if (!$order) {
+                $skipped++;
+                continue;
+            }
+            $result = $retry->forceResendOrder($order, $cancelOld);
+            ($result['ok'] ?? false) ? $queued++ : $skipped++;
+        }
+
+        Notification::make()
+            ->title('Resend queued for case')
+            ->body('Queued ' . $queued . ' order(s)' . ($skipped > 0 ? ', skipped ' . $skipped : '')
+                . ($cancelOld ? ' (cancel & reverse)' : ''))
+            ->success()
+            ->send();
     }
 
     public function getBreadcrumbs(): array

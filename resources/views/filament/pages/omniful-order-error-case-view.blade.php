@@ -91,8 +91,22 @@
 
         <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:20px;">
             <section class="oec-panel">
-                <div class="oec-panel-head">
+                <div class="oec-panel-head" style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
                     <div class="oec-title" style="font-size:18px;">Affected Orders</div>
+                    @if ($orders !== [])
+                        <div style="display:flex;gap:8px;">
+                            <button type="button" wire:click="resendCaseOrders(false)"
+                                wire:confirm="Resend ALL {{ count($orders) }} order(s) in this case (no cancel)?"
+                                style="padding:6px 12px;border-radius:8px;border:1px solid #2563eb;background:#2563eb;color:#fff;font-size:13px;cursor:pointer;">
+                                Resend all
+                            </button>
+                            <button type="button" wire:click="resendCaseOrders(true)"
+                                wire:confirm="Resend ALL {{ count($orders) }} order(s) AND reverse their existing SAP invoices? This is destructive."
+                                style="padding:6px 12px;border-radius:8px;border:1px solid #b91c1c;background:#fff;color:#b91c1c;font-size:13px;cursor:pointer;">
+                                Resend all + Cancel
+                            </button>
+                        </div>
+                    @endif
                 </div>
                 @if ($orders === [])
                     <div class="oec-body"><div class="oec-empty">No orders match the current filters.</div></div>
@@ -106,6 +120,7 @@
                                     <th>SKUs</th>
                                     <th>Statuses</th>
                                     <th>Last Event At</th>
+                                    <th>Resend</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -128,6 +143,22 @@
                                         </td>
                                         <td>Omniful: {{ $order['omniful_status'] ?: '-' }}<br>SAP: {{ $order['sap_status'] ?: '-' }}</td>
                                         <td>{{ $order['last_event_at'] ?: '-' }}</td>
+                                        <td>
+                                            <div style="display:flex;gap:6px;white-space:nowrap;">
+                                                <button type="button"
+                                                    wire:click="resendOrder('{{ $order['external_id'] }}', false)"
+                                                    wire:confirm="Resend order {{ $order['external_id'] }} (no cancel)?"
+                                                    style="padding:4px 10px;border-radius:6px;border:1px solid #2563eb;background:#2563eb;color:#fff;font-size:12px;cursor:pointer;">
+                                                    Resend
+                                                </button>
+                                                <button type="button"
+                                                    wire:click="resendOrder('{{ $order['external_id'] }}', true)"
+                                                    wire:confirm="Resend order {{ $order['external_id'] }} AND reverse its existing SAP invoice? This is destructive."
+                                                    style="padding:4px 10px;border-radius:6px;border:1px solid #b91c1c;background:#fff;color:#b91c1c;font-size:12px;cursor:pointer;">
+                                                    + Cancel
+                                                </button>
+                                            </div>
+                                        </td>
                                     </tr>
                                 @endforeach
                             </tbody>
