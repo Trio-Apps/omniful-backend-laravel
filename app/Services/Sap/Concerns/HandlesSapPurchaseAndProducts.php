@@ -4987,7 +4987,7 @@ trait HandlesSapPurchaseAndProducts
         }
         $escapedUdf = str_replace("'", "''", $udf);
         $escapedValue = str_replace("'", "''", $externalId);
-        $filter = rawurlencode("{$escapedUdf} eq '{$escapedValue}' or NumAtCard eq '{$escapedValue}'");
+        $filter = rawurlencode($this->buildOrderReferenceFilter($udf, $escapedUdf, $escapedValue));
         $response = $this->get("/Invoices?\$filter={$filter}&\$select=DocEntry&\$orderby=DocEntry desc&\$top=50");
 
         if (!$response->successful()) {
@@ -5020,6 +5020,28 @@ trait HandlesSapPurchaseAndProducts
      * the create proceed. ACTIVE invoices are NEVER touched here (the caller rebinds
      * those instead). Returns the number of cancelled invoices freed.
      */
+    /**
+     * OData filter matching every invoice that holds the order id in any field
+     * SAP's duplicate guards key on: the configured order UDF (U_omo), NumAtCard
+     * (the 999 guard), AND U_ZidId. CRITICAL: the SAP team's manual reversal renames
+     * U_omo to "<id> -Reverse" but LEAVES U_ZidId = "<id>", and the live (10002)
+     * guard matches on U_ZidId — so a reversed invoice keeps blocking fresh creates
+     * (-1116) until U_ZidId is also freed. Proven on SAP: an invoice with
+     * U_omo="X -Reverse" + U_ZidId="X" blocks a new "X"; freeing U_ZidId unblocks it.
+     */
+    private function buildOrderReferenceFilter(string $udf, string $escapedUdf, string $escapedValue): string
+    {
+        $conditions = [
+            "{$escapedUdf} eq '{$escapedValue}'",
+            "NumAtCard eq '{$escapedValue}'",
+        ];
+        if (strcasecmp($udf, 'U_ZidId') !== 0) {
+            $conditions[] = "U_ZidId eq '{$escapedValue}'";
+        }
+
+        return implode(' or ', $conditions);
+    }
+
     public function freeCancelledOrderInvoiceReferences(string $externalId): int
     {
         $externalId = trim($externalId);
@@ -5033,7 +5055,7 @@ trait HandlesSapPurchaseAndProducts
         }
         $escapedUdf = str_replace("'", "''", $udf);
         $escapedValue = str_replace("'", "''", $externalId);
-        $filter = rawurlencode("{$escapedUdf} eq '{$escapedValue}' or NumAtCard eq '{$escapedValue}'");
+        $filter = rawurlencode($this->buildOrderReferenceFilter($udf, $escapedUdf, $escapedValue));
         $response = $this->get("/Invoices?\$filter={$filter}&\$select=DocEntry,Cancelled,CancelStatus&\$orderby=DocEntry desc&\$top=50");
         if (!$response->successful()) {
             return 0;
