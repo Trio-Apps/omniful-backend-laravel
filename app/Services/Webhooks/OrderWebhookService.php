@@ -619,6 +619,65 @@ class OrderWebhookService
             return null;
         }
 
+        // No live (active) invoice owns this order, yet SAP rejected the create as a
+        // duplicate. The blocker is almost always a CANCELLED invoice the SAP team
+        // (or a prior reversal) cancelled but never renamed — our idempotency
+        // correctly skips it, but SAP's duplicate guards (10002 U_omo / 999
+        // NumAtCard) still see it. Free those cancelled invoices' order refs and
+        // retry the create ONCE. (Active invoices are never touched by the freeing
+        // step — those are the 'match' path above.) This is what was happening on
+        // replayed "shipped" events: the order's invoice was cancelled in SAP, the
+        // shipped event re-created it, and the cancelled copy blocked it (-1116).
+        $duplicateBody = strtolower((string) ($e->responseBody ?? ''));
+        $isDuplicateError = str_contains($duplicateBody, 'already exists')
+            || str_contains($duplicateBody, 'reference number already')
+            || str_contains($duplicateBody, '(10002)')
+            || str_contains($duplicateBody, '(999)');
+
+        if ($isDuplicateError && method_exists($client, 'freeCancelledOrderInvoiceReferences')) {
+            $freed = 0;
+            try {
+                $freed = (int) $client->freeCancelledOrderInvoiceReferences($externalId);
+            } catch (\Throwable $freeError) {
+                \Illuminate\Support\Facades\Log::warning('Free-cancelled-refs failed during duplicate recovery', [
+                    'order' => $externalId,
+                    'error' => $freeError->getMessage(),
+                ]);
+                $freed = 0;
+            }
+
+            if ($freed > 0) {
+                try {
+                    $retryResult = $client->createArReserveInvoiceFromOmnifulOrder($data, $externalId);
+                    if (($retryResult['ignored'] ?? false) !== true && !empty($retryResult['DocEntry'])) {
+                        $order->sap_status = 'created';
+                        $order->sap_doc_entry = (string) ($retryResult['DocEntry'] ?? '');
+                        $order->sap_doc_num = (string) ($retryResult['DocNum'] ?? '');
+                        $order->sap_error = null;
+                        $retryResult['ignored'] = false;
+                        $retryResult['created_during_follow_up'] = true;
+                        $retryResult['recovered_after_freeing_cancelled'] = $freed;
+                        $order->sap_order_response = $retryResult;
+                        $order->save();
+
+                        \Illuminate\Support\Facades\Log::info('AR invoice created after freeing cancelled duplicate blockers', [
+                            'order' => $externalId,
+                            'freed' => $freed,
+                            'doc_entry' => $retryResult['DocEntry'] ?? null,
+                        ]);
+
+                        return $retryResult;
+                    }
+                } catch (\Throwable $retryError) {
+                    \Illuminate\Support\Facades\Log::warning('AR invoice retry after freeing cancelled blockers failed', [
+                        'order' => $externalId,
+                        'error' => $retryError->getMessage(),
+                    ]);
+                    // fall through to the failure handling below
+                }
+            }
+        }
+
         $order->sap_status = 'failed';
         $order->sap_error = 'AR reserve invoice creation failed during follow-up event: ' . $e->getMessage();
         $order->sap_order_response = [

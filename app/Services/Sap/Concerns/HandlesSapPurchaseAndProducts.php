@@ -657,10 +657,13 @@ trait HandlesSapPurchaseAndProducts
         // reference with a suffix — our flow uses "-reversed", the SAP team uses
         // "-Cancel". A Comments/payload lookup can still surface them, so never
         // rebind one (match either suffix on U_omo or NumAtCard, case-insensitive).
+        // Match every reversal-suffix style: our flow uses "-reversed", the SAP
+        // team uses "-Reverse" (capital R, sometimes a leading space) or "-Cancel".
+        // "-reverse" matches both "-reverse" and "-reversed".
         $omoLower = strtolower((string) ($invoice[$orderUdf] ?? ''));
         $numLower = strtolower((string) ($invoice['NumAtCard'] ?? ''));
-        $isReversed = str_contains($omoLower, '-reversed') || str_contains($omoLower, '-cancel')
-            || str_contains($numLower, '-reversed') || str_contains($numLower, '-cancel');
+        $isReversed = str_contains($omoLower, '-reverse') || str_contains($omoLower, '-cancel')
+            || str_contains($numLower, '-reverse') || str_contains($numLower, '-cancel');
         if ((string) ($invoice['Cancelled'] ?? 'tNO') === 'tYES'
             || $cancelStatus === 'csYes'
             || $cancelStatus === 'csCancellation'
@@ -4854,8 +4857,8 @@ trait HandlesSapPurchaseAndProducts
 
         $omoVal = (string) ($invoice[$orderUdf] ?? '');
         $numAtCard = (string) ($invoice['NumAtCard'] ?? '');
-        $omoFreed = str_contains(strtolower($omoVal), '-reversed') || str_contains(strtolower($omoVal), '-cancel');
-        $numFreed = str_contains(strtolower($numAtCard), '-reversed') || str_contains(strtolower($numAtCard), '-cancel');
+        $omoFreed = str_contains(strtolower($omoVal), '-reverse') || str_contains(strtolower($omoVal), '-cancel');
+        $numFreed = str_contains(strtolower($numAtCard), '-reverse') || str_contains(strtolower($numAtCard), '-cancel');
 
         // Already freed (both order references already carry a reversal suffix) —
         // nothing left to free. ("-reversed" = our flow, "-Cancel" = SAP team.)
@@ -5005,6 +5008,77 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return $entries;
+    }
+
+    /**
+     * Free the order references on every CANCELLED/reversed invoice still holding
+     * the EXACT order id (U_omo or NumAtCard). SAP's duplicate guards (10002 on
+     * U_omo, 999 on NumAtCard) do NOT exclude cancelled invoices, so an invoice the
+     * SAP team cancelled-but-never-renamed silently blocks a fresh create with
+     * -1116 — while our idempotency lookup correctly skips it (so we can't rebind
+     * it either). Renaming those cancelled invoices' refs to "<id>-reversed" lets
+     * the create proceed. ACTIVE invoices are NEVER touched here (the caller rebinds
+     * those instead). Returns the number of cancelled invoices freed.
+     */
+    public function freeCancelledOrderInvoiceReferences(string $externalId): int
+    {
+        $externalId = trim($externalId);
+        if ($externalId === '') {
+            return 0;
+        }
+
+        $udf = trim((string) config('omniful.order_sync.order_number_udf_field', 'U_omo'));
+        if ($udf === '') {
+            $udf = 'U_omo';
+        }
+        $escapedUdf = str_replace("'", "''", $udf);
+        $escapedValue = str_replace("'", "''", $externalId);
+        $filter = rawurlencode("{$escapedUdf} eq '{$escapedValue}' or NumAtCard eq '{$escapedValue}'");
+        $response = $this->get("/Invoices?\$filter={$filter}&\$select=DocEntry,Cancelled,CancelStatus&\$orderby=DocEntry desc&\$top=50");
+        if (!$response->successful()) {
+            return 0;
+        }
+
+        $freed = 0;
+        foreach ((array) ($response->json('value') ?? []) as $row) {
+            if (!is_array($row) || empty($row['DocEntry'])) {
+                continue;
+            }
+
+            $isCancelled = (string) ($row['Cancelled'] ?? 'tNO') === 'tYES'
+                || in_array((string) ($row['CancelStatus'] ?? ''), ['csYes', 'csCancellation'], true);
+            if (!$isCancelled) {
+                // ACTIVE invoice still owns this order — never rename it here; the
+                // duplicate-recovery rebinds to it instead.
+                continue;
+            }
+
+            $docEntry = (int) $row['DocEntry'];
+            $newRef = $this->resolveFreeReversedInvoiceRef($udf, $externalId);
+            $patchBody = [$udf => $newRef, 'NumAtCard' => $newRef];
+            if ($udf !== 'U_ZidId') {
+                $patchBody['U_ZidId'] = $newRef;
+            }
+
+            $patch = $this->patch('/Invoices(' . $docEntry . ')', $patchBody);
+            if ($patch->successful() || $patch->status() === 204) {
+                $freed++;
+                Log::info('Freed cancelled invoice order refs to unblock fresh create', [
+                    'external_id' => $externalId,
+                    'doc_entry' => $docEntry,
+                    'new_ref' => $newRef,
+                ]);
+            } else {
+                Log::warning('Failed to free cancelled invoice order refs', [
+                    'external_id' => $externalId,
+                    'doc_entry' => $docEntry,
+                    'status' => $patch->status(),
+                    'body' => mb_substr((string) $patch->body(), 0, 300),
+                ]);
+            }
+        }
+
+        return $freed;
     }
 
     private function resolveFreeReversedInvoiceRef(string $udfField, string $externalId): string
