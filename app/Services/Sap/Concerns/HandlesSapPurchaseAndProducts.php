@@ -262,19 +262,13 @@ trait HandlesSapPurchaseAndProducts
             $orderCurrency = trim((string) data_get($data, 'invoice.exchange_rate.order_currency', $currency));
             $isForeignCurrency = $localCurrency !== '' && strtoupper($localCurrency) !== strtoupper($orderCurrency);
 
-            // Send Omniful's rate as DocRate on THIS document only. SAP uses the
-            // document DocRate (stored at 6dp) to book the receivable and to settle
-            // the incoming payment (which reuses this exact rate). We do NOT touch
-            // SAP's shared daily rate table — no system-wide rate change. SAP's
-            // table must already contain a rate for the date (live maintains it);
-            // if it is missing, a foreign payment returns "Update the exchange
-            // rate" and the SAP team maintains the table — we never write to it.
-            if ($isForeignCurrency) {
-                $orderRate = (float) data_get($data, 'invoice.exchange_rate.rate', 0);
-                if ($orderRate > 0) {
-                    $body['DocRate'] = $orderRate;
-                }
-            }
+            // We do NOT send DocRate and do NOT touch SAP's shared rate table.
+            // SAP converts the document to local currency using the rate it already
+            // holds in its maintained daily table for the date — the single source
+            // of truth. We impose no rate at all. (If the table has no rate for the
+            // date, SAP returns "Update the exchange rate" and the SAP team
+            // maintains it.) $isForeignCurrency is still used below to skip pinning
+            // DocTotalSys for foreign-currency documents.
         }
 
         $body = $this->appendOmnifulDocumentUdfs($body, $data, $externalId);
@@ -1025,15 +1019,12 @@ trait HandlesSapPurchaseAndProducts
             $body['DocCurrency'] = $invoiceCurrency;
             $docCurrencyIsSet = true;
         }
-        // Settle at the SAME rate the invoice was booked at: send the invoice's
-        // exact stored DocRate (6dp) on THIS payment document only. SAP uses this
-        // document DocRate for the conversion. We do NOT write to SAP's shared
-        // daily rate table — no system-wide rate change. (The table must already
-        // hold a rate for the date; if missing, SAP returns "Update the exchange
-        // rate" and the SAP team maintains it — we never write to it.)
-        if ($invoiceCurrency !== '' && $invoiceRate > 0 && $invoiceDocTotalFc > 0) {
-            $body['DocRate'] = $invoiceRate;
-        }
+        // We do NOT send DocRate on the payment. SAP settles it using the rate in
+        // its maintained daily table for the payment date — the same source the
+        // invoice used — so we impose no rate and never write to the shared table.
+        // (DocCurrency above is still set so SumApplied is read as the foreign
+        // amount; if the table lacks a rate for the date SAP returns "Update the
+        // exchange rate" and the SAP team maintains it.)
 
         $body = $this->appendOmnifulDocumentUdfs($body, $data, $reference);
 
