@@ -665,10 +665,14 @@ trait HandlesSapPurchaseAndProducts
         if ($orderUdf === '') {
             $orderUdf = 'U_omo';
         }
-        // Also skip invoices we have reversed: the reversal renames the order UDF
-        // to "<id>-reversed", but a Comments/payload lookup can still surface them.
-        $isReversed = str_contains((string) ($invoice[$orderUdf] ?? ''), '-reversed')
-            || str_contains((string) ($invoice['NumAtCard'] ?? ''), '-reversed');
+        // Also skip invoices that were reversed/cancelled by renaming the order
+        // reference with a suffix — our flow uses "-reversed", the SAP team uses
+        // "-Cancel". A Comments/payload lookup can still surface them, so never
+        // rebind one (match either suffix on U_omo or NumAtCard, case-insensitive).
+        $omoLower = strtolower((string) ($invoice[$orderUdf] ?? ''));
+        $numLower = strtolower((string) ($invoice['NumAtCard'] ?? ''));
+        $isReversed = str_contains($omoLower, '-reversed') || str_contains($omoLower, '-cancel')
+            || str_contains($numLower, '-reversed') || str_contains($numLower, '-cancel');
         if ((string) ($invoice['Cancelled'] ?? 'tNO') === 'tYES'
             || $cancelStatus === 'csYes'
             || $cancelStatus === 'csCancellation'
@@ -4811,9 +4815,12 @@ trait HandlesSapPurchaseAndProducts
 
         $omoVal = (string) ($invoice[$orderUdf] ?? '');
         $numAtCard = (string) ($invoice['NumAtCard'] ?? '');
+        $omoFreed = str_contains(strtolower($omoVal), '-reversed') || str_contains(strtolower($omoVal), '-cancel');
+        $numFreed = str_contains(strtolower($numAtCard), '-reversed') || str_contains(strtolower($numAtCard), '-cancel');
 
-        // Already freed (both order references renamed) — nothing to do.
-        if (str_contains($omoVal, '-reversed') && str_contains($numAtCard, '-reversed')) {
+        // Already freed (both order references already carry a reversal suffix) —
+        // nothing left to free. ("-reversed" = our flow, "-Cancel" = SAP team.)
+        if ($omoFreed && $numFreed) {
             return ['ok' => true, 'already' => true, 'reason' => 'Invoice order refs already freed'];
         }
 
