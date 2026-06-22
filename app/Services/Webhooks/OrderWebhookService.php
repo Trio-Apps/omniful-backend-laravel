@@ -822,6 +822,36 @@ class OrderWebhookService
             return;
         }
 
+        // Zero-total order (e.g. a 100%-discount / fully-promo order): the AR
+        // reserve invoice posts at total 0 and is closed on creation, so there is
+        // nothing to collect — creating an incoming payment for it fails with
+        // -10 "Invoice is already closed or blocked". Skip the payment as
+        // 'ignored' (NOT 'failed') so the order completes cleanly (invoice +
+        // delivery + COGS) and no error lingers on the dashboard. The invoice's
+        // own DocTotal is the authoritative net amount; fall back to the payload.
+        $invoiceNetTotal = null;
+        foreach ([
+            data_get($invoiceResult ?? [], 'DocTotal'),
+            data_get($data, 'invoice.total'),
+            data_get($data, 'invoice.total_paid'),
+        ] as $candidate) {
+            if (is_numeric($candidate)) {
+                $invoiceNetTotal = (float) $candidate;
+                break;
+            }
+        }
+        if ($invoiceNetTotal !== null && $invoiceNetTotal <= 0.0) {
+            $order->sap_payment_status = 'ignored';
+            $order->sap_payment_error = 'Ignored: order total is 0 — no incoming payment to collect';
+            $order->sap_payment_response = [
+                'ignored' => true,
+                'reason' => 'Incoming payment skipped: order total is 0 (nothing to collect)',
+            ];
+            $order->save();
+
+            return;
+        }
+
         $client = app(SapServiceLayerClient::class);
         try {
             $paymentMethod = $this->resolvePaymentMethod($data);
