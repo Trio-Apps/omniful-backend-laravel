@@ -262,23 +262,17 @@ trait HandlesSapPurchaseAndProducts
             $orderCurrency = trim((string) data_get($data, 'invoice.exchange_rate.order_currency', $currency));
             $isForeignCurrency = $localCurrency !== '' && strtoupper($localCurrency) !== strtoupper($orderCurrency);
 
-            // Send Omniful's rate as DocRate on the invoice. PROVEN on SAP: the
-            // document DocRate (stored at 6dp) is what SAP uses to book the
-            // receivable AND to settle the incoming payment — it ignores its own
-            // daily table rate for the conversion. The payment reuses this exact
-            // stored rate (salesDoc.DocRate), so receivable and payment land on the
-            // SAME local amount → no realized FX → no -5002 on G/L 4101005.
-            //
-            // We do NOT write to SAP's shared rate table; it only needs to CONTAIN
-            // a rate for the date (required for a foreign payment to post at all),
-            // which live maintains. ensureSapDailyCurrencyRate only FILLS a missing
-            // date — it never overwrites a maintained rate (the doc DocRate drives
-            // the actual conversion regardless of the table value).
+            // Send Omniful's rate as DocRate on THIS document only. SAP uses the
+            // document DocRate (stored at 6dp) to book the receivable and to settle
+            // the incoming payment (which reuses this exact rate). We do NOT touch
+            // SAP's shared daily rate table — no system-wide rate change. SAP's
+            // table must already contain a rate for the date (live maintains it);
+            // if it is missing, a foreign payment returns "Update the exchange
+            // rate" and the SAP team maintains the table — we never write to it.
             if ($isForeignCurrency) {
                 $orderRate = (float) data_get($data, 'invoice.exchange_rate.rate', 0);
                 if ($orderRate > 0) {
                     $body['DocRate'] = $orderRate;
-                    $this->ensureSapDailyCurrencyRate($currency, $orderRate, $docDate);
                 }
             }
         }
@@ -1032,17 +1026,13 @@ trait HandlesSapPurchaseAndProducts
             $docCurrencyIsSet = true;
         }
         // Settle at the SAME rate the invoice was booked at: send the invoice's
-        // exact stored DocRate (6dp) on the payment. SAP uses this document
-        // DocRate for the conversion (NOT its daily table rate), so the payment
-        // closes the receivable to the cent (PaidToDate == DocTotalSys) with no
-        // realized exchange difference → no -5002 on G/L 4101005. Verified on SAP
-        // with the table deliberately set to a different rate.
+        // exact stored DocRate (6dp) on THIS payment document only. SAP uses this
+        // document DocRate for the conversion. We do NOT write to SAP's shared
+        // daily rate table — no system-wide rate change. (The table must already
+        // hold a rate for the date; if missing, SAP returns "Update the exchange
+        // rate" and the SAP team maintains it — we never write to it.)
         if ($invoiceCurrency !== '' && $invoiceRate > 0 && $invoiceDocTotalFc > 0) {
             $body['DocRate'] = $invoiceRate;
-            // Ensure a rate merely EXISTS for the date (required for a foreign
-            // payment to post). Fills a missing date only; never overwrites a
-            // maintained rate — the doc DocRate above drives the conversion.
-            $this->ensureSapDailyCurrencyRate($invoiceCurrency, $invoiceRate, $transferDate);
         }
 
         $body = $this->appendOmnifulDocumentUdfs($body, $data, $reference);
@@ -4679,81 +4669,6 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return in_array($value, $allowed, true);
-    }
-
-    /**
-     * Ensure SAP's currency rate table CONTAINS a rate for the currency/date — a
-     * foreign-currency payment refuses to post without one ("Update the exchange
-     * rate"). Only FILLS a missing rate; never overwrites a maintained one, since
-     * the document's own DocRate (not this table value) drives the conversion.
-     */
-    private function ensureSapDailyCurrencyRate(string $currency, float $rate, string $date): void
-    {
-        if ($this->sapDailyCurrencyRateExists($currency, $date)) {
-            return;
-        }
-
-        $this->setSapDailyCurrencyRate($currency, $rate, $date);
-    }
-
-    private function sapDailyCurrencyRateExists(string $currency, string $date): bool
-    {
-        $currency = strtoupper(trim($currency));
-        $date = trim($date);
-        if ($currency === '' || $date === '') {
-            return false;
-        }
-
-        $response = $this->post('/SBOBobService_GetCurrencyRate', [
-            'Currency' => $currency,
-            'Date' => $date,
-        ]);
-
-        if (!$response->successful()) {
-            return false;
-        }
-
-        return (float) trim((string) $response->body()) > 0;
-    }
-
-    /**
-     * Push a daily exchange rate into SAP's currency rate table for a date (used
-     * only to FILL a missing rate via ensureSapDailyCurrencyRate).
-     *
-     * Best-effort: a failure is logged, not thrown — the document create that
-     * follows surfaces the real error if the rate is genuinely unusable.
-     */
-    private function setSapDailyCurrencyRate(string $currency, float $rate, string $date): void
-    {
-        $currency = strtoupper(trim($currency));
-        $date = trim($date);
-        if ($currency === '' || $rate <= 0 || $date === '') {
-            return;
-        }
-
-        $response = $this->post('/SBOBobService_SetCurrencyRate', [
-            'Currency' => $currency,
-            'Rate' => $rate,
-            'RateDate' => $date,
-        ]);
-
-        if ($response->successful() || $response->status() === 204) {
-            Log::info('SAP daily currency rate set', [
-                'currency' => $currency,
-                'rate' => $rate,
-                'date' => $date,
-            ]);
-
-            return;
-        }
-
-        Log::warning('SAP SetCurrencyRate failed', [
-            'currency' => $currency,
-            'rate' => $rate,
-            'date' => $date,
-            'status' => $response->status(),
-            'body' => $response->body(),
-        ]);
     }
 
     private function getSalesOrder(int $docEntry): array
