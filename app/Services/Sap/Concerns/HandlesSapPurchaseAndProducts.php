@@ -2092,6 +2092,26 @@ trait HandlesSapPurchaseAndProducts
     }
 
     /**
+     * True only if the given Delivery Note DocEntry still exists AND is active
+     * (not cancelled / not a cancellation doc). Used to detect a stale local
+     * delivery reference left behind by a manual SAP cancel, so the flow can
+     * clear it and create a fresh delivery instead of skipping forever.
+     */
+    public function deliveryDocEntryIsActive(int $docEntry): bool
+    {
+        if ($docEntry <= 0) {
+            return false;
+        }
+
+        $response = $this->get("/DeliveryNotes({$docEntry})?\$select=DocEntry,Cancelled,CancelStatus");
+        if (!$response->successful()) {
+            return false;
+        }
+
+        return !$this->isCancelledDeliveryRow((array) ($response->json() ?? []));
+    }
+
+    /**
      * Verify that an existing Delivery Note in SAP actually belongs to this
      * Omniful order. Matches against UDFs first, then against BaseEntry on
      * the document lines (the delivery must reference our AR reserve invoice

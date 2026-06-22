@@ -1374,11 +1374,33 @@ class OrderWebhookService
     private function createDeliveryIfEligible(OmnifulOrder $order, array $data): void
     {
         if (!empty($order->sap_delivery_doc_entry)) {
-            if ((string) $order->sap_delivery_status === '') {
-                $order->sap_delivery_status = 'created';
-                $order->save();
+            // Trust the recorded delivery ONLY if it is still active in SAP. A
+            // manual SAP cancel (or a teardown elsewhere) leaves a stale ref
+            // pointing at a cancelled / csCancellation doc — without this check we
+            // would skip creating a real delivery forever (DB says created while
+            // SAP has none). If it's gone/cancelled, clear the ref and recreate.
+            $deliveryClient = app(SapServiceLayerClient::class);
+            $stillActive = !method_exists($deliveryClient, 'deliveryDocEntryIsActive')
+                || $deliveryClient->deliveryDocEntryIsActive((int) $order->sap_delivery_doc_entry);
+
+            if ($stillActive) {
+                if ((string) $order->sap_delivery_status === '') {
+                    $order->sap_delivery_status = 'created';
+                    $order->save();
+                }
+                return;
             }
-            return;
+
+            \Illuminate\Support\Facades\Log::info('Stale delivery ref (cancelled in SAP) — clearing to recreate', [
+                'order' => $order->external_id,
+                'stale_delivery_doc_entry' => $order->sap_delivery_doc_entry,
+            ]);
+            $order->forceFill([
+                'sap_delivery_doc_entry' => null,
+                'sap_delivery_doc_num' => null,
+                'sap_delivery_status' => null,
+                'sap_delivery_error' => null,
+            ])->save();
         }
 
         $invoiceDocEntry = (int) ($order->sap_doc_entry ?? 0);
