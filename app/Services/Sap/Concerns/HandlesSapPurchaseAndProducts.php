@@ -5148,6 +5148,72 @@ trait HandlesSapPurchaseAndProducts
         return $freed;
     }
 
+    /**
+     * Free the order references on every CANCELLED/reversed Delivery Note still
+     * holding the order id. Mirrors freeCancelledOrderInvoiceReferences: SAP's
+     * (10002) "Delivery already exists" guard keys on U_ZidId, so a cancelled
+     * delivery the team never renamed blocks a fresh delivery (-1116). Renames the
+     * cancelled deliveries' U_omo + U_ZidId to "<id>-reversed-<docEntry>" (unique,
+     * no collision) so the new delivery can post. ACTIVE deliveries are untouched.
+     */
+    public function freeCancelledOrderDeliveryReferences(string $externalId): int
+    {
+        $externalId = trim($externalId);
+        if ($externalId === '') {
+            return 0;
+        }
+
+        $udf = trim((string) config('omniful.order_sync.order_number_udf_field', 'U_omo'));
+        if ($udf === '') {
+            $udf = 'U_omo';
+        }
+        $escapedUdf = str_replace("'", "''", $udf);
+        $escapedValue = str_replace("'", "''", $externalId);
+        $filter = rawurlencode($this->buildOrderReferenceFilter($udf, $escapedUdf, $escapedValue));
+        $response = $this->get("/DeliveryNotes?\$filter={$filter}&\$select=DocEntry,Cancelled,CancelStatus&\$orderby=DocEntry desc&\$top=50");
+        if (!$response->successful()) {
+            return 0;
+        }
+
+        $freed = 0;
+        foreach ((array) ($response->json('value') ?? []) as $row) {
+            if (!is_array($row) || empty($row['DocEntry'])) {
+                continue;
+            }
+            $isCancelled = (string) ($row['Cancelled'] ?? 'tNO') === 'tYES'
+                || in_array((string) ($row['CancelStatus'] ?? ''), ['csYes', 'csCancellation'], true);
+            if (!$isCancelled) {
+                continue;
+            }
+
+            $docEntry = (int) $row['DocEntry'];
+            $newRef = $externalId . '-reversed-' . $docEntry;
+            $patchBody = [$udf => $newRef];
+            if (strcasecmp($udf, 'U_ZidId') !== 0) {
+                $patchBody['U_ZidId'] = $newRef;
+            }
+
+            $patch = $this->patch('/DeliveryNotes(' . $docEntry . ')', $patchBody);
+            if ($patch->successful() || $patch->status() === 204) {
+                $freed++;
+                Log::info('Freed cancelled delivery order refs to unblock fresh create', [
+                    'external_id' => $externalId,
+                    'doc_entry' => $docEntry,
+                    'new_ref' => $newRef,
+                ]);
+            } else {
+                Log::warning('Failed to free cancelled delivery order refs', [
+                    'external_id' => $externalId,
+                    'doc_entry' => $docEntry,
+                    'status' => $patch->status(),
+                    'body' => mb_substr((string) $patch->body(), 0, 300),
+                ]);
+            }
+        }
+
+        return $freed;
+    }
+
     private function resolveFreeReversedInvoiceRef(string $udfField, string $externalId): string
     {
         $base = $externalId . '-reversed';

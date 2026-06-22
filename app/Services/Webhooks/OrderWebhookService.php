@@ -1454,6 +1454,59 @@ class OrderWebhookService
                 return;
             }
 
+            // Same duplicate-guard issue as invoices, on DeliveryNotes: the (10002)
+            // guard keys on U_ZidId, so a cancelled delivery the team never renamed
+            // keeps blocking a fresh one (-1116 "Delivery already exists"). No active
+            // delivery was found above — free the cancelled deliveries' refs and
+            // retry the create once.
+            $deliveryDupBody = strtolower((string) ($e->responseBody ?? ''));
+            $isDeliveryDuplicate = str_contains($deliveryDupBody, 'already exists')
+                || str_contains($deliveryDupBody, '(10002)')
+                || str_contains($deliveryDupBody, '(999)');
+
+            if ($isDeliveryDuplicate && method_exists($client, 'freeCancelledOrderDeliveryReferences')) {
+                $freed = 0;
+                try {
+                    $freed = (int) $client->freeCancelledOrderDeliveryReferences((string) ($order->external_id ?? ''));
+                } catch (\Throwable $freeErr) {
+                    $freed = 0;
+                }
+
+                if ($freed > 0) {
+                    try {
+                        $retryDelivery = $client->createDeliveryFromReserveOrder([
+                            'order_doc_entry' => $invoiceDocEntry,
+                            'hub_code' => data_get($data, 'hub_code'),
+                            'external_id' => (string) ($order->external_id ?? ''),
+                            'order_items' => (array) data_get($data, 'order_items', []),
+                        ]);
+                        if (($retryDelivery['ignored'] ?? false) !== true && !empty($retryDelivery['DocEntry'])) {
+                            $order->sap_delivery_status = 'created';
+                            $order->sap_delivery_doc_entry = (string) ($retryDelivery['DocEntry'] ?? '');
+                            $order->sap_delivery_doc_num = (string) ($retryDelivery['DocNum'] ?? '');
+                            $order->sap_delivery_error = null;
+                            $retryDelivery['ignored'] = false;
+                            $retryDelivery['recovered_after_freeing_cancelled'] = $freed;
+                            $order->sap_delivery_response = $retryDelivery;
+                            $order->save();
+
+                            \Illuminate\Support\Facades\Log::info('Delivery created after freeing cancelled duplicate blockers', [
+                                'order' => $order->external_id,
+                                'freed' => $freed,
+                                'doc_entry' => $retryDelivery['DocEntry'] ?? null,
+                            ]);
+
+                            return;
+                        }
+                    } catch (\Throwable $retryErr) {
+                        \Illuminate\Support\Facades\Log::warning('Delivery retry after freeing cancelled blockers failed', [
+                            'order' => $order->external_id,
+                            'error' => $retryErr->getMessage(),
+                        ]);
+                    }
+                }
+            }
+
             $order->sap_delivery_status = 'failed';
             $order->sap_delivery_error = $e->getMessage();
             $order->sap_delivery_response = [
