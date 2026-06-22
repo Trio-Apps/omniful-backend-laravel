@@ -4779,6 +4779,138 @@ trait HandlesSapPurchaseAndProducts
     }
 
     /**
+     * Tear down every POSTED dependent document of an order so its AR reserve
+     * invoice can be reversed and the whole flow rebuilt clean (used by the
+     * "Resend Order by ID" + "cancel old" path). Cancels in reverse-dependency
+     * order: incoming payment (closes the invoice) -> delivery note (draws stock)
+     * -> COGS journal entry. The invoice itself is reversed afterwards by
+     * reverseArReserveInvoiceForResend(). Every cancel is best-effort + logged.
+     *
+     * Verified end-to-end on the test company: cancel COGS (204) + cancel delivery
+     * (204) + credit-memo invoice (201) + free refs (204) -> fresh create (201).
+     *
+     * @return array{payments:int,deliveries:int,cogs:int}
+     */
+    public function tearDownOrderDependentsForResend(string $externalId): array
+    {
+        $externalId = trim($externalId);
+        $summary = ['payments' => 0, 'deliveries' => 0, 'cogs' => 0];
+        if ($externalId === '') {
+            return $summary;
+        }
+
+        $udf = trim((string) config('omniful.order_sync.order_number_udf_field', 'U_omo'));
+        if ($udf === '') {
+            $udf = 'U_omo';
+        }
+
+        foreach ($this->findActiveSapDocEntriesByUdf('/IncomingPayments', $udf, $externalId) as $entry) {
+            if ($this->cancelSapDocumentByKey('/IncomingPayments', $entry)) {
+                $summary['payments']++;
+            }
+        }
+
+        foreach ($this->findActiveSapDocEntriesByUdf('/DeliveryNotes', $udf, $externalId) as $entry) {
+            if ($this->cancelSapDocumentByKey('/DeliveryNotes', $entry)) {
+                $summary['deliveries']++;
+            }
+        }
+
+        foreach ($this->findOrderCogsJournalKeys($externalId) as $jdtNum) {
+            if ($this->cancelSapDocumentByKey('/JournalEntries', $jdtNum)) {
+                $summary['cogs']++;
+            }
+        }
+
+        Log::info('Resend teardown of order dependents complete', array_merge(['order' => $externalId], $summary));
+
+        return $summary;
+    }
+
+    /**
+     * Active (not-cancelled) DocEntries of a document type carrying the order id
+     * in the given order UDF.
+     *
+     * @return array<int,int>
+     */
+    private function findActiveSapDocEntriesByUdf(string $entity, string $udfField, string $value): array
+    {
+        $escField = str_replace("'", "''", $udfField);
+        $escValue = str_replace("'", "''", $value);
+        $filter = rawurlencode("{$escField} eq '{$escValue}'");
+        $response = $this->get("{$entity}?\$filter={$filter}&\$select=DocEntry,Cancelled&\$orderby=DocEntry desc&\$top=50");
+        if (!$response->successful()) {
+            return [];
+        }
+
+        $entries = [];
+        foreach ((array) ($response->json('value') ?? []) as $row) {
+            if (!is_array($row) || empty($row['DocEntry'])) {
+                continue;
+            }
+            if ((string) ($row['Cancelled'] ?? 'tNO') === 'tYES') {
+                continue;
+            }
+            $entries[] = (int) $row['DocEntry'];
+        }
+
+        return $entries;
+    }
+
+    /**
+     * JdtNum keys of the COGS journal entries posted for an order (Reference2 is
+     * stamped "COGS-<order>" by the COGS journal builder).
+     *
+     * @return array<int,int>
+     */
+    private function findOrderCogsJournalKeys(string $externalId): array
+    {
+        $ref2 = $this->buildJournalRef2('COGS', $externalId);
+        $escValue = str_replace("'", "''", $ref2);
+        $filter = rawurlencode("Reference2 eq '{$escValue}'");
+        $response = $this->get("/JournalEntries?\$filter={$filter}&\$select=JdtNum&\$orderby=JdtNum desc&\$top=50");
+        if (!$response->successful()) {
+            return [];
+        }
+
+        $keys = [];
+        foreach ((array) ($response->json('value') ?? []) as $row) {
+            if (is_array($row) && !empty($row['JdtNum'])) {
+                $keys[] = (int) $row['JdtNum'];
+            }
+        }
+
+        return $keys;
+    }
+
+    /**
+     * Cancel a posted SAP document via the Service Layer Cancel action
+     * (/{Entity}({key})/Cancel). Best-effort: logs and returns false on failure.
+     */
+    private function cancelSapDocumentByKey(string $entity, int $key): bool
+    {
+        if ($key <= 0) {
+            return false;
+        }
+
+        $response = $this->post("{$entity}({$key})/Cancel", (object) []);
+        if ($response->successful() || $response->status() === 204) {
+            Log::info('SAP document cancelled (resend teardown)', ['entity' => $entity, 'key' => $key]);
+
+            return true;
+        }
+
+        Log::warning('SAP document cancel failed (resend teardown)', [
+            'entity' => $entity,
+            'key' => $key,
+            'status' => $response->status(),
+            'body' => mb_substr((string) $response->body(), 0, 300),
+        ]);
+
+        return false;
+    }
+
+    /**
      * Reverse a posted AR Reserve Invoice the same way the SAP team does manually,
      * so the manual "Resend Order by ID" flow can replace a stale invoice (e.g.
      * wrong exchange rate) — SAP does not allow editing a posted invoice's
@@ -4792,7 +4924,8 @@ trait HandlesSapPurchaseAndProducts
      *      -1/-2 ... suffix if that value is already taken) so the idempotency
      *      lookup no longer matches it and a fresh invoice gets created.
      *
-     * Caller must only invoke this when the invoice has no successful dependents.
+     * Run tearDownOrderDependentsForResend() FIRST to cancel any payment /
+     * delivery / COGS so the invoice is open and reversible.
      *
      * @return array{ok:bool,reason?:string,credit_memo?:array,new_ref?:string,already?:bool}
      */

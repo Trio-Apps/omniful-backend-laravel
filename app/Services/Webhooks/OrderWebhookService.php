@@ -269,77 +269,81 @@ class OrderWebhookService
             // guards still see them and block a new create. So when $cancelOld is
             // set we ALWAYS run the order-reference scan + free, independently.
             if ($force && $cancelOld) {
-                $hasDependents = !empty($order->sap_payment_doc_entry)
-                    || !empty($order->sap_delivery_doc_entry)
-                    || !empty($order->sap_cogs_journal_entry);
-
-                if ($hasDependents) {
-                    \Illuminate\Support\Facades\Log::warning('Resend: invoice reversal skipped (has dependents); rebinding only', [
+                // COMPLETE teardown + clean rebuild. First cancel every POSTED
+                // dependent (incoming payment, delivery note, COGS journal) so the
+                // invoice is open and reversible and nothing is left double-counted.
+                try {
+                    $teardown = $client->tearDownOrderDependentsForResend($externalId);
+                    \Illuminate\Support\Facades\Log::info('Resend: order dependents torn down', array_merge(
+                        ['order' => $externalId],
+                        $teardown,
+                    ));
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::warning('Resend: dependent teardown error (continuing)', [
                         'order' => $externalId,
-                        'doc_entry' => $recoveredInvoice['DocEntry'] ?? null,
-                        'has_payment' => !empty($order->sap_payment_doc_entry),
-                        'has_delivery' => !empty($order->sap_delivery_doc_entry),
-                        'has_cogs' => !empty($order->sap_cogs_journal_entry),
+                        'error' => $e->getMessage(),
                     ]);
-                } else {
-                    // Free EVERY invoice still holding this order's reference, in
-                    // ANY state. SAP has two custom duplicate guards (on U_omo and
-                    // on NumAtCard) that do NOT exclude cancelled invoices, so a new
-                    // invoice is blocked while ANY old one — even a cancelled one —
-                    // still carries the order id. reverseArReserveInvoiceForResend
-                    // credit-memos active invoices and renames the order refs on all
-                    // of them; once all are freed the fresh create succeeds.
-                    $docEntries = $client->findOrderInvoiceDocEntriesHoldingReference($externalId);
-                    foreach ($docEntries as $docEntry) {
-                        try {
-                            $reversal = $client->reverseArReserveInvoiceForResend((int) $docEntry, $externalId);
-                        } catch (\Throwable $e) {
-                            $order->sap_status = 'failed';
-                            $order->sap_error = 'Resend: failed to reverse AR invoice DocEntry '
-                                . (string) $docEntry . ' — ' . $e->getMessage();
-                            $order->save();
+                }
 
-                            return;
-                        }
+                // Then free EVERY invoice still holding this order's reference, in
+                // ANY state. SAP has two custom duplicate guards (on U_omo and on
+                // NumAtCard) that do NOT exclude cancelled invoices, so a new invoice
+                // is blocked while ANY old one — even a cancelled one — still carries
+                // the order id. reverseArReserveInvoiceForResend credit-memos active
+                // invoices and renames the order refs on all of them; once all are
+                // freed the fresh create succeeds. (We do NOT gate this on
+                // findExisting returning an invoice — for a fully cancelled/reversed
+                // order findExisting returns null yet SAP's guards still block.)
+                $docEntries = $client->findOrderInvoiceDocEntriesHoldingReference($externalId);
+                foreach ($docEntries as $docEntry) {
+                    try {
+                        $reversal = $client->reverseArReserveInvoiceForResend((int) $docEntry, $externalId);
+                    } catch (\Throwable $e) {
+                        $order->sap_status = 'failed';
+                        $order->sap_error = 'Resend: failed to reverse AR invoice DocEntry '
+                            . (string) $docEntry . ' — ' . $e->getMessage();
+                        $order->save();
 
-                        if (($reversal['ok'] ?? false) !== true) {
-                            $order->sap_status = 'failed';
-                            $order->sap_error = 'Resend: invoice reversal not completed for DocEntry '
-                                . (string) $docEntry . ' — ' . (string) ($reversal['reason'] ?? 'unknown');
-                            $order->save();
-
-                            return;
-                        }
-
-                        \Illuminate\Support\Facades\Log::info('Resend: AR invoice freed for recreation', [
-                            'order' => $externalId,
-                            'old_doc_entry' => $docEntry,
-                            'credit_memo' => $reversal['credit_memo']['DocEntry'] ?? null,
-                            'new_ref' => $reversal['new_ref'] ?? null,
-                            'already' => $reversal['already'] ?? false,
-                        ]);
+                        return;
                     }
 
-                    // Everything holding the order reference is freed (or there was
-                    // nothing). Clear local refs so the create path issues a fresh
-                    // invoice + follow-ups.
-                    $order->forceFill([
-                        'sap_doc_entry' => null,
-                        'sap_doc_num' => null,
-                        'sap_payment_status' => null,
-                        'sap_payment_doc_entry' => null,
-                        'sap_payment_doc_num' => null,
-                        'sap_delivery_status' => null,
-                        'sap_delivery_doc_entry' => null,
-                        'sap_delivery_doc_num' => null,
-                        'sap_cogs_status' => null,
-                        'sap_cogs_journal_entry' => null,
-                        'sap_cogs_journal_num' => null,
-                    ])->save();
+                    if (($reversal['ok'] ?? false) !== true) {
+                        $order->sap_status = 'failed';
+                        $order->sap_error = 'Resend: invoice reversal not completed for DocEntry '
+                            . (string) $docEntry . ' — ' . (string) ($reversal['reason'] ?? 'unknown');
+                        $order->save();
 
-                    // Treat as if no invoice exists so the create path runs.
-                    $recoveredInvoice = null;
+                        return;
+                    }
+
+                    \Illuminate\Support\Facades\Log::info('Resend: AR invoice freed for recreation', [
+                        'order' => $externalId,
+                        'old_doc_entry' => $docEntry,
+                        'credit_memo' => $reversal['credit_memo']['DocEntry'] ?? null,
+                        'new_ref' => $reversal['new_ref'] ?? null,
+                        'already' => $reversal['already'] ?? false,
+                    ]);
                 }
+
+                // Everything holding the order reference is freed (or there was
+                // nothing). Clear local refs so the create path issues a fresh
+                // invoice + follow-ups.
+                $order->forceFill([
+                    'sap_doc_entry' => null,
+                    'sap_doc_num' => null,
+                    'sap_payment_status' => null,
+                    'sap_payment_doc_entry' => null,
+                    'sap_payment_doc_num' => null,
+                    'sap_delivery_status' => null,
+                    'sap_delivery_doc_entry' => null,
+                    'sap_delivery_doc_num' => null,
+                    'sap_cogs_status' => null,
+                    'sap_cogs_journal_entry' => null,
+                    'sap_cogs_journal_num' => null,
+                ])->save();
+
+                // Treat as if no invoice exists so the create path runs.
+                $recoveredInvoice = null;
             }
 
             if (is_array($recoveredInvoice) && !empty($recoveredInvoice['DocEntry'])) {
