@@ -2025,7 +2025,7 @@ trait HandlesSapPurchaseAndProducts
                 $filter = rawurlencode("{$escapedField} eq '{$escapedValue}'");
                 // No $select: missing UDFs on this tenant would collapse the
                 // query. Fetch all fields and read them defensively.
-                $response = $this->get("/DeliveryNotes?\$filter={$filter}&\$orderby=DocEntry desc&\$top=1");
+                $response = $this->get("/DeliveryNotes?\$filter={$filter}&\$orderby=DocEntry desc&\$top=20");
                 if (!$response->successful()) {
                     Log::warning('SAP delivery UDF lookup failed', [
                         'field' => $field,
@@ -2035,8 +2035,8 @@ trait HandlesSapPurchaseAndProducts
                     continue;
                 }
                 $rows = (array) ($response->json('value') ?? []);
-                $delivery = $rows[0] ?? null;
-                if (is_array($delivery) && !empty($delivery['DocEntry'])) {
+                $delivery = $this->firstActiveDeliveryRow($rows);
+                if ($delivery !== null) {
                     return $delivery;
                 }
             }
@@ -2050,8 +2050,8 @@ trait HandlesSapPurchaseAndProducts
             $response = $this->get("/DeliveryNotes?\$filter={$filter}&\$orderby=DocEntry desc&\$top=1");
             if ($response->successful()) {
                 $rows = (array) ($response->json('value') ?? []);
-                $delivery = $rows[0] ?? null;
-                if (is_array($delivery) && !empty($delivery['DocEntry'])) {
+                $delivery = $this->firstActiveDeliveryRow($rows);
+                if ($delivery !== null) {
                     return $delivery;
                 }
             } else {
@@ -2064,6 +2064,31 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return null;
+    }
+
+    /**
+     * Return the first NON-cancelled delivery from a result set. SAP's Cancel
+     * action turns the original into csYes and spawns a csCancellation reversal
+     * doc — both keep the order UDFs/BaseEntry, so a naive "top-1 by DocEntry
+     * desc" lookup returns the cancellation document and the flow records a dead
+     * delivery (DB shows created while SAP has no active delivery). Skipping them
+     * forces a fresh, active delivery to be created instead.
+     */
+    private function firstActiveDeliveryRow(array $rows): ?array
+    {
+        foreach ($rows as $row) {
+            if (is_array($row) && !empty($row['DocEntry']) && !$this->isCancelledDeliveryRow($row)) {
+                return $row;
+            }
+        }
+
+        return null;
+    }
+
+    private function isCancelledDeliveryRow(array $delivery): bool
+    {
+        return (string) ($delivery['Cancelled'] ?? 'tNO') === 'tYES'
+            || in_array((string) ($delivery['CancelStatus'] ?? ''), ['csYes', 'csCancellation'], true);
     }
 
     /**
