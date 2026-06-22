@@ -404,7 +404,7 @@ class OrderErrorMonitoring
                 'field' => $stage['error'],
                 'stage' => $stage['label'],
                 'message' => $parsed['message'],
-                'fingerprint' => Str::lower($parsed['message']),
+                'fingerprint' => $this->fingerprintForMessage($parsed['message']),
             ];
         }
 
@@ -418,6 +418,18 @@ class OrderErrorMonitoring
         }
 
         return $results;
+    }
+
+    /**
+     * Group errors that differ only by a variable identifier (invoice
+     * DocEntry/DocNum, order id) into ONE case. e.g. "(10002) 7075020 AR invoice
+     * already exists" and "(10002) 7074822 AR invoice already exists" share a
+     * fingerprint instead of spawning one case per number. Digit runs collapse to
+     * '#'; different error TYPES still differ by their surrounding text.
+     */
+    public function fingerprintForMessage(string $message): string
+    {
+        return Str::lower(trim((string) preg_replace('/\d+/', '#', $message)));
     }
 
     public function normalizeErrorMessage(string $raw): array
