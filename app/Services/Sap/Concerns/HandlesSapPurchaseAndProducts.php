@@ -4892,11 +4892,13 @@ trait HandlesSapPurchaseAndProducts
             }
         }
 
-        foreach ($this->findOrderCogsJournalKeys($externalId) as $jdtNum) {
-            if ($this->cancelSapDocumentByKey('/JournalEntries', $jdtNum)) {
-                $summary['cogs']++;
-            }
-        }
+        // Deliberately do NOT cancel the COGS journal. COGS reflects the cost of the
+        // goods (read from the Item Master) and is independent of the invoice/payment
+        // — it stays valid across a resend. Cancelling it just spawns a reversal JE
+        // that nets the expense to zero, and SAP's (1000) "JE already integrated"
+        // guard (keyed on Reference) then blocks recreating a real one, leaving the
+        // order with no effective COGS. Keeping it means the recreate's idempotency
+        // simply reuses the still-valid COGS (effectiveCogsExistsForOrder == true).
 
         Log::info('Resend teardown of order dependents complete', array_merge(['order' => $externalId], $summary));
 
@@ -5426,7 +5428,13 @@ trait HandlesSapPurchaseAndProducts
 
         $ref2 = $this->buildJournalRef2('COGS', $externalId);
         $escValue = str_replace("'", "''", $ref2);
-        $filter = rawurlencode("Reference2 eq '{$escValue}'");
+        $escapedRef = str_replace("'", "''", $externalId);
+        // Match the COGS journals BOTH ways the lookup/guard identify them: by
+        // Reference2 = "COGS-<order>" AND by Reference = "<order>" with a COGS memo
+        // (Reference2 may already be freed from a prior pass, and the live (1000)
+        // guard keys on Reference — not just Reference2 — so all the order-id ref
+        // fields must be freed).
+        $filter = rawurlencode("Reference2 eq '{$escValue}' or (Reference eq '{$escapedRef}' and contains(Memo,'COGS'))");
         $response = $this->get("/JournalEntries?\$filter={$filter}&\$select=JdtNum&\$top=50");
         if (!$response->successful()) {
             return 0;
@@ -5439,7 +5447,12 @@ trait HandlesSapPurchaseAndProducts
             }
             $jdtNum = (int) $je['JdtNum'];
             $newRef2 = mb_substr($ref2 . '-rev-' . $jdtNum, 0, 27);
-            $patch = $this->patch('/JournalEntries(' . $jdtNum . ')', ['Reference2' => $newRef2]);
+            $newRef = mb_substr($externalId . '-rev-' . $jdtNum, 0, 27);
+            $patch = $this->patch('/JournalEntries(' . $jdtNum . ')', [
+                'Reference' => $newRef,
+                'Reference2' => $newRef2,
+                'Reference3' => $newRef,
+            ]);
             if ($patch->successful() || $patch->status() === 204) {
                 $freed++;
                 Log::info('Freed reversed COGS Reference2 to unblock fresh post', [
