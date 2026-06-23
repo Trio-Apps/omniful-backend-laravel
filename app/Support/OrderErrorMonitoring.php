@@ -3,7 +3,9 @@
 namespace App\Support;
 
 use App\Filament\Pages\OmnifulOrderView;
+use App\Models\IntegrationSetting;
 use App\Models\OmnifulOrder;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 
@@ -11,7 +13,7 @@ class OrderErrorMonitoring
 {
     public function loadErroredOrders()
     {
-        return OmnifulOrder::query()
+        $orders = OmnifulOrder::query()
             ->where(function ($query) {
                 $query->whereNotNull('sap_error')
                     ->orWhereNotNull('sap_payment_error')
@@ -52,6 +54,84 @@ class OrderErrorMonitoring
                 'last_event_at',
                 'last_payload',
             ]);
+
+        // Hide errors for orders created in Omniful before the SAP integration
+        // cutoff date — those orders are intentionally excluded from SAP, so
+        // their (pre-go-live) errors should not show on the dashboard. This is a
+        // display-only filter: nothing is mutated and it follows the same cutoff
+        // setting as the webhook flow, so changing the date re-computes the view.
+        $cutoff = $this->orderCutoffDate();
+        if ($cutoff !== null) {
+            $cutoffDate = $cutoff->format('Y-m-d');
+            $orders = $orders->reject(function (OmnifulOrder $order) use ($cutoffDate) {
+                $createdAt = $this->orderCreatedAtFromPayload((array) ($order->last_payload ?? []));
+
+                // Conservative: only hide when we have a confident creation date
+                // strictly before the cutoff; unknown dates stay visible.
+                return $createdAt !== null && $createdAt->format('Y-m-d') < $cutoffDate;
+            })->values();
+        }
+
+        return $orders;
+    }
+
+    /**
+     * Configured SAP integration cutoff date (start of day), or null when none
+     * is set. Mirrors OrderWebhookService: IntegrationSetting row first, then the
+     * config('omniful.order_sync.cutoff_date') fallback.
+     */
+    private function orderCutoffDate(): ?Carbon
+    {
+        $settings = IntegrationSetting::query()->first();
+
+        $value = null;
+        if ($settings && array_key_exists('order_cutoff_date', $settings->getAttributes())) {
+            $value = $settings->order_cutoff_date;
+        }
+        if ($value === null || $value === '') {
+            $value = config('omniful.order_sync.cutoff_date');
+        }
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        try {
+            return Carbon::parse($value)->startOfDay();
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /**
+     * Omniful order creation timestamp from the stored last_payload, mirroring
+     * the data.order_created_at -> data.created_at precedence. Returns null when
+     * missing or outside a sane year window (rejects Omniful's Go zero-time).
+     */
+    private function orderCreatedAtFromPayload(array $payload): ?Carbon
+    {
+        $value = trim((string) (
+            data_get($payload, 'data.order_created_at')
+            ?? data_get($payload, 'order_created_at')
+            ?? data_get($payload, 'data.created_at')
+            ?? data_get($payload, 'created_at')
+            ?? ''
+        ));
+        if ($value === '') {
+            return null;
+        }
+
+        try {
+            $parsed = Carbon::parse($value);
+        } catch (\Throwable) {
+            return null;
+        }
+
+        $year = (int) $parsed->format('Y');
+        if ($year < 2000 || $year > 2099) {
+            return null;
+        }
+
+        return $parsed;
     }
 
     /**

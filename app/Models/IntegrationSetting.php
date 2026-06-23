@@ -72,6 +72,7 @@ class IntegrationSetting extends Model
         'auto_sync_last_run_at',
         'po_ignored_supplier_codes',
         'order_numeric_id_only',
+        'order_cutoff_date',
     ];
 
     protected $casts = [
@@ -124,6 +125,7 @@ class IntegrationSetting extends Model
         'auto_sync_last_run_at' => 'datetime',
         'po_ignored_supplier_codes' => 'string',
         'order_numeric_id_only' => 'boolean',
+        'order_cutoff_date' => 'date:Y-m-d',
     ];
 
     /**

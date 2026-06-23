@@ -19,6 +19,21 @@ class OrderWebhookService
         $payload = (array) ($event->payload ?? []);
         $data = (array) data_get($payload, 'data', []);
         $eventName = (string) data_get($payload, 'event_name', '');
+
+        // Orders created before the SAP integration cutoff date are ignored
+        // outright — never queued for any SAP work. This intentionally takes
+        // precedence over the metadata_sync branch below, so once a cutoff is
+        // set, an already-synced pre-cutoff order also stops receiving updates.
+        if (($cutoffReason = $this->orderBeforeCutoffReason($data)) !== null) {
+            return [
+                'queue' => false,
+                'action' => 'ignored',
+                'reason' => $cutoffReason,
+                'event_name' => $eventName,
+                'status' => '',
+            ];
+        }
+
         $primaryStatus = $this->extractStatusValue($data, [
             'status_code',
             'status',
@@ -173,6 +188,17 @@ class OrderWebhookService
         if ($this->numericOrderIdOnly() && $orderId !== '' && !ctype_digit($orderId)) {
             $order->sap_status = 'ignored';
             $order->sap_error = 'Ignored: non-numeric order id (' . $orderId . ') excluded from SAP sync';
+            $order->save();
+            return;
+        }
+
+        // Orders created in Omniful before the configured SAP integration cutoff
+        // date are ignored outright on the automatic webhook flow — no SAP work,
+        // no error recorded. A manual force-resend ($force) is an explicit
+        // operator override and intentionally bypasses the cutoff.
+        if (!$force && ($cutoffReason = $this->orderBeforeCutoffReason($data)) !== null) {
+            $order->sap_status = 'ignored';
+            $order->sap_error = $cutoffReason;
             $order->save();
             return;
         }
@@ -1147,6 +1173,88 @@ class OrderWebhookService
             'order_numeric_id_only',
             config('omniful.order_sync.numeric_order_id_only', true)
         );
+    }
+
+    /**
+     * Configured SAP integration cutoff date (start of day). Orders created in
+     * Omniful before this moment are ignored outright. Null = no cutoff.
+     */
+    private function orderCutoffDate(): ?\Illuminate\Support\Carbon
+    {
+        $value = $this->resolveIntegrationSettingValue(
+            'order_cutoff_date',
+            config('omniful.order_sync.cutoff_date')
+        );
+
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        try {
+            // Compare against the START of the cutoff day so an order created at
+            // any time ON the cutoff date is still synced; only strictly-earlier
+            // orders are ignored.
+            return \Illuminate\Support\Carbon::parse($value)->startOfDay();
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /**
+     * Omniful order creation timestamp from the webhook payload, mirroring the
+     * order_created_at -> created_at precedence the SAP layer uses for DocDate.
+     * Returns null when missing or outside a sane year window (rejects Omniful's
+     * Go zero-time "0001-01-01T00:00:00Z" placeholder).
+     */
+    private function resolveOrderCreatedAt(array $data): ?\Illuminate\Support\Carbon
+    {
+        // Match the SAP DocDate precedence: order_created_at, then created_at.
+        // Fall through on an empty string too (not just null), like the SAP layer.
+        $value = trim((string) (data_get($data, 'order_created_at') ?? ''));
+        if ($value === '') {
+            $value = trim((string) (data_get($data, 'created_at') ?? ''));
+        }
+        if ($value === '') {
+            return null;
+        }
+
+        try {
+            $parsed = \Illuminate\Support\Carbon::parse($value);
+        } catch (\Throwable) {
+            return null;
+        }
+
+        $year = (int) $parsed->format('Y');
+        if ($year < 2000 || $year > 2099) {
+            return null;
+        }
+
+        return $parsed;
+    }
+
+    /**
+     * Returns the "Ignored:" reason when a cutoff is configured and this order's
+     * Omniful creation date is strictly before it; null otherwise. Conservative:
+     * a missing/unparseable order date returns null so a valid new order is never
+     * dropped on a missing field.
+     */
+    private function orderBeforeCutoffReason(array $data): ?string
+    {
+        $cutoff = $this->orderCutoffDate();
+        if ($cutoff === null) {
+            return null;
+        }
+
+        $createdAt = $this->resolveOrderCreatedAt($data);
+        // Day-level comparison: an order created on any time of the cutoff day
+        // itself is still synced; only strictly-earlier calendar dates are
+        // ignored. Comparing date strings avoids timezone-boundary ambiguity.
+        if ($createdAt === null || $createdAt->format('Y-m-d') >= $cutoff->format('Y-m-d')) {
+            return null;
+        }
+
+        return 'Ignored: order created ' . $createdAt->format('Y-m-d')
+            . ' is before SAP cutoff date (' . $cutoff->format('Y-m-d') . ') — excluded from SAP sync';
     }
 
     private function isCogsJournalEnabled(): bool

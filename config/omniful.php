@@ -325,6 +325,10 @@ return [
         // Non-numeric ids (e.g. STO_..., RS_234) are internal/non-sales and are
         // ignored. UI toggle order_numeric_id_only overrides this fallback.
         'numeric_order_id_only' => (bool) env('OMNIFUL_ORDER_NUMERIC_ID_ONLY', true),
+        // Orders created in Omniful BEFORE this date are ignored outright (never
+        // sent to SAP, no error recorded). Format: Y-m-d. Empty = no cutoff.
+        // UI field order_cutoff_date overrides this fallback.
+        'cutoff_date' => env('OMNIFUL_ORDER_CUTOFF_DATE'),
     ],
     'purchase_order' => [
         // SAP supplier (CardCode) used for Omniful POs/GRPOs when the Omniful

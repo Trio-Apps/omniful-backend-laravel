@@ -11,6 +11,7 @@ use App\Jobs\RunSapCostCenterBackgroundSync;
 use App\Services\IntegrationDirectionService;
 use App\Services\SapServiceLayerClient;
 use Filament\Actions\Action;
+use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
@@ -105,6 +106,13 @@ class IntegrationControlSettings extends Page implements HasForms
                                             ->label('Only sync numeric order IDs to SAP')
                                             ->default(true)
                                             ->helperText('When on, orders whose id is not fully numeric (e.g. STO_..., RS_234) are ignored — only numeric order ids are pushed to SAP.'),
+                                        DatePicker::make('order_cutoff_date')
+                                            ->label('SAP Integration Cutoff Date')
+                                            ->native(false)
+                                            ->displayFormat('Y-m-d')
+                                            ->format('Y-m-d')
+                                            ->closeOnDateSelection()
+                                            ->helperText('Orders created in Omniful BEFORE this date are ignored on the spot — never sent to SAP and no error is recorded. Leave empty to process all orders (e.g. set 2026-06-18 for go-live).'),
                                     ]),
                                 Section::make('Order Tax & Freight')
                                     ->description('Static sales document mapping defaults used when Omniful payloads are processed into SAP')
@@ -289,6 +297,7 @@ class IntegrationControlSettings extends Page implements HasForms
                 'auto_sync_interval_minutes' => max(1, (int) ($state['auto_sync_interval_minutes'] ?? 15)),
                 'po_ignored_supplier_codes' => $state['po_ignored_supplier_codes'] ?? null,
                 'order_numeric_id_only' => (bool) ($state['order_numeric_id_only'] ?? false),
+                'order_cutoff_date' => ($state['order_cutoff_date'] ?? null) ?: null,
             ];
 
         if ($existing !== null) {
