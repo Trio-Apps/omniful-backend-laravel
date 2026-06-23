@@ -2705,20 +2705,53 @@ trait HandlesSapPurchaseAndProducts
 
         $cardCode = '';
         $documentLines = [];
-        if ($baseDeliveryDocEntry > 0) {
+        $baseReferenced = false;
+
+        // A credit memo must base-reference the A/R Invoice (the reserve invoice,
+        // SAP object type 13). SAP rejects a Delivery Note (15) as a credit-memo
+        // base ("'15' is not a valid value for property 'BaseType'"), so we link
+        // the reversal to the invoice (BaseType 13 / BaseEntry = invoice DocEntry).
+        //
+        // BUT a CLOSED or CANCELLED reserve invoice (already fully paid /
+        // delivered) cannot be base-referenced — SAP rejects copying from a
+        // closed/cancelled document. For those we issue a STANDALONE credit memo
+        // (BaseType -1). Mirrors the guard in reverseArReserveInvoiceForResend.
+        if ($baseOrderDocEntry > 0) {
+            $invoice = (array) $this->getArReserveInvoice($baseOrderDocEntry);
+            $cardCode = (string) ($invoice['CardCode'] ?? '');
+
+            $invoiceCancelled = (string) ($invoice['Cancelled'] ?? 'tNO') === 'tYES'
+                || in_array((string) ($invoice['CancelStatus'] ?? ''), ['csYes', 'csCancellation'], true);
+            $invoiceClosed = (string) ($invoice['DocumentStatus'] ?? '') === 'bost_Close';
+
+            if (!$invoiceCancelled && !$invoiceClosed) {
+                $documentLines = $this->buildCreditLinesFromInvoice($items, $invoice, $baseOrderDocEntry);
+                $baseReferenced = $documentLines !== [];
+            }
+
+            if ($documentLines === []) {
+                Log::warning('AR credit memo: not base-referencing invoice; using standalone (BaseType -1) credit memo', [
+                    'external_id' => $externalId,
+                    'invoice_doc_entry' => $baseOrderDocEntry,
+                    'invoice_closed' => $invoiceClosed,
+                    'invoice_cancelled' => $invoiceCancelled,
+                    'return_item_codes' => array_values(array_filter(array_map(
+                        fn ($i) => $this->extractCreditMemoItemCode((array) $i),
+                        $items
+                    ))),
+                ]);
+            }
+        }
+
+        // Resolve the customer from the delivery only when the invoice didn't
+        // provide one (we never base credit lines on the delivery).
+        if ($cardCode === '' && $baseDeliveryDocEntry > 0) {
             $delivery = $this->getDeliveryNote($baseDeliveryDocEntry);
             $cardCode = (string) ($delivery['CardCode'] ?? '');
-            $documentLines = $this->buildCreditLinesFromDelivery($items, $delivery, $hubCode, $baseDeliveryDocEntry, $data);
         }
 
-        if ($documentLines === [] && $baseOrderDocEntry > 0) {
-            $order = $this->getArReserveInvoice($baseOrderDocEntry);
-            if ($cardCode === '') {
-                $cardCode = (string) ($order['CardCode'] ?? '');
-            }
-            $documentLines = $this->buildDirectCreditLines($items, $hubCode, $data);
-        }
-
+        // Closed/cancelled invoice, no invoice DocEntry, or item-code mismatch —
+        // fall back to a standalone credit memo (BaseType -1) from the items.
         if ($documentLines === []) {
             $documentLines = $this->buildDirectCreditLines($items, $hubCode, $data);
         }
@@ -2741,9 +2774,13 @@ trait HandlesSapPurchaseAndProducts
                 'request_body' => null,
             ];
         }
-        $documentLines = $this->normalizeSapDocumentLines(
-            $this->applyDefaultCostCentersToLines($documentLines)
-        );
+        // Base-referenced (BaseType 13) lines inherit dimensions from the invoice
+        // line, so only stamp default cost centers on standalone (BaseType -1)
+        // lines — otherwise we'd override SAP's copied dimensions.
+        if (!$baseReferenced) {
+            $documentLines = $this->applyDefaultCostCentersToLines($documentLines);
+        }
+        $documentLines = $this->normalizeSapDocumentLines($documentLines);
 
         $body = [
             'CardCode' => $cardCode,
@@ -8139,13 +8176,21 @@ trait HandlesSapPurchaseAndProducts
     }
 
     /**
-     * @param array<int,array{item_code:string,quantity:float,unit_price:float}> $items
+     * Build AR Credit Memo lines that base-reference the original AR Reserve
+     * Invoice (SAP object type 13). SAP rejects a Delivery Note (15) as a
+     * credit-memo base, so the reversal links to the invoice: BaseType=13,
+     * BaseEntry=the invoice DocEntry, BaseLine=the invoice line. SAP copies
+     * item / warehouse / price / tax from the referenced line, so we only send
+     * the quantity to reverse (no ItemCode/WarehouseCode/VatGroup overrides,
+     * which would otherwise risk a base-line mismatch).
+     *
+     * @param array<int,array<string,mixed>> $items
      * @return array<int,array<string,mixed>>
      */
-    private function buildCreditLinesFromDelivery(array $items, array $delivery, string $hubCode, int $deliveryDocEntry, array $data = []): array
+    private function buildCreditLinesFromInvoice(array $items, array $invoice, int $invoiceDocEntry): array
     {
-        $deliveryByItem = [];
-        foreach ((array) ($delivery['DocumentLines'] ?? []) as $line) {
+        $invoiceByItem = [];
+        foreach ((array) ($invoice['DocumentLines'] ?? []) as $line) {
             $itemCode = (string) ($line['ItemCode'] ?? '');
             $lineNum = $line['LineNum'] ?? null;
             if ($itemCode === '' || !is_numeric($lineNum)) {
@@ -8157,10 +8202,9 @@ trait HandlesSapPurchaseAndProducts
                 continue;
             }
 
-            $deliveryByItem[$itemCode][] = [
+            $invoiceByItem[$itemCode][] = [
                 'line_num' => (int) $lineNum,
                 'open_qty' => $lineQty,
-                'warehouse' => (string) ($line['WarehouseCode'] ?? ''),
             ];
         }
 
@@ -8168,20 +8212,16 @@ trait HandlesSapPurchaseAndProducts
         foreach ($items as $item) {
             $itemCode = $this->extractCreditMemoItemCode((array) $item);
             $remaining = (float) ($item['quantity'] ?? $item['return_quantity'] ?? $item['returned_quantity'] ?? 0);
-            if (!isset($deliveryByItem[$itemCode]) || $remaining <= 0) {
+            if (!isset($invoiceByItem[$itemCode]) || $remaining <= 0) {
                 continue;
             }
 
-            foreach ($deliveryByItem[$itemCode] as &$deliveryLine) {
+            foreach ($invoiceByItem[$itemCode] as &$invoiceLine) {
                 if ($remaining <= 0) {
                     break;
                 }
 
-                if ($hubCode !== '' && $deliveryLine['warehouse'] !== '' && $deliveryLine['warehouse'] !== $hubCode) {
-                    continue;
-                }
-
-                $openQty = (float) $deliveryLine['open_qty'];
+                $openQty = (float) $invoiceLine['open_qty'];
                 if ($openQty <= 0) {
                     continue;
                 }
@@ -8191,30 +8231,17 @@ trait HandlesSapPurchaseAndProducts
                     continue;
                 }
 
-                $line = [
-                    'BaseType' => 15,
-                    'BaseEntry' => $deliveryDocEntry,
-                    'BaseLine' => (int) $deliveryLine['line_num'],
+                $creditLines[] = [
+                    'BaseType' => 13,
+                    'BaseEntry' => $invoiceDocEntry,
+                    'BaseLine' => (int) $invoiceLine['line_num'],
                     'Quantity' => $this->roundSapQuantity($applyQty),
                 ];
 
-                if ($hubCode !== '') {
-                    $line['WarehouseCode'] = $hubCode;
-                }
-
-                $taxCode = $this->resolveSapTaxCodeForOrderLine($data, [
-                    'sku_code' => $itemCode,
-                    'tax_percent' => data_get($item, 'tax_percent'),
-                ]);
-                if ($taxCode !== '') {
-                    $line['VatGroup'] = $taxCode;
-                }
-
-                $creditLines[] = $line;
-                $deliveryLine['open_qty'] = max(0.0, $openQty - $applyQty);
+                $invoiceLine['open_qty'] = max(0.0, $openQty - $applyQty);
                 $remaining -= $applyQty;
             }
-            unset($deliveryLine);
+            unset($invoiceLine);
         }
 
         return $creditLines;
