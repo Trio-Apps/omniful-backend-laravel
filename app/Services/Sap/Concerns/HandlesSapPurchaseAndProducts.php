@@ -1734,9 +1734,17 @@ trait HandlesSapPurchaseAndProducts
             $body['Reference3'] = $reference;
         }
 
-        // Idempotency: reuse the COGS lookup (searches Ref2 = "COGS-<order>").
+        // Idempotency: reuse the COGS lookup (searches Ref2 = "COGS-<order>") —
+        // BUT only when the order has an EFFECTIVE (non-reversed) COGS. A cancelled
+        // COGS leaves a reversal JE that nets the expense to zero while both keep
+        // the same Reference2, so a naive reuse would bind a dead pair and the
+        // order would end up with no real COGS. Net-zero => fall through and create
+        // a fresh journal.
+        $cogsExpenseAccount = trim((string) ($data['expense_account'] ?? ''));
         $existing = $this->findExistingCogsJournalForDelivery($reference, '', 0);
-        if ($this->journalHasIdentifier($existing)) {
+        if ($this->journalHasIdentifier($existing)
+            && $this->effectiveCogsExistsForOrder($reference, $cogsExpenseAccount)
+        ) {
             $existing['ignored'] = false;
             $existing['reused_existing'] = true;
             $existing['request_body'] = $body;
@@ -2145,6 +2153,46 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return $this->get("/JournalEntries({$jdtNum})?\$select=JdtNum")->successful();
+    }
+
+    /**
+     * True if the order has an EFFECTIVE (non-reversed) COGS journal. A cancelled
+     * COGS leaves a reversal JE that nets the expense account to zero, and BOTH
+     * keep Reference2 = "COGS-<order>" (a cancelled JE is not deleted and carries
+     * no clean "reversed" flag). So existence/lookup checks wrongly see a live
+     * COGS. We sum (Debit - Credit) on the COGS expense account across every
+     * "COGS-<order>" journal: net ~0 => no real COGS => recreate. Returns true
+     * (assume exists) when it can't evaluate, to avoid creating a duplicate.
+     */
+    public function effectiveCogsExistsForOrder(string $externalId, string $expenseAccount): bool
+    {
+        $externalId = trim($externalId);
+        $expenseAccount = trim($expenseAccount);
+        if ($externalId === '' || $expenseAccount === '') {
+            return true;
+        }
+
+        $ref2 = $this->buildJournalRef2('COGS', $externalId);
+        $escValue = str_replace("'", "''", $ref2);
+        $filter = rawurlencode("Reference2 eq '{$escValue}'");
+        $response = $this->get("/JournalEntries?\$filter={$filter}&\$select=JournalEntryLines&\$top=50");
+        if (!$response->successful()) {
+            return true;
+        }
+
+        $net = 0.0;
+        foreach ((array) ($response->json('value') ?? []) as $je) {
+            if (!is_array($je)) {
+                continue;
+            }
+            foreach ((array) ($je['JournalEntryLines'] ?? []) as $line) {
+                if (is_array($line) && (string) ($line['AccountCode'] ?? '') === $expenseAccount) {
+                    $net += (float) ($line['Debit'] ?? 0) - (float) ($line['Credit'] ?? 0);
+                }
+            }
+        }
+
+        return abs($net) > 0.001;
     }
 
     /**

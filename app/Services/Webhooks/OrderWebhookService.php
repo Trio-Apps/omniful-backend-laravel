@@ -1672,13 +1672,21 @@ class OrderWebhookService
 
         // Already posted, or no invoice yet → nothing to do.
         if (!empty($order->sap_cogs_journal_entry)) {
-            // Verify the recorded COGS journal still EXISTS in SAP before trusting
-            // it; if it was removed, clear the stale ref and recreate.
+            // Trust the recorded COGS only if the order has an EFFECTIVE (non-
+            // reversed) COGS. A cancelled COGS nets to zero (a reversal JE with the
+            // same Reference2) yet still "exists" with no clean flag — so a plain
+            // existence check would wrongly skip, leaving the order with no real
+            // COGS. effectiveCogsExistsForOrder sums the expense account across all
+            // "COGS-<order>" journals; net ~0 => clear the ref and recreate.
             $cogsClient = app(SapServiceLayerClient::class);
-            $stillExists = !method_exists($cogsClient, 'journalEntryExists')
-                || $cogsClient->journalEntryExists((int) $order->sap_cogs_journal_entry);
+            $cogsExpenseAccount = (string) $this->resolveIntegrationSettingValue(
+                'order_cogs_expense_account',
+                config('omniful.order_accounting.cogs_expense_account'),
+            );
+            $hasEffectiveCogs = !method_exists($cogsClient, 'effectiveCogsExistsForOrder')
+                || $cogsClient->effectiveCogsExistsForOrder((string) ($order->external_id ?? ''), $cogsExpenseAccount);
 
-            if ($stillExists) {
+            if ($hasEffectiveCogs) {
                 if ((string) $order->sap_cogs_status === '') {
                     $order->sap_cogs_status = 'created';
                     $order->save();
@@ -1686,7 +1694,7 @@ class OrderWebhookService
                 return;
             }
 
-            \Illuminate\Support\Facades\Log::info('Stale COGS ref (missing in SAP) — clearing to recreate', [
+            \Illuminate\Support\Facades\Log::info('Reversed/missing COGS (net zero) — clearing ref to recreate', [
                 'order' => $order->external_id,
                 'stale_cogs_journal_entry' => $order->sap_cogs_journal_entry,
             ]);
