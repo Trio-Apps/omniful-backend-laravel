@@ -5337,9 +5337,17 @@ trait HandlesSapPurchaseAndProducts
         if ($udf === '') {
             $udf = 'U_omo';
         }
+        // NOTE: IncomingPayments has NO NumAtCard property (unlike invoices /
+        // deliveries) — buildOrderReferenceFilter would include it and make SAP
+        // reject the whole query ("Property 'NumAtCard' of 'Payment' is invalid").
+        // Match only the UDFs the SP (10002) keys on: U_omo + U_ZidId.
         $escapedUdf = str_replace("'", "''", $udf);
         $escapedValue = str_replace("'", "''", $externalId);
-        $filter = rawurlencode('(' . $this->buildOrderReferenceFilter($udf, $escapedUdf, $escapedValue) . ") and DocType eq 'rCustomer'");
+        $conditions = ["{$escapedUdf} eq '{$escapedValue}'"];
+        if (strcasecmp($udf, 'U_ZidId') !== 0) {
+            $conditions[] = "U_ZidId eq '{$escapedValue}'";
+        }
+        $filter = rawurlencode('(' . implode(' or ', $conditions) . ") and DocType eq 'rCustomer'");
         $response = $this->get("/IncomingPayments?\$filter={$filter}&\$select=DocEntry,Cancelled&\$orderby=DocEntry desc&\$top=50");
         if (!$response->successful()) {
             return 0;
