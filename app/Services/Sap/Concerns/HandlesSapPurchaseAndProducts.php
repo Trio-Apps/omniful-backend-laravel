@@ -1775,6 +1775,25 @@ trait HandlesSapPurchaseAndProducts
             $responseBody = (string) $response->body();
             if ($this->isSapJournalAlreadyIntegratedError($responseBody)
                 || $this->isSapCogsAlreadyIntegratedError($responseBody)) {
+                // If the order's existing COGS is REVERSED (net zero on the expense
+                // account), the reversal JE still holds Reference2="COGS-<order>"
+                // and the (1000) guard keys on it — blocking this fresh post. Free
+                // those journals' Reference2 and retry so a real COGS posts, instead
+                // of reusing the dead reversed pair.
+                if (!$this->effectiveCogsExistsForOrder($reference, $cogsExpenseAccount)
+                    && $this->freeReversedOrderCogsJournals($reference) > 0
+                ) {
+                    $retry = $this->post('/JournalEntries', $body);
+                    if ($retry->successful()) {
+                        $created = $retry->json() ?? [];
+                        $created['ignored'] = false;
+                        $created['recreated_after_freeing_reversed_cogs'] = true;
+                        $created['request_body'] = $body;
+
+                        return $created;
+                    }
+                }
+
                 $recovered = $this->findExistingCogsJournalForDelivery($reference, '', 0);
                 if ($this->journalHasIdentifier($recovered)) {
                     $recovered['ignored'] = false;
@@ -5381,6 +5400,57 @@ trait HandlesSapPurchaseAndProducts
                 Log::warning('Failed to free cancelled payment order refs', [
                     'external_id' => $externalId,
                     'doc_entry' => $docEntry,
+                    'status' => $patch->status(),
+                    'body' => mb_substr((string) $patch->body(), 0, 300),
+                ]);
+            }
+        }
+
+        return $freed;
+    }
+
+    /**
+     * Free the Reference2 on every COGS journal for an order so a fresh COGS can
+     * post. Used only when the order's COGS is REVERSED (net zero): a cancelled
+     * COGS leaves a reversal JE that still carries Reference2="COGS-<order>", which
+     * the (1000) "JE already integrated" guard keys on and uses to block the new
+     * post. Renames each to "COGS-<order>-rev-<jdtNum>" (header Reference2 — proven
+     * on SAP to be the field the guard checks). Returns the number freed.
+     */
+    public function freeReversedOrderCogsJournals(string $externalId): int
+    {
+        $externalId = trim($externalId);
+        if ($externalId === '') {
+            return 0;
+        }
+
+        $ref2 = $this->buildJournalRef2('COGS', $externalId);
+        $escValue = str_replace("'", "''", $ref2);
+        $filter = rawurlencode("Reference2 eq '{$escValue}'");
+        $response = $this->get("/JournalEntries?\$filter={$filter}&\$select=JdtNum&\$top=50");
+        if (!$response->successful()) {
+            return 0;
+        }
+
+        $freed = 0;
+        foreach ((array) ($response->json('value') ?? []) as $je) {
+            if (!is_array($je) || empty($je['JdtNum'])) {
+                continue;
+            }
+            $jdtNum = (int) $je['JdtNum'];
+            $newRef2 = mb_substr($ref2 . '-rev-' . $jdtNum, 0, 27);
+            $patch = $this->patch('/JournalEntries(' . $jdtNum . ')', ['Reference2' => $newRef2]);
+            if ($patch->successful() || $patch->status() === 204) {
+                $freed++;
+                Log::info('Freed reversed COGS Reference2 to unblock fresh post', [
+                    'external_id' => $externalId,
+                    'jdt_num' => $jdtNum,
+                    'new_ref2' => $newRef2,
+                ]);
+            } else {
+                Log::warning('Failed to free reversed COGS Reference2', [
+                    'external_id' => $externalId,
+                    'jdt_num' => $jdtNum,
                     'status' => $patch->status(),
                     'body' => mb_substr((string) $patch->body(), 0, 300),
                 ]);
