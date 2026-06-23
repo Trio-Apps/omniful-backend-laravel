@@ -350,6 +350,34 @@ trait HandlesSapPurchaseAndProducts
                 }
             }
 
+            // A document line / freight expense carrying a cost-center dimension
+            // the posting G/L account is NOT relevant for makes SAP fail the whole
+            // invoice with a generic -5002. Proven on live: the exempt-sales (EOV)
+            // revenue account and the foreign-freight account (4101005) reject
+            // dimension 2 (the warehouse cost center, e.g. CEN11), while taxable
+            // (SOV) accounts accept it. We can't know each line's account up front,
+            // so on -5002 retry ONCE with dimension 2+ stripped — dimension 1 is
+            // accepted by every account (verified by a dim1-only live probe).
+            if ($this->isSapInternalError($responseBody)) {
+                $strippedBody = $this->stripCostCenterDimensionsAboveOne($body);
+                if ($strippedBody !== null) {
+                    Log::warning('AR reserve invoice -5002 — retrying with cost-center dimension 2+ stripped', [
+                        'external_id' => $externalId,
+                    ]);
+                    $retryResponse = $this->postArOrderWithReserveFallback($strippedBody, $usedReserveInvoiceFallback);
+                    if ($retryResponse->successful()) {
+                        $retryPayload = $retryResponse->json() ?? [];
+                        if ((string) ($retryPayload['ReserveInvoice'] ?? '') === 'tYES') {
+                            $retryPayload['ignored'] = false;
+                            $retryPayload['request_body'] = $strippedBody;
+                            $retryPayload['retried_without_extra_dimensions'] = true;
+
+                            return $retryPayload;
+                        }
+                    }
+                }
+            }
+
             throw new SapRequestException(
                 'SAP AR reserve invoice create failed: ' . $response->status() . ' ' . $response->body(),
                 $body,
@@ -2282,6 +2310,47 @@ trait HandlesSapPurchaseAndProducts
             || str_contains($normalized, 'one of the base documents has already been closed')
             || str_contains($normalized, '"-5002"')
             || str_contains($normalized, ': -5002,');
+    }
+
+    private function isSapInternalError(string $body): bool
+    {
+        return str_contains($body, '-5002');
+    }
+
+    /**
+     * Remove cost-center dimensions 2..5 from every document line and freight
+     * expense (keep dimension 1). Returns the modified body, or null when nothing
+     * carried a dimension 2+ (so the caller can skip a pointless retry). Used to
+     * recover a -5002 caused by stamping a dimension on a G/L account that is not
+     * relevant for it (e.g. dim2 = warehouse cost center on an exempt-sales or
+     * foreign-freight account).
+     *
+     * @param array<string,mixed> $body
+     * @return array<string,mixed>|null
+     */
+    private function stripCostCenterDimensionsAboveOne(array $body): ?array
+    {
+        $changed = false;
+
+        foreach ((array) ($body['DocumentLines'] ?? []) as $i => $line) {
+            foreach (['CostingCode2', 'CostingCode3', 'CostingCode4', 'CostingCode5'] as $k) {
+                if (is_array($line) && array_key_exists($k, $line)) {
+                    unset($body['DocumentLines'][$i][$k]);
+                    $changed = true;
+                }
+            }
+        }
+
+        foreach ((array) ($body['DocumentAdditionalExpenses'] ?? []) as $i => $exp) {
+            foreach (['DistributionRule2', 'DistributionRule3', 'DistributionRule4', 'DistributionRule5'] as $k) {
+                if (is_array($exp) && array_key_exists($k, $exp)) {
+                    unset($body['DocumentAdditionalExpenses'][$i][$k]);
+                    $changed = true;
+                }
+            }
+        }
+
+        return $changed ? $body : null;
     }
 
     private function buildDeliveryLinesFromRequestedItems(array $salesDoc, array $orderItems, int $orderDocEntry, string $hubCode): array
