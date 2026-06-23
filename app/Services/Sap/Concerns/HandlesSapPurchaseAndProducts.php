@@ -2846,6 +2846,24 @@ trait HandlesSapPurchaseAndProducts
             ];
         }
 
+        // Idempotency: a prior attempt may have already posted this reversal in
+        // SAP (the JE response has no TransId, so the local link is easily lost,
+        // and a re-run would be rejected with "(1000) JE Cogs Debit already
+        // integrated"). If the reversal already exists, bind it instead of
+        // re-posting.
+        $orderReference = trim((string) ($data['reference'] ?? ''));
+        $existingReversal = $this->findExistingCogsReversalJournal(
+            $orderReference,
+            (int) ($creditMemo['DocNum'] ?? 0),
+            $expenseAccount
+        );
+        if ($existingReversal !== null) {
+            $existingReversal['ignored'] = false;
+            $existingReversal['recovered'] = true;
+            $existingReversal['request_body'] = null;
+            return $existingReversal;
+        }
+
         $amount = (float) ($data['amount'] ?? $this->extractCreditMemoCogsAmount($creditMemo));
 
         // Bundles/kits carry no stock cost on the credit-memo line (StockPrice 0),
@@ -2898,6 +2916,23 @@ trait HandlesSapPurchaseAndProducts
 
         $response = $this->post('/JournalEntries', $body);
         if (!$response->successful()) {
+            // SAP refused because the reversal is already integrated (the custom
+            // (1000) guard) — the JE exists but our local link was lost. Find and
+            // bind it instead of failing the whole flow.
+            if (str_contains(strtolower((string) $response->body()), 'already integrated')) {
+                $existingReversal = $this->findExistingCogsReversalJournal(
+                    $orderReference,
+                    (int) ($creditMemo['DocNum'] ?? 0),
+                    $expenseAccount
+                );
+                if ($existingReversal !== null) {
+                    $existingReversal['ignored'] = false;
+                    $existingReversal['recovered'] = true;
+                    $existingReversal['request_body'] = $body;
+                    return $existingReversal;
+                }
+            }
+
             throw new SapRequestException(
                 'SAP COGS reversal journal create failed: ' . $response->status() . ' ' . $response->body(),
                 $body,
@@ -2910,6 +2945,60 @@ trait HandlesSapPurchaseAndProducts
         $payload['ignored'] = false;
         $payload['request_body'] = $body;
         return $payload;
+    }
+
+    /**
+     * Find an already-posted COGS reversal Journal Entry for a cancelled order /
+     * credit memo so a re-run binds it instead of re-posting (SAP rejects a
+     * duplicate with the custom "(1000) JE Cogs Debit already integrated" guard).
+     * The reversal JE sets Reference2 = credit-memo DocNum and CREDITS the COGS
+     * expense account (the forward order COGS DEBITS it), which distinguishes it
+     * from the original order COGS journal.
+     *
+     * @return array<string,mixed>|null
+     */
+    public function findExistingCogsReversalJournal(string $orderReference, int $creditMemoDocNum, string $expenseAccount): ?array
+    {
+        $orderReference = trim($orderReference);
+        $expenseAccount = trim($expenseAccount);
+        if ($expenseAccount === '') {
+            return null;
+        }
+
+        $clauses = [];
+        if ($creditMemoDocNum > 0) {
+            $clauses[] = "Reference2 eq '" . str_replace("'", "''", (string) $creditMemoDocNum) . "'";
+        }
+        if ($orderReference !== '') {
+            $escRef = str_replace("'", "''", $orderReference);
+            $clauses[] = "(Reference eq '{$escRef}' and contains(Memo,'reversal'))";
+        }
+        if ($clauses === []) {
+            return null;
+        }
+
+        $filter = rawurlencode(implode(' or ', $clauses));
+        $response = $this->get("/JournalEntries?\$filter={$filter}&\$select=JdtNum,Number,JournalEntryLines&\$top=50");
+        if (!$response->successful()) {
+            return null;
+        }
+
+        foreach ((array) ($response->json('value') ?? []) as $je) {
+            if (!is_array($je)) {
+                continue;
+            }
+            foreach ((array) ($je['JournalEntryLines'] ?? []) as $line) {
+                // The reversal CREDITS the COGS expense account (forward COGS
+                // debits it) — this guards against binding the order COGS or an
+                // unrelated journal that merely shares a reference field.
+                if ((string) ($line['AccountCode'] ?? '') === $expenseAccount
+                    && (float) ($line['Credit'] ?? 0) > 0) {
+                    return $je;
+                }
+            }
+        }
+
+        return null;
     }
 
     public function createPurchaseOrderFromOmniful(array $data): array

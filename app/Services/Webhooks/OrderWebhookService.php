@@ -1980,9 +1980,16 @@ class OrderWebhookService
             return;
         }
 
-        if (!empty($order->sap_cancel_cogs_journal_entry)) {
-            if ((string) $order->sap_cancel_cogs_status === '') {
+        // Already reversed once — bind it and stop. The Service Layer JE response
+        // carries NO TransId (JournalEntries key on JdtNum), so the journal NUMBER
+        // is the reliable identifier; a prior successful reversal populated
+        // sap_cancel_cogs_journal_num, and re-posting would hit
+        // "(1000) JE Cogs Debit already integrated". Treat a populated entry OR
+        // number as done, and clear any stale failure left by such a re-post.
+        if (!empty($order->sap_cancel_cogs_journal_entry) || !empty($order->sap_cancel_cogs_journal_num)) {
+            if ((string) $order->sap_cancel_cogs_status !== 'created') {
                 $order->sap_cancel_cogs_status = 'created';
+                $order->sap_cancel_cogs_error = null;
                 $order->save();
             }
             return;
@@ -2027,7 +2034,10 @@ class OrderWebhookService
         }
 
         $order->sap_cancel_cogs_status = 'created';
-        $order->sap_cancel_cogs_journal_entry = (string) ($result['TransId'] ?? '');
+        // JournalEntries have no TransId in the Service Layer — fall back to the
+        // JdtNum so the entry field is populated and the idempotency guard above
+        // skips a re-post on the next resend.
+        $order->sap_cancel_cogs_journal_entry = (string) ($result['TransId'] ?? $result['JdtNum'] ?? '');
         $order->sap_cancel_cogs_journal_num = (string) ($result['Number'] ?? $result['JdtNum'] ?? '');
         $order->sap_cancel_cogs_error = null;
         $order->sap_cancel_cogs_response = $result;
