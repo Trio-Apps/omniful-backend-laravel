@@ -2112,6 +2112,42 @@ trait HandlesSapPurchaseAndProducts
     }
 
     /**
+     * True only if the Incoming Payment DocEntry still exists AND is not cancelled.
+     * Lets the flow detect a stale local payment ref (e.g. the team cancelled the
+     * payment in SAP) and recreate instead of trusting the dead reference.
+     */
+    public function incomingPaymentIsActive(int $docEntry): bool
+    {
+        if ($docEntry <= 0) {
+            return false;
+        }
+
+        $response = $this->get("/IncomingPayments({$docEntry})?\$select=DocEntry,Cancelled");
+        if (!$response->successful()) {
+            return false;
+        }
+
+        $payment = (array) ($response->json() ?? []);
+
+        return (string) ($payment['Cancelled'] ?? 'tNO') !== 'tYES';
+    }
+
+    /**
+     * True if the Journal Entry (COGS) still exists in SAP. Used to detect a stale
+     * local COGS ref pointing at a removed journal so the flow can recreate it.
+     * (A cancelled JE still exists in SAP, so the teardown handles cancellation on
+     * the cancel path; this guards the deleted/missing case.)
+     */
+    public function journalEntryExists(int $jdtNum): bool
+    {
+        if ($jdtNum <= 0) {
+            return false;
+        }
+
+        return $this->get("/JournalEntries({$jdtNum})?\$select=JdtNum")->successful();
+    }
+
+    /**
      * Verify that an existing Delivery Note in SAP actually belongs to this
      * Omniful order. Matches against UDFs first, then against BaseEntry on
      * the document lines (the delivery must reference our AR reserve invoice

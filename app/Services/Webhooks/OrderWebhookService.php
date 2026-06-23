@@ -810,11 +810,31 @@ class OrderWebhookService
         }
 
         if (!empty($order->sap_payment_doc_entry)) {
-            if ((string) $order->sap_payment_status === '') {
-                $order->sap_payment_status = 'created';
-                $order->save();
+            // Verify the recorded payment is still ACTIVE in SAP before trusting it.
+            // A payment cancelled in SAP (manually, or by a teardown) leaves a stale
+            // ref — without this check we'd report it as created while SAP has none.
+            $paymentClient = app(SapServiceLayerClient::class);
+            $stillActive = !method_exists($paymentClient, 'incomingPaymentIsActive')
+                || $paymentClient->incomingPaymentIsActive((int) $order->sap_payment_doc_entry);
+
+            if ($stillActive) {
+                if ((string) $order->sap_payment_status === '') {
+                    $order->sap_payment_status = 'created';
+                    $order->save();
+                }
+                return;
             }
-            return;
+
+            \Illuminate\Support\Facades\Log::info('Stale payment ref (cancelled/missing in SAP) — clearing to recreate', [
+                'order' => $order->external_id,
+                'stale_payment_doc_entry' => $order->sap_payment_doc_entry,
+            ]);
+            $order->forceFill([
+                'sap_payment_doc_entry' => null,
+                'sap_payment_doc_num' => null,
+                'sap_payment_status' => null,
+                'sap_payment_error' => null,
+            ])->save();
         }
 
         $invoiceDocEntry = (int) ($order->sap_doc_entry ?? 0);
@@ -1652,11 +1672,30 @@ class OrderWebhookService
 
         // Already posted, or no invoice yet → nothing to do.
         if (!empty($order->sap_cogs_journal_entry)) {
-            if ((string) $order->sap_cogs_status === '') {
-                $order->sap_cogs_status = 'created';
-                $order->save();
+            // Verify the recorded COGS journal still EXISTS in SAP before trusting
+            // it; if it was removed, clear the stale ref and recreate.
+            $cogsClient = app(SapServiceLayerClient::class);
+            $stillExists = !method_exists($cogsClient, 'journalEntryExists')
+                || $cogsClient->journalEntryExists((int) $order->sap_cogs_journal_entry);
+
+            if ($stillExists) {
+                if ((string) $order->sap_cogs_status === '') {
+                    $order->sap_cogs_status = 'created';
+                    $order->save();
+                }
+                return;
             }
-            return;
+
+            \Illuminate\Support\Facades\Log::info('Stale COGS ref (missing in SAP) — clearing to recreate', [
+                'order' => $order->external_id,
+                'stale_cogs_journal_entry' => $order->sap_cogs_journal_entry,
+            ]);
+            $order->forceFill([
+                'sap_cogs_journal_entry' => null,
+                'sap_cogs_journal_num' => null,
+                'sap_cogs_status' => null,
+                'sap_cogs_error' => null,
+            ])->save();
         }
         if (empty($order->sap_doc_entry)) {
             return;
