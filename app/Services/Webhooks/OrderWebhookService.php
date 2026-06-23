@@ -873,27 +873,28 @@ class OrderWebhookService
         }
 
         $client = app(SapServiceLayerClient::class);
+        $paymentMethod = $this->resolvePaymentMethod($data);
+        $paymentPayload = [
+            'invoice_doc_entry' => $invoiceDocEntry,
+            'card_code' => data_get($invoiceResult ?? [], 'CardCode') ?? data_get($data, 'customer.code'),
+            'sum_applied' => $this->resolveIncomingPaymentAmount($data, $invoiceResult),
+            'transfer_date' => data_get($data, 'order_created_at') ?? data_get($data, 'created_at'),
+            'reference' => (string) ($order->external_id ?? ''),
+            'payment_method' => $paymentMethod,
+            'transfer_account' => $this->resolveIncomingPaymentTransferAccount($paymentMethod),
+            'invoice_type_candidates' => $this->resolveIncomingPaymentInvoiceTypeCandidates(),
+            'external_id' => (string) ($order->external_id ?? ''),
+            'order_id' => data_get($data, 'order_id'),
+            'order_alias' => data_get($data, 'order_alias'),
+            'sales_channel' => data_get($data, 'sales_channel'),
+            'source' => data_get($data, 'source'),
+            'source_name' => data_get($data, 'source_name'),
+            'channel' => data_get($data, 'channel'),
+            'channel_name' => data_get($data, 'channel_name'),
+            'store_name' => data_get($data, 'store_name'),
+        ];
         try {
-            $paymentMethod = $this->resolvePaymentMethod($data);
-            $result = $client->createIncomingPaymentForInvoice([
-                'invoice_doc_entry' => $invoiceDocEntry,
-                'card_code' => data_get($invoiceResult ?? [], 'CardCode') ?? data_get($data, 'customer.code'),
-                'sum_applied' => $this->resolveIncomingPaymentAmount($data, $invoiceResult),
-                'transfer_date' => data_get($data, 'order_created_at') ?? data_get($data, 'created_at'),
-                'reference' => (string) ($order->external_id ?? ''),
-                'payment_method' => $paymentMethod,
-                'transfer_account' => $this->resolveIncomingPaymentTransferAccount($paymentMethod),
-                'invoice_type_candidates' => $this->resolveIncomingPaymentInvoiceTypeCandidates(),
-                'external_id' => (string) ($order->external_id ?? ''),
-                'order_id' => data_get($data, 'order_id'),
-                'order_alias' => data_get($data, 'order_alias'),
-                'sales_channel' => data_get($data, 'sales_channel'),
-                'source' => data_get($data, 'source'),
-                'source_name' => data_get($data, 'source_name'),
-                'channel' => data_get($data, 'channel'),
-                'channel_name' => data_get($data, 'channel_name'),
-                'store_name' => data_get($data, 'store_name'),
-            ]);
+            $result = $client->createIncomingPaymentForInvoice($paymentPayload);
         } catch (SapRequestException $e) {
             // Classify "Invoice is already closed or blocked" and friends as a
             // recoverable duplicate-payment scenario: rebind if a matching
@@ -955,24 +956,66 @@ class OrderWebhookService
                 $order->save();
                 return;
             } else {
-                // Record the payment failure but DO NOT rethrow. Rethrowing fails
-                // the whole order job and triggers a retry that re-runs the full
-                // flow — including the resend reversal+recreate — cascading credit
-                // memos and invoices. The invoice itself is created; only the
-                // payment failed (e.g. the 4101005 mandatory-dimension config),
-                // which is recoverable on its own via a later resend/retry.
-                $order->sap_payment_status = 'failed';
-                $order->sap_payment_error = $e->getMessage();
-                $order->sap_payment_response = [
-                    'ignored' => false,
-                    'request_body' => $e->requestBody,
-                    'error_response_body' => $e->responseBody,
-                    'status_code' => $e->statusCode,
-                    'duplicate_inspection' => $inspection,
-                ];
-                $order->save();
+                // No active payment owns this invoice, yet SAP rejected the create
+                // as a duplicate (-1116 "Incoming Payment already exists"). The
+                // blocker is a CANCELLED payment whose U_ZidId still = the order id
+                // (the 10002 guard keys on U_ZidId and ignores cancelled state).
+                // Free the cancelled payments' refs and retry the create once.
+                $retriedPayment = false;
+                $payDupBody = strtolower((string) ($e->responseBody ?? ''));
+                $isPayDuplicate = str_contains($payDupBody, 'already exists')
+                    || str_contains($payDupBody, '(10002)')
+                    || str_contains($payDupBody, '(999)');
 
-                return;
+                if ($isPayDuplicate && method_exists($client, 'freeCancelledOrderPaymentReferences')) {
+                    $freed = 0;
+                    try {
+                        $freed = (int) $client->freeCancelledOrderPaymentReferences((string) ($order->external_id ?? ''));
+                    } catch (\Throwable $freeErr) {
+                        $freed = 0;
+                    }
+
+                    if ($freed > 0) {
+                        try {
+                            $retryPayment = $client->createIncomingPaymentForInvoice($paymentPayload);
+                            if (($retryPayment['ignored'] ?? false) !== true && !empty($retryPayment['DocEntry'])) {
+                                $retryPayment['recovered_after_freeing_cancelled'] = $freed;
+                                $result = $retryPayment;
+                                $retriedPayment = true;
+                                \Illuminate\Support\Facades\Log::info('Payment created after freeing cancelled duplicate blockers', [
+                                    'order' => $order->external_id,
+                                    'freed' => $freed,
+                                    'doc_entry' => $retryPayment['DocEntry'] ?? null,
+                                ]);
+                            }
+                        } catch (\Throwable $retryErr) {
+                            \Illuminate\Support\Facades\Log::warning('Payment retry after freeing cancelled blockers failed', [
+                                'order' => $order->external_id,
+                                'error' => $retryErr->getMessage(),
+                            ]);
+                        }
+                    }
+                }
+
+                if (!$retriedPayment) {
+                    // Record the payment failure but DO NOT rethrow. Rethrowing fails
+                    // the whole order job and triggers a retry that re-runs the full
+                    // flow — including the resend reversal+recreate — cascading credit
+                    // memos and invoices. The invoice itself is created; only the
+                    // payment failed, which is recoverable on its own via a resend.
+                    $order->sap_payment_status = 'failed';
+                    $order->sap_payment_error = $e->getMessage();
+                    $order->sap_payment_response = [
+                        'ignored' => false,
+                        'request_body' => $e->requestBody,
+                        'error_response_body' => $e->responseBody,
+                        'status_code' => $e->statusCode,
+                        'duplicate_inspection' => $inspection,
+                    ];
+                    $order->save();
+
+                    return;
+                }
             }
         }
 

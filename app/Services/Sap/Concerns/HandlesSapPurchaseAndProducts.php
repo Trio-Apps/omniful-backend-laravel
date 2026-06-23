@@ -5317,6 +5317,71 @@ trait HandlesSapPurchaseAndProducts
         return $freed;
     }
 
+    /**
+     * Free the order references on every CANCELLED incoming payment still holding
+     * the order id. Mirrors the invoice/delivery fixes: SAP's (10002) "Incoming
+     * Payment already exists" guard keys on U_ZidId, so a cancelled payment whose
+     * U_ZidId still = the order id blocks a fresh payment (-1116). Renames the
+     * cancelled payments' U_omo + U_ZidId to "<id>-reversed-<docEntry>" (unique).
+     * ACTIVE payments are never touched. Verified on SAP: PATCH on a cancelled
+     * payment's UDFs succeeds, and freeing U_ZidId unblocks the new payment.
+     */
+    public function freeCancelledOrderPaymentReferences(string $externalId): int
+    {
+        $externalId = trim($externalId);
+        if ($externalId === '') {
+            return 0;
+        }
+
+        $udf = trim((string) config('omniful.order_sync.order_number_udf_field', 'U_omo'));
+        if ($udf === '') {
+            $udf = 'U_omo';
+        }
+        $escapedUdf = str_replace("'", "''", $udf);
+        $escapedValue = str_replace("'", "''", $externalId);
+        $filter = rawurlencode('(' . $this->buildOrderReferenceFilter($udf, $escapedUdf, $escapedValue) . ") and DocType eq 'rCustomer'");
+        $response = $this->get("/IncomingPayments?\$filter={$filter}&\$select=DocEntry,Cancelled&\$orderby=DocEntry desc&\$top=50");
+        if (!$response->successful()) {
+            return 0;
+        }
+
+        $freed = 0;
+        foreach ((array) ($response->json('value') ?? []) as $row) {
+            if (!is_array($row) || empty($row['DocEntry'])) {
+                continue;
+            }
+            if ((string) ($row['Cancelled'] ?? 'tNO') !== 'tYES') {
+                continue;
+            }
+
+            $docEntry = (int) $row['DocEntry'];
+            $newRef = $externalId . '-reversed-' . $docEntry;
+            $patchBody = [$udf => $newRef];
+            if (strcasecmp($udf, 'U_ZidId') !== 0) {
+                $patchBody['U_ZidId'] = $newRef;
+            }
+
+            $patch = $this->patch('/IncomingPayments(' . $docEntry . ')', $patchBody);
+            if ($patch->successful() || $patch->status() === 204) {
+                $freed++;
+                Log::info('Freed cancelled payment order refs to unblock fresh create', [
+                    'external_id' => $externalId,
+                    'doc_entry' => $docEntry,
+                    'new_ref' => $newRef,
+                ]);
+            } else {
+                Log::warning('Failed to free cancelled payment order refs', [
+                    'external_id' => $externalId,
+                    'doc_entry' => $docEntry,
+                    'status' => $patch->status(),
+                    'body' => mb_substr((string) $patch->body(), 0, 300),
+                ]);
+            }
+        }
+
+        return $freed;
+    }
+
     private function resolveFreeReversedInvoiceRef(string $udfField, string $externalId): string
     {
         $base = $externalId . '-reversed';
