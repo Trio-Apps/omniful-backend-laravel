@@ -1149,7 +1149,7 @@ trait HandlesSapPurchaseAndProducts
             $escapedField = str_replace("'", "''", $field);
             $filter = rawurlencode("{$escapedField} eq '{$escapedValue}' and DocType eq 'rCustomer'");
             // No $select: SAP UDFs may not exist on this tenant; fetch all fields.
-            $response = $this->get("/IncomingPayments?\$filter={$filter}&\$orderby=DocEntry desc&\$top=1");
+            $response = $this->get("/IncomingPayments?\$filter={$filter}&\$orderby=DocEntry desc&\$top=20");
 
             if (!$response->successful()) {
                 Log::warning('SAP incoming payment UDF lookup failed', [
@@ -1160,21 +1160,40 @@ trait HandlesSapPurchaseAndProducts
                 continue;
             }
 
-            $rows = (array) ($response->json('value') ?? []);
-            $payment = $rows[0] ?? null;
-            if (is_array($payment) && !empty($payment['DocEntry'])) {
+            $payment = $this->firstActiveIncomingPaymentRow((array) ($response->json('value') ?? []));
+            if ($payment !== null) {
                 return $payment;
             }
         }
 
         // Fallback: search Remarks for the standard "order=<externalId>" tag.
         $remarksFilter = rawurlencode("contains(Remarks,'order={$escapedValue}') and DocType eq 'rCustomer'");
-        $response = $this->get("/IncomingPayments?\$filter={$remarksFilter}&\$orderby=DocEntry desc&\$top=1");
+        $response = $this->get("/IncomingPayments?\$filter={$remarksFilter}&\$orderby=DocEntry desc&\$top=20");
         if ($response->successful()) {
-            $rows = (array) ($response->json('value') ?? []);
-            $payment = $rows[0] ?? null;
-            if (is_array($payment) && !empty($payment['DocEntry'])) {
+            $payment = $this->firstActiveIncomingPaymentRow((array) ($response->json('value') ?? []));
+            if ($payment !== null) {
                 return $payment;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * First NON-cancelled incoming payment from a result set. SAP's Cancel leaves
+     * the cancelled payment with the order UDFs/Remarks intact, so a naive "top-1
+     * by DocEntry desc" lookup returns the CANCELLED payment and the idempotency
+     * rebinds a dead reference (DB shows created while SAP has no live payment).
+     * Skipping cancelled payments forces a fresh one to be created.
+     */
+    private function firstActiveIncomingPaymentRow(array $rows): ?array
+    {
+        foreach ($rows as $row) {
+            if (is_array($row)
+                && !empty($row['DocEntry'])
+                && (string) ($row['Cancelled'] ?? 'tNO') !== 'tYES'
+            ) {
+                return $row;
             }
         }
 
