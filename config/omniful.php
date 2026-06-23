@@ -369,13 +369,6 @@ return [
         // Freight expense code for FOREIGN customers. Falls back to the
         // domestic code above when left empty.
         'expense_code_foreign' => (int) env('OMNIFUL_FREIGHT_EXPENSE_CODE_FOREIGN', 2),
-        // Freight revenue G/L account, used to read which cost-center dimensions
-        // the freight expense line may carry. SAP returns a generic -5002 when a
-        // distribution rule is stamped on a dimension the account is NOT relevant
-        // for (e.g. 4101005 is relevant for dimension 1 only). Leave empty to
-        // stamp dimension 1 only (safe default); set it to enable the exact
-        // per-account relevance lookup.
-        'revenue_account' => env('OMNIFUL_FREIGHT_REVENUE_ACCOUNT', ''),
         // When set, freight is posted as a DocumentLines item line (not as a
         // DocumentAdditionalExpense) using PriceAfterVAT = freight_gross. This
         // is the only way to land freight on a clean 2-dp gross on tenants
