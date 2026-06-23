@@ -6605,23 +6605,89 @@ trait HandlesSapPurchaseAndProducts
     {
         $costCenters = $this->getDefaultCostCenterFields($warehouseCode);
 
+        // Stamp ONLY the dimensions the freight revenue account is relevant for.
+        // SAP rejects with a generic "-5002 Internal error" when a distribution
+        // rule is stamped on a dimension the account does not use. The freight
+        // revenue account (e.g. 4101005, foreign freight) is relevant for
+        // dimension 1 ONLY (DistributionRuleRelevant=tYES, DistributionRule2..5
+        // Relevant=tNO) — dimension 2 (the warehouse cost center, e.g. CEN11) is
+        // an item-line dimension, NOT a freight-revenue one. Stamping
+        // DistributionRule2 here was the root cause of -5002 on foreign orders
+        // with freight. Account-relevant dimensions are read per freight account
+        // so domestic/foreign freight each get exactly what their account allows.
+        $relevantDims = $this->freightAccountRelevantDimensions();
+
         $map = [
-            'CostingCode' => 'DistributionRule',
-            'CostingCode2' => 'DistributionRule2',
-            'CostingCode3' => 'DistributionRule3',
-            'CostingCode4' => 'DistributionRule4',
-            'CostingCode5' => 'DistributionRule5',
+            1 => ['cost' => 'CostingCode', 'rule' => 'DistributionRule'],
+            2 => ['cost' => 'CostingCode2', 'rule' => 'DistributionRule2'],
+            3 => ['cost' => 'CostingCode3', 'rule' => 'DistributionRule3'],
+            4 => ['cost' => 'CostingCode4', 'rule' => 'DistributionRule4'],
+            5 => ['cost' => 'CostingCode5', 'rule' => 'DistributionRule5'],
         ];
 
         $fields = [];
-        foreach ($map as $costKey => $ruleKey) {
-            $value = trim((string) ($costCenters[$costKey] ?? ''));
+        foreach ($map as $dimension => $keys) {
+            if (!in_array($dimension, $relevantDims, true)) {
+                continue;
+            }
+            $value = trim((string) ($costCenters[$keys['cost']] ?? ''));
             if ($value !== '') {
-                $fields[$ruleKey] = $value;
+                $fields[$keys['rule']] = $value;
             }
         }
 
         return $fields;
+    }
+
+    /**
+     * Dimensions the FREIGHT revenue account accepts a distribution rule on.
+     * Reads the configured freight revenue account's DistributionRuleNRelevant
+     * flags (cached). Defaults to dimension 1 only — the analytical dimension
+     * freight revenue uses — so we never stamp a dimension the account rejects
+     * (which SAP surfaces as a generic -5002). Override the account it inspects
+     * via config('omniful.order_freight.revenue_account').
+     *
+     * @return array<int,int>
+     */
+    private function freightAccountRelevantDimensions(): array
+    {
+        static $cached = null;
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        $account = trim((string) config('omniful.order_freight.revenue_account', ''));
+        if ($account === '') {
+            return $cached = [1];
+        }
+
+        try {
+            $response = $this->get(
+                "/ChartOfAccounts('" . str_replace("'", "''", $account) . "')"
+                . '?$select=DistributionRuleRelevant,DistributionRule2Relevant,DistributionRule3Relevant,DistributionRule4Relevant,DistributionRule5Relevant'
+            );
+            if (!$response->successful()) {
+                return $cached = [1];
+            }
+            $a = (array) $response->json();
+            $flags = [
+                1 => 'DistributionRuleRelevant',
+                2 => 'DistributionRule2Relevant',
+                3 => 'DistributionRule3Relevant',
+                4 => 'DistributionRule4Relevant',
+                5 => 'DistributionRule5Relevant',
+            ];
+            $dims = [];
+            foreach ($flags as $dimension => $key) {
+                if ((string) ($a[$key] ?? 'tNO') === 'tYES') {
+                    $dims[] = $dimension;
+                }
+            }
+
+            return $cached = ($dims !== [] ? $dims : [1]);
+        } catch (\Throwable) {
+            return $cached = [1];
+        }
     }
 
     /**
