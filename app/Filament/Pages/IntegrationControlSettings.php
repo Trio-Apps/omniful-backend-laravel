@@ -20,6 +20,8 @@ use Filament\Forms\Contracts\HasForms;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Schemas\Components\Section;
+use Filament\Schemas\Components\Tabs;
+use Filament\Schemas\Components\Tabs\Tab;
 use Filament\Schemas\Schema;
 
 class IntegrationControlSettings extends Page implements HasForms
@@ -52,164 +54,189 @@ class IntegrationControlSettings extends Page implements HasForms
     {
         return $schema
             ->components([
-                Section::make('Sync Direction')
-                    ->description('Only the Warehouse master-data sync is active (Omniful → SAP). Item and Supplier syncs are turned off; Inventory continues via its own real-time webhook flow.')
-                    ->schema([
-                        Select::make('sync_direction_warehouses')
-                            ->label('Warehouses / Hubs')
-                            ->options(app(IntegrationDirectionService::class)->options())
-                            ->default(IntegrationDirectionService::OMNIFUL_TO_SAP)
-                            ->helperText('Warehouses/hubs are pushed from Omniful into SAP. Existing warehouses in SAP are updated (already-created are not duplicated).')
-                            ->required(),
+                Tabs::make('Integration Settings')
+                    ->columnSpanFull()
+                    ->persistTabInQueryString()
+                    ->tabs([
+                        Tab::make('Sync')
+                            ->icon('heroicon-o-arrows-right-left')
+                            ->schema([
+                                Section::make('Sync Direction')
+                                    ->description('Only the Warehouse master-data sync is active (Omniful → SAP). Item and Supplier syncs are turned off; Inventory continues via its own real-time webhook flow.')
+                                    ->schema([
+                                        Select::make('sync_direction_warehouses')
+                                            ->label('Warehouses / Hubs')
+                                            ->options(app(IntegrationDirectionService::class)->options())
+                                            ->default(IntegrationDirectionService::OMNIFUL_TO_SAP)
+                                            ->helperText('Warehouses/hubs are pushed from Omniful into SAP. Existing warehouses in SAP are updated (already-created are not duplicated).')
+                                            ->required(),
+                                    ]),
+                                Section::make('Auto Sync (SAP → Omniful)')
+                                    ->description('Automatically pull Items / Suppliers from SAP and push them to Omniful on a schedule, instead of doing it manually from their pages. Requires the server scheduler (php artisan schedule:run) to be running via cron.')
+                                    ->schema([
+                                        Toggle::make('auto_sync_enabled')
+                                            ->label('Enable Auto Sync')
+                                            ->default(false)
+                                            ->helperText('Master switch. When off, nothing runs automatically and you keep using the manual Pull/Push buttons.'),
+                                        TextInput::make('auto_sync_interval_minutes')
+                                            ->label('Run every (minutes)')
+                                            ->numeric()
+                                            ->minValue(1)
+                                            ->default(15)
+                                            ->helperText('How often to run. Master data rarely changes — 15–30 min is plenty and keeps SAP load low.'),
+                                        Toggle::make('auto_sync_items_enabled')
+                                            ->label('Auto sync Items')
+                                            ->default(true)
+                                            ->helperText('Pull pending SAP items and push them to Omniful.'),
+                                        Toggle::make('auto_sync_suppliers_enabled')
+                                            ->label('Auto sync Suppliers')
+                                            ->default(true)
+                                            ->helperText('Pull pending SAP suppliers and push them to Omniful.'),
+                                    ])
+                                    ->columns(2),
+                            ]),
+                        Tab::make('Sales Orders')
+                            ->icon('heroicon-o-shopping-cart')
+                            ->schema([
+                                Section::make('Orders')
+                                    ->description('Control which Omniful orders are turned into SAP documents.')
+                                    ->schema([
+                                        Toggle::make('order_numeric_id_only')
+                                            ->label('Only sync numeric order IDs to SAP')
+                                            ->default(true)
+                                            ->helperText('When on, orders whose id is not fully numeric (e.g. STO_..., RS_234) are ignored — only numeric order ids are pushed to SAP.'),
+                                    ]),
+                                Section::make('Order Tax & Freight')
+                                    ->description('Static sales document mapping defaults used when Omniful payloads are processed into SAP')
+                                    ->schema([
+                                        TextInput::make('order_tax_code_ksa_taxable')
+                                            ->label('KSA Taxable Tax Code')
+                                            ->placeholder('SOV'),
+                                        TextInput::make('order_tax_code_ksa_zero')
+                                            ->label('KSA Zero-Tax Code')
+                                            ->placeholder('EOV'),
+                                        TextInput::make('order_tax_code_foreign')
+                                            ->label('Foreign Tax Code')
+                                            ->placeholder('EOV'),
+                                        TextInput::make('order_freight_expense_code')
+                                            ->label('Freight Expense Code (Domestic)')
+                                            ->placeholder('1')
+                                            ->helperText('SAP freight ExpenseCode for DOMESTIC (KSA) customers. Used when shipping or delivery fee exists in Omniful payload.'),
+                                        TextInput::make('order_freight_expense_code_foreign')
+                                            ->label('Freight Expense Code (Foreign)')
+                                            ->placeholder('2')
+                                            ->helperText('SAP freight ExpenseCode for FOREIGN customers. Falls back to the domestic code when empty.'),
+                                        Toggle::make('order_rounding_enabled')
+                                            ->label('Enable SAP Document Rounding')
+                                            ->default(false)
+                                            ->helperText('Sends Rounding=tYES so SAP rounds the invoice total to a clean 2-dp figure (eliminates the sub-cent freight VAT tail / Payment-on-Account). REQUIRES the SAP Rounding G/L Account to be configured first (Administration → Setup → Financials → G/L Account Determination → Sales → General → Rounding Account). Leave OFF until that account is set, otherwise SAP rejects the invoice.'),
+                                    ]),
+                                Section::make('Order Payments')
+                                    ->description('Configure incoming payment defaults using SAP bank accounts pulled from the finance master catalog')
+                                    ->schema([
+                                        Toggle::make('order_payment_enabled')
+                                            ->label('Enable Incoming Payments')
+                                            ->default(false)
+                                            ->helperText('Disable temporarily to stop creating SAP incoming payments from Omniful sales orders.'),
+                                        Textarea::make('order_payment_method_map')
+                                            ->label('Payment Method Mapping')
+                                            ->rows(5)
+                                            ->placeholder("tamara:CC\ntabby:CC\nvisa:CC\nmaster:CC")
+                                            ->helperText('Format: omniful_method:sap_transfer_account, one pair per line or comma-separated.'),
+                                    ]),
+                            ]),
+                        Tab::make('Journals')
+                            ->icon('heroicon-o-book-open')
+                            ->schema([
+                                Section::make('Order Journal Entries')
+                                    ->description('Configure SAP journal entries created after payment and delivery.')
+                                    ->schema([
+                                        Toggle::make('order_card_fee_journal_enabled')
+                                            ->label('Enable Card Fee Journal')
+                                            ->default(true)
+                                            ->helperText('Creates a commission/card-fee journal after incoming payment is created.'),
+                                        TextInput::make('order_card_fee_expense_account')
+                                            ->label('Card Fee Expense Account')
+                                            ->default(config('omniful.order_payment.card_fee_expense_account'))
+                                            ->placeholder('2102001'),
+                                        TextInput::make('order_card_fee_offset_account')
+                                            ->label('Card Fee Offset Account')
+                                            ->placeholder('Credit account'),
+                                        TextInput::make('order_card_fee_percent')
+                                            ->label('Card Fee Percent')
+                                            ->numeric()
+                                            ->placeholder('Example: 2.5')
+                                            ->helperText('Fallback only when no payment-method fee percent is configured.'),
+                                        TextInput::make('order_card_fee_vat_percent')
+                                            ->label('Card Fee VAT Percent')
+                                            ->numeric()
+                                            ->placeholder('15')
+                                            ->helperText('VAT charged by the payment gateway on the card fee (ZATCA standard 15%).'),
+                                        TextInput::make('order_card_fee_vat_recoverable_account')
+                                            ->label('Card Fee Input VAT Account')
+                                            ->placeholder('Input VAT recoverable G/L account')
+                                            ->helperText('When set, the card-fee journal splits gross into expense + input VAT (3 lines). Leave blank for the legacy 2-line journal.'),
+                                        Textarea::make('order_card_fee_method_percent_map')
+                                            ->label('Card Fee by Payment Method')
+                                            ->rows(8)
+                                            ->default("tamara:4\ntabby:4\ntapkeynet:1.5\ntapmada:0.9\ntapcreditcard:2\ntapapplepay:1.5\ntabbyaddon:1\ntamaraaddon:1.5\nzidpaymada:0.75\nzidpayvisa:1.75")
+                                            ->placeholder("tamara:4%+1.5\ntabby:4\ntapkeynet:1.5|0.25\nzidpayvisa:1.75")
+                                            ->helperText('Format: method:percent or method:percent%+fixed_amount. Examples: tamara:4, tamara:4%+1.5, tapkeynet:1.5|0.25. This drives Enable Card Fee Journal only.'),
+                                        Toggle::make('order_cogs_journal_enabled')
+                                            ->label('Enable COGS Journal')
+                                            ->default(true)
+                                            ->helperText('Creates COGS journal after SAP Delivery is created.'),
+                                        TextInput::make('order_cogs_expense_account')
+                                            ->label('COGS Expense Account')
+                                            ->placeholder('Debit account'),
+                                        TextInput::make('order_cogs_inventory_offset_account')
+                                            ->label('Inventory Offset Account')
+                                            ->placeholder('Credit account'),
+                                        Toggle::make('return_cogs_reversal_enabled')
+                                            ->label('Enable COGS Reversal on Returns / Cancellations')
+                                            ->default(true)
+                                            ->helperText('Reverses the COGS journal when a return or order-cancel credit memo is created. Uses the same COGS accounts above.'),
+                                    ])
+                                    ->columns(2),
+                            ]),
+                        Tab::make('Purchasing')
+                            ->icon('heroicon-o-truck')
+                            ->schema([
+                                Section::make('Purchase Orders')
+                                    ->description('Control how Omniful Purchase Order / GRPO webhooks are turned into SAP documents.')
+                                    ->schema([
+                                        Textarea::make('po_ignored_supplier_codes')
+                                            ->label('Ignored supplier codes (PO/GRPO)')
+                                            ->rows(2)
+                                            ->placeholder('RU-415, M130')
+                                            ->helperText('PO/GRPO webhooks whose supplier code is in this list are ignored — not created in SAP. Separate codes by comma, space or new line. Matched case-insensitively.'),
+                                    ]),
+                                Section::make('Purchase Order Tax')
+                                    ->description('Input VAT codes for Purchase Orders / GRPO. Leave blank to use each SAP Item\'s default purchase tax group. Purchase documents need INPUT VAT codes (e.g. SIV/EIV), not the sales OUTPUT codes above.')
+                                    ->schema([
+                                        TextInput::make('purchase_tax_code_ksa_taxable')
+                                            ->label('KSA Taxable Purchase Tax Code')
+                                            ->placeholder('e.g. SIV (leave blank for item default)'),
+                                        TextInput::make('purchase_tax_code_ksa_zero')
+                                            ->label('KSA Zero Purchase Tax Code')
+                                            ->placeholder('e.g. EIV (leave blank for item default)'),
+                                        TextInput::make('purchase_tax_code_foreign')
+                                            ->label('Foreign Purchase Tax Code')
+                                            ->placeholder('e.g. EIV (leave blank for item default)'),
+                                    ]),
+                            ]),
+                        Tab::make('Cost Centers')
+                            ->icon('heroicon-o-building-office-2')
+                            ->schema([
+                                Section::make('Warehouse Cost Centers')
+                                    ->description('Warehouse-specific cost center mapping is managed from the dedicated Warehouse Cost Centers page.')
+                                    ->schema([
+                                        Toggle::make('apply_to_stock_transfer')
+                                            ->label('Apply cost centers on Stock Transfer lines')
+                                            ->default(false),
+                                    ]),
+                            ]),
                     ]),
-                Section::make('Auto Sync (SAP → Omniful)')
-                    ->description('Automatically pull Items / Suppliers from SAP and push them to Omniful on a schedule, instead of doing it manually from their pages. Requires the server scheduler (php artisan schedule:run) to be running via cron.')
-                    ->schema([
-                        Toggle::make('auto_sync_enabled')
-                            ->label('Enable Auto Sync')
-                            ->default(false)
-                            ->helperText('Master switch. When off, nothing runs automatically and you keep using the manual Pull/Push buttons.'),
-                        TextInput::make('auto_sync_interval_minutes')
-                            ->label('Run every (minutes)')
-                            ->numeric()
-                            ->minValue(1)
-                            ->default(15)
-                            ->helperText('How often to run. Master data rarely changes — 15–30 min is plenty and keeps SAP load low.'),
-                        Toggle::make('auto_sync_items_enabled')
-                            ->label('Auto sync Items')
-                            ->default(true)
-                            ->helperText('Pull pending SAP items and push them to Omniful.'),
-                        Toggle::make('auto_sync_suppliers_enabled')
-                            ->label('Auto sync Suppliers')
-                            ->default(true)
-                            ->helperText('Pull pending SAP suppliers and push them to Omniful.'),
-                    ])
-                    ->columns(2),
-                Section::make('Orders')
-                    ->description('Control which Omniful orders are turned into SAP documents.')
-                    ->schema([
-                        Toggle::make('order_numeric_id_only')
-                            ->label('Only sync numeric order IDs to SAP')
-                            ->default(true)
-                            ->helperText('When on, orders whose id is not fully numeric (e.g. STO_..., RS_234) are ignored — only numeric order ids are pushed to SAP.'),
-                    ]),
-                Section::make('Purchase Orders')
-                    ->description('Control how Omniful Purchase Order / GRPO webhooks are turned into SAP documents.')
-                    ->schema([
-                        Textarea::make('po_ignored_supplier_codes')
-                            ->label('Ignored supplier codes (PO/GRPO)')
-                            ->rows(2)
-                            ->placeholder('RU-415, M130')
-                            ->helperText('PO/GRPO webhooks whose supplier code is in this list are ignored — not created in SAP. Separate codes by comma, space or new line. Matched case-insensitively.'),
-                    ]),
-                Section::make('Warehouse Cost Centers')
-                    ->description('Warehouse-specific cost center mapping is managed from the dedicated Warehouse Cost Centers page.')
-                    ->schema([
-                        Toggle::make('apply_to_stock_transfer')
-                            ->label('Apply cost centers on Stock Transfer lines')
-                            ->default(false),
-                    ]),
-                Section::make('Order Payments')
-                    ->description('Configure incoming payment defaults using SAP bank accounts pulled from the finance master catalog')
-                    ->schema([
-                        Toggle::make('order_payment_enabled')
-                            ->label('Enable Incoming Payments')
-                            ->default(false)
-                            ->helperText('Disable temporarily to stop creating SAP incoming payments from Omniful sales orders.'),
-                        Textarea::make('order_payment_method_map')
-                            ->label('Payment Method Mapping')
-                            ->rows(5)
-                            ->placeholder("tamara:CC\ntabby:CC\nvisa:CC\nmaster:CC")
-                            ->helperText('Format: omniful_method:sap_transfer_account, one pair per line or comma-separated.'),
-                    ]),
-                Section::make('Order Tax & Freight')
-                    ->description('Static sales document mapping defaults used when Omniful payloads are processed into SAP')
-                    ->schema([
-                        TextInput::make('order_tax_code_ksa_taxable')
-                            ->label('KSA Taxable Tax Code')
-                            ->placeholder('SOV'),
-                        TextInput::make('order_tax_code_ksa_zero')
-                            ->label('KSA Zero-Tax Code')
-                            ->placeholder('EOV'),
-                        TextInput::make('order_tax_code_foreign')
-                            ->label('Foreign Tax Code')
-                            ->placeholder('EOV'),
-                        TextInput::make('order_freight_expense_code')
-                            ->label('Freight Expense Code (Domestic)')
-                            ->placeholder('1')
-                            ->helperText('SAP freight ExpenseCode for DOMESTIC (KSA) customers. Used when shipping or delivery fee exists in Omniful payload.'),
-                        TextInput::make('order_freight_expense_code_foreign')
-                            ->label('Freight Expense Code (Foreign)')
-                            ->placeholder('2')
-                            ->helperText('SAP freight ExpenseCode for FOREIGN customers. Falls back to the domestic code when empty.'),
-                        Toggle::make('order_rounding_enabled')
-                            ->label('Enable SAP Document Rounding')
-                            ->default(false)
-                            ->helperText('Sends Rounding=tYES so SAP rounds the invoice total to a clean 2-dp figure (eliminates the sub-cent freight VAT tail / Payment-on-Account). REQUIRES the SAP Rounding G/L Account to be configured first (Administration → Setup → Financials → G/L Account Determination → Sales → General → Rounding Account). Leave OFF until that account is set, otherwise SAP rejects the invoice.'),
-                    ]),
-                Section::make('Purchase Order Tax')
-                    ->description('Input VAT codes for Purchase Orders / GRPO. Leave blank to use each SAP Item\'s default purchase tax group. Purchase documents need INPUT VAT codes (e.g. SIV/EIV), not the sales OUTPUT codes above.')
-                    ->schema([
-                        TextInput::make('purchase_tax_code_ksa_taxable')
-                            ->label('KSA Taxable Purchase Tax Code')
-                            ->placeholder('e.g. SIV (leave blank for item default)'),
-                        TextInput::make('purchase_tax_code_ksa_zero')
-                            ->label('KSA Zero Purchase Tax Code')
-                            ->placeholder('e.g. EIV (leave blank for item default)'),
-                        TextInput::make('purchase_tax_code_foreign')
-                            ->label('Foreign Purchase Tax Code')
-                            ->placeholder('e.g. EIV (leave blank for item default)'),
-                    ]),
-                Section::make('Order Journal Entries')
-                    ->description('Configure SAP journal entries created after payment and delivery.')
-                    ->schema([
-                        Toggle::make('order_card_fee_journal_enabled')
-                            ->label('Enable Card Fee Journal')
-                            ->default(true)
-                            ->helperText('Creates a commission/card-fee journal after incoming payment is created.'),
-                        TextInput::make('order_card_fee_expense_account')
-                            ->label('Card Fee Expense Account')
-                            ->default(config('omniful.order_payment.card_fee_expense_account'))
-                            ->placeholder('2102001'),
-                        TextInput::make('order_card_fee_offset_account')
-                            ->label('Card Fee Offset Account')
-                            ->placeholder('Credit account'),
-                        TextInput::make('order_card_fee_percent')
-                            ->label('Card Fee Percent')
-                            ->numeric()
-                            ->placeholder('Example: 2.5')
-                            ->helperText('Fallback only when no payment-method fee percent is configured.'),
-                        TextInput::make('order_card_fee_vat_percent')
-                            ->label('Card Fee VAT Percent')
-                            ->numeric()
-                            ->placeholder('15')
-                            ->helperText('VAT charged by the payment gateway on the card fee (ZATCA standard 15%).'),
-                        TextInput::make('order_card_fee_vat_recoverable_account')
-                            ->label('Card Fee Input VAT Account')
-                            ->placeholder('Input VAT recoverable G/L account')
-                            ->helperText('When set, the card-fee journal splits gross into expense + input VAT (3 lines). Leave blank for the legacy 2-line journal.'),
-                        Textarea::make('order_card_fee_method_percent_map')
-                            ->label('Card Fee by Payment Method')
-                            ->rows(8)
-                            ->default("tamara:4\ntabby:4\ntapkeynet:1.5\ntapmada:0.9\ntapcreditcard:2\ntapapplepay:1.5\ntabbyaddon:1\ntamaraaddon:1.5\nzidpaymada:0.75\nzidpayvisa:1.75")
-                            ->placeholder("tamara:4%+1.5\ntabby:4\ntapkeynet:1.5|0.25\nzidpayvisa:1.75")
-                            ->helperText('Format: method:percent or method:percent%+fixed_amount. Examples: tamara:4, tamara:4%+1.5, tapkeynet:1.5|0.25. This drives Enable Card Fee Journal only.'),
-                        Toggle::make('order_cogs_journal_enabled')
-                            ->label('Enable COGS Journal')
-                            ->default(true)
-                            ->helperText('Creates COGS journal after SAP Delivery is created.'),
-                        TextInput::make('order_cogs_expense_account')
-                            ->label('COGS Expense Account')
-                            ->placeholder('Debit account'),
-                        TextInput::make('order_cogs_inventory_offset_account')
-                            ->label('Inventory Offset Account')
-                            ->placeholder('Credit account'),
-                        Toggle::make('return_cogs_reversal_enabled')
-                            ->label('Enable COGS Reversal on Returns / Cancellations')
-                            ->default(true)
-                            ->helperText('Reverses the COGS journal when a return or order-cancel credit memo is created. Uses the same COGS accounts above.'),
-                    ])
-                    ->columns(2),
             ])
             ->statePath('data');
     }
