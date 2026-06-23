@@ -288,9 +288,16 @@ class ReturnOrderWebhookService
             return;
         }
 
-        if (!empty($event->sap_cogs_reversal_journal_entry)) {
-            if ((string) $event->sap_cogs_reversal_status === '') {
+        // Already reversed once — bind it and stop. Service Layer JournalEntries
+        // have no TransId (they key on JdtNum), so the journal NUMBER is the
+        // reliable identifier; a re-post would hit "(1000) ... already
+        // integrated". Treat a populated entry OR number as done, and clear any
+        // stale failure left by a previous re-post. (Per-event field, so a
+        // separate return event still creates its own reversal.)
+        if (!empty($event->sap_cogs_reversal_journal_entry) || !empty($event->sap_cogs_reversal_journal_num)) {
+            if ((string) $event->sap_cogs_reversal_status !== 'created') {
                 $event->sap_cogs_reversal_status = 'created';
+                $event->sap_cogs_reversal_error = null;
                 $event->save();
             }
             return;
@@ -339,7 +346,10 @@ class ReturnOrderWebhookService
         }
 
         $event->sap_cogs_reversal_status = 'created';
-        $event->sap_cogs_reversal_journal_entry = (string) ($result['TransId'] ?? '');
+        // JournalEntries have no TransId in the Service Layer — fall back to the
+        // JdtNum so the entry field is populated and the guard above skips a
+        // re-post on the next resend.
+        $event->sap_cogs_reversal_journal_entry = (string) ($result['TransId'] ?? $result['JdtNum'] ?? '');
         $event->sap_cogs_reversal_journal_num = (string) ($result['Number'] ?? $result['JdtNum'] ?? '');
         $event->sap_cogs_reversal_error = null;
         $event->sap_cogs_reversal_response = $result;

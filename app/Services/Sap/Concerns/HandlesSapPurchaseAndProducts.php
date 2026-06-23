@@ -2846,35 +2846,37 @@ trait HandlesSapPurchaseAndProducts
             ];
         }
 
-        // Idempotency: a prior attempt may have already posted this reversal in
-        // SAP (the JE response has no TransId, so the local link is easily lost,
-        // and a re-run would be rejected with "(1000) JE Cogs Debit already
-        // integrated"). If the reversal already exists, bind it instead of
-        // re-posting.
         $orderReference = trim((string) ($data['reference'] ?? ''));
-        $existingReversal = $this->findExistingCogsReversalJournal(
-            $orderReference,
-            (int) ($creditMemo['DocNum'] ?? 0),
-            $expenseAccount
-        );
-        if ($existingReversal !== null) {
-            $existingReversal['ignored'] = false;
-            $existingReversal['recovered'] = true;
-            $existingReversal['request_body'] = null;
-            return $existingReversal;
-        }
+        $cogsOrderReference = trim((string) ($data['cogs_order_reference'] ?? $data['reference'] ?? ''));
 
+        // Determine the reversal amount first — it's needed both to post and to
+        // validate that an already-existing reversal really matches this order.
         $amount = (float) ($data['amount'] ?? $this->extractCreditMemoCogsAmount($creditMemo));
 
         // Bundles/kits carry no stock cost on the credit-memo line (StockPrice 0),
         // so the per-line amount is 0. Fall back to the COGS that was actually
         // posted for the original order (same CogsSP source the order COGS journal
         // uses), so a bundle return still reverses the real component COGS.
-        if ($amount <= 0) {
-            $orderReference = trim((string) ($data['cogs_order_reference'] ?? $data['reference'] ?? ''));
-            if ($orderReference !== '') {
-                $amount = $this->fetchCogsAmountByOrderReference($orderReference);
-            }
+        if ($amount <= 0 && $cogsOrderReference !== '') {
+            $amount = $this->fetchCogsAmountByOrderReference($cogsOrderReference);
+        }
+
+        // Idempotency: a prior attempt may have already posted this reversal in
+        // SAP (the JE response has no TransId, so the local link is easily lost,
+        // and a re-run would be rejected with "(1000) JE Cogs Debit already
+        // integrated"). If a matching reversal already exists, bind it instead of
+        // re-posting.
+        $existingReversal = $this->findExistingCogsReversalJournal(
+            $orderReference,
+            (int) ($creditMemo['DocNum'] ?? 0),
+            $expenseAccount,
+            $amount
+        );
+        if ($existingReversal !== null) {
+            $existingReversal['ignored'] = false;
+            $existingReversal['recovered'] = true;
+            $existingReversal['request_body'] = null;
+            return $existingReversal;
         }
 
         if ($amount <= 0) {
@@ -2923,7 +2925,8 @@ trait HandlesSapPurchaseAndProducts
                 $existingReversal = $this->findExistingCogsReversalJournal(
                     $orderReference,
                     (int) ($creditMemo['DocNum'] ?? 0),
-                    $expenseAccount
+                    $expenseAccount,
+                    $amount
                 );
                 if ($existingReversal !== null) {
                     $existingReversal['ignored'] = false;
@@ -2957,8 +2960,12 @@ trait HandlesSapPurchaseAndProducts
      *
      * @return array<string,mixed>|null
      */
-    public function findExistingCogsReversalJournal(string $orderReference, int $creditMemoDocNum, string $expenseAccount): ?array
-    {
+    public function findExistingCogsReversalJournal(
+        string $orderReference,
+        int $creditMemoDocNum,
+        string $expenseAccount,
+        float $expectedAmount = 0.0
+    ): ?array {
         $orderReference = trim($orderReference);
         $expenseAccount = trim($expenseAccount);
         if ($expenseAccount === '') {
@@ -2978,24 +2985,55 @@ trait HandlesSapPurchaseAndProducts
         }
 
         $filter = rawurlencode(implode(' or ', $clauses));
-        $response = $this->get("/JournalEntries?\$filter={$filter}&\$select=JdtNum,Number,JournalEntryLines&\$top=50");
+        $response = $this->get("/JournalEntries?\$filter={$filter}&\$select=JdtNum,Number,Reference,Memo,JournalEntryLines&\$top=50");
         if (!$response->successful()) {
             return null;
         }
 
+        $tolerance = 0.01;
         foreach ((array) ($response->json('value') ?? []) as $je) {
             if (!is_array($je)) {
                 continue;
             }
+
+            // Re-confirm the JE really belongs to THIS order / credit memo. The
+            // bare "Reference2 eq <DocNum>" clause can match a same-numbered
+            // foreign JE (SAP document-number series are per-object), so never
+            // bind on it alone — require the order reference on Reference or in
+            // the Memo.
+            $jeReference = trim((string) ($je['Reference'] ?? ''));
+            $jeMemo = (string) ($je['Memo'] ?? '');
+            $belongsToOrder = ($orderReference !== '' && $jeReference === $orderReference)
+                || ($orderReference !== '' && str_contains($jeMemo, $orderReference))
+                || ($creditMemoDocNum > 0 && str_contains($jeMemo, (string) $creditMemoDocNum));
+            if (!$belongsToOrder) {
+                continue;
+            }
+
+            // Validate via the NET effect on the expense account: the reversal
+            // CREDITS it (the forward order COGS nets a debit), and — when the
+            // amount is known — the magnitude must match this order's COGS. This
+            // rejects the order COGS journal and any foreign-magnitude entry.
+            $expenseNet = 0.0; // Debit - Credit
             foreach ((array) ($je['JournalEntryLines'] ?? []) as $line) {
-                // The reversal CREDITS the COGS expense account (forward COGS
-                // debits it) — this guards against binding the order COGS or an
-                // unrelated journal that merely shares a reference field.
-                if ((string) ($line['AccountCode'] ?? '') === $expenseAccount
-                    && (float) ($line['Credit'] ?? 0) > 0) {
-                    return $je;
+                if (is_array($line) && (string) ($line['AccountCode'] ?? '') === $expenseAccount) {
+                    $expenseNet += (float) ($line['Debit'] ?? 0) - (float) ($line['Credit'] ?? 0);
                 }
             }
+
+            if ($expenseNet >= -$tolerance) {
+                continue; // not a net credit to the expense account
+            }
+
+            if ($expectedAmount > 0) {
+                $expectedRounded = (float) $this->roundSapAmount($expectedAmount);
+                $epsilon = max($tolerance, $expectedRounded * 0.001);
+                if (abs(abs($expenseNet) - $expectedRounded) > $epsilon) {
+                    continue; // magnitude does not match this order's COGS
+                }
+            }
+
+            return $je;
         }
 
         return null;
