@@ -6542,21 +6542,19 @@ trait HandlesSapPurchaseAndProducts
             'tax_percent' => $freightTaxPercent,
         ]);
 
-        // Expense code differs per customer type: SAP keeps a separate freight
-        // expense definition for DOMESTIC (KSA) vs FOREIGN customers. Mirror
-        // the same local/foreign classification we use to pick the customer
-        // (C00046 vs C00047).
-        $domesticExpenseCode = (int) (
+        // Use the DOMESTIC freight ExpenseCode for ALL customers (local AND
+        // foreign). The foreign freight code (ExpenseCode 2 → revenue account
+        // 4101005) is misconfigured on the LIVE SAP company and rejects the AR
+        // reserve invoice with a generic -5002 — proven by a live bisect:
+        // ExpenseCode 1 posts (201), ExpenseCode 2 fails (-5002) with everything
+        // else identical. Per business decision, foreign freight posts via the
+        // same working ExpenseCode as domestic until the SAP team fixes the
+        // ExpenseCode 2 setup. (order_freight_expense_code_foreign is no longer
+        // consulted; revert here to re-enable per-customer-type codes.)
+        $expenseCode = (int) (
             $this->getIntegrationSettingValue('order_freight_expense_code')
             ?? config('omniful.order_freight.expense_code', 0)
         );
-        $foreignExpenseCode = (int) (
-            $this->getIntegrationSettingValue('order_freight_expense_code_foreign')
-            ?? config('omniful.order_freight.expense_code_foreign', 0)
-        );
-        $expenseCode = $this->isLocalOrderCustomer($data)
-            ? $domesticExpenseCode
-            : ($foreignExpenseCode > 0 ? $foreignExpenseCode : $domesticExpenseCode);
 
         // Send the freight GROSS (tax-inclusive) in DocumentAdditionalExpenses
         // .LineGross. SAP back-computes the net LineTotal and the VAT from this
