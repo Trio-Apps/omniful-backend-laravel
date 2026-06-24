@@ -6811,6 +6811,7 @@ trait HandlesSapPurchaseAndProducts
 
     private function extractOrderFreightDiscountAmount(array $data): float
     {
+        // (1) Explicit discount on the freight additional-charge line.
         $charges = (array) data_get($data, 'invoice.additional_charges', data_get($data, 'additional_charges', []));
         $discount = 0.0;
 
@@ -6826,7 +6827,50 @@ trait HandlesSapPurchaseAndProducts
             }
         }
 
-        return $this->roundSapAmount($discount);
+        if ($discount > 0) {
+            return $this->roundSapAmount($discount);
+        }
+
+        // (2) Omniful frequently reports a shipping waiver only in invoice.discount
+        // and leaves the freight charge's discount_amount = 0. Infer the freight
+        // portion = invoice.discount minus the merchandise (item-level) discount,
+        // capped to the shipping fee. Without this, a free-shipping order books the
+        // shipping discount as a MERCHANDISE discount that can exceed the
+        // merchandise subtotal (>100%), which SAP rejects with -5002
+        // "Enter a discount percentage of less than 100".
+        $invoiceDiscount = (float) (data_get($data, 'invoice.discount') ?? 0);
+        if ($invoiceDiscount <= 0) {
+            return 0.0;
+        }
+
+        $shipping = (float) (
+            data_get($data, 'invoice.shipping_price')
+            ?? data_get($data, 'shipping_price')
+            ?? 0
+        );
+        if ($shipping <= 0) {
+            return 0.0;
+        }
+
+        $itemDiscount = $this->sumOrderItemDiscounts($data);
+        $freightPortion = max($invoiceDiscount - $itemDiscount, 0.0);
+
+        return $this->roundSapAmount(min($freightPortion, $shipping));
+    }
+
+    private function sumOrderItemDiscounts(array $data): float
+    {
+        $items = (array) (data_get($data, 'order_items') ?? data_get($data, 'items') ?? []);
+        $sum = 0.0;
+
+        foreach ($items as $item) {
+            $value = data_get($item, 'discount');
+            if (is_numeric($value) && (float) $value > 0) {
+                $sum += (float) $value;
+            }
+        }
+
+        return $this->roundSapAmount($sum);
     }
 
     private function extractOrderFreightTaxAmount(array $data): float
