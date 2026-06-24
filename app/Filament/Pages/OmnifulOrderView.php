@@ -75,6 +75,31 @@ class OmnifulOrderView extends Page
         return 'Order ' . ($this->record->external_id ?: '#'.$this->record->id);
     }
 
+    protected function getHeaderActions(): array
+    {
+        return [
+            \Filament\Actions\Action::make('forceResend')
+                ->label('Force Resend')
+                ->icon('heroicon-o-arrow-path')
+                ->color('warning')
+                ->requiresConfirmation()
+                ->modalHeading('Force resend this order to SAP?')
+                ->modalDescription('Re-runs the full SAP flow (invoice → payment → delivery → COGS): it re-binds existing SAP documents and completes any missing or blocked step — it does NOT create duplicates. Use this to push a stuck order through.')
+                ->modalSubmitActionLabel('Force Resend')
+                ->action(function (): void {
+                    $result = app(\App\Services\Webhooks\WebhookRetryService::class)
+                        ->forceResendOrder($this->record);
+
+                    $ok = (bool) ($result['ok'] ?? false);
+                    \Filament\Notifications\Notification::make()
+                        ->title($ok ? 'Force resend queued' : 'Force resend failed')
+                        ->body((string) ($result['message'] ?? ''))
+                        ->{$ok ? 'success' : 'danger'}()
+                        ->send();
+                }),
+        ];
+    }
+
     private function buildFlowSteps(): array
     {
         $orderReference = (string) ($this->record->sap_doc_num ?: $this->record->sap_doc_entry ?: '');

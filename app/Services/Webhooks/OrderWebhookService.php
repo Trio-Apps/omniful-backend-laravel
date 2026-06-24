@@ -1606,6 +1606,34 @@ class OrderWebhookService
 
         $invoiceDocEntry = (int) ($order->sap_doc_entry ?? 0);
         if ($invoiceDocEntry <= 0) {
+            // The invoice DocEntry isn't recorded locally — but the AR reserve
+            // invoice may still EXIST in SAP (e.g. DocNum was stored without the
+            // DocEntry, or a teardown cleared it). Recover the DocEntry by the
+            // order reference before blocking, so a real delivery can still be
+            // created instead of permanently stuck on "source order missing".
+            $recoverClient = app(SapServiceLayerClient::class);
+            if (method_exists($recoverClient, 'findExistingArReserveInvoiceForOmnifulOrderReference')) {
+                $recovered = $recoverClient->findExistingArReserveInvoiceForOmnifulOrderReference(
+                    $data,
+                    (string) ($order->external_id ?? '')
+                );
+                $recoveredEntry = (int) (data_get($recovered, 'DocEntry') ?? 0);
+                if ($recoveredEntry > 0) {
+                    $order->sap_doc_entry = (string) $recoveredEntry;
+                    if (empty($order->sap_doc_num) && data_get($recovered, 'DocNum')) {
+                        $order->sap_doc_num = (string) data_get($recovered, 'DocNum');
+                    }
+                    $order->save();
+                    $invoiceDocEntry = $recoveredEntry;
+                    \Illuminate\Support\Facades\Log::info('Delivery: recovered missing invoice DocEntry from SAP', [
+                        'order' => $order->external_id,
+                        'doc_entry' => $recoveredEntry,
+                    ]);
+                }
+            }
+        }
+
+        if ($invoiceDocEntry <= 0) {
             $order->sap_delivery_status = 'blocked';
             $order->sap_delivery_error = 'Delivery blocked: source order is missing in SAP';
             $order->sap_delivery_response = [
