@@ -237,7 +237,7 @@ return [
             // ignored (no SAP document) until they leave hold (new/confirmed).
             'initial_statuses' => ['created', 'new', 'pending', 'confirmed'],
             'delivery_event_contains' => ['ship', 'deliver'],
-            'delivery_statuses' => ['shipped'],
+            'delivery_statuses' => ['shipped', 'delivered'],
             'credit_note_event_contains' => ['cancel'],
             'credit_note_statuses' => ['cancelled', 'canceled', 'returned', 'return_to_origin'],
             'prepaid_indicators' => ['prepaid', 'online', 'card', 'credit_card', 'paid'],

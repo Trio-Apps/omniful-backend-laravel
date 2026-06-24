@@ -479,7 +479,10 @@ class OrderWebhookService
             $this->createCogsJournalAtInvoiceIfEligible($order, $data);
         }
 
-        if (($deliveryEligibility['eligible'] ?? false)) {
+        // A manual force-resend must (re)run the delivery step regardless of the
+        // dispatched event's delivery-eligibility — e.g. an order that moved to
+        // 'delivered' after being stuck still needs its delivery note created.
+        if (($deliveryEligibility['eligible'] ?? false) || $force) {
             $this->createDeliveryIfEligible($order, $data);
         }
 
