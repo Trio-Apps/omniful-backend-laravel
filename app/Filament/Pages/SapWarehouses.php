@@ -38,12 +38,19 @@ class SapWarehouses extends Page implements HasTable
         return [
             TextColumn::make('code')->label('Code')->searchable(),
             TextColumn::make('name')->label('Name')->searchable(),
+            TextColumn::make('type')
+                ->label('Type')
+                ->badge()
+                ->getStateUsing(fn ($record) => data_get($record->payload, 'type'))
+                ->color(fn ($state) => $state === 'retail' ? 'info' : 'gray')
+                ->placeholder('—'),
             TextColumn::make('status')
                 ->label('Status')
                 ->badge()
                 ->color(fn ($state) => match ($state) {
                     'synced' => 'success',
                     'failed' => 'danger',
+                    'skipped' => 'warning',
                     default => 'gray',
                 }),
             TextColumn::make('omniful_status')
@@ -84,6 +91,17 @@ class SapWarehouses extends Page implements HasTable
                 ->modalCancelActionLabel('Close')
                 ->modalContent(fn ($record) => view('filament.pages.sap-sync-error', [
                     'error' => $record->omniful_error,
+                ])),
+            Action::make('payload')
+                ->label('Payload')
+                ->icon('heroicon-o-code-bracket')
+                ->color('gray')
+                ->visible(fn ($record) => !empty($record->payload))
+                ->modalHeading(fn ($record) => 'Omniful Payload — ' . $record->code)
+                ->modalSubmitAction(false)
+                ->modalCancelActionLabel('Close')
+                ->modalContent(fn ($record) => view('filament.pages.sap-warehouse-payload', [
+                    'payload' => $record->payload,
                 ])),
         ];
     }

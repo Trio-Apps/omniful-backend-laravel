@@ -1,0 +1,1 @@
+<pre dir="ltr" style="direction:ltr;text-align:left;max-height:60vh;overflow:auto;background:#0f172a;color:#e2e8f0;padding:14px;border-radius:10px;font-size:12px;line-height:1.55;white-space:pre;margin:0;">{{ json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) }}</pre>

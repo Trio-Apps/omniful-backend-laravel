@@ -257,21 +257,31 @@ class SapWarehouseSyncService
                 ]);
 
                 if (($result['status'] ?? '') === 'skipped_by_udf') {
+                    // Record skipped hubs too (with the full Omniful payload) so
+                    // they are visible on the page instead of silently missing.
+                    if ($code !== '') {
+                        SapWarehouse::updateOrCreate(
+                            ['code' => $code],
+                            [
+                                'name' => $name,
+                                'payload' => $row,
+                                'status' => 'skipped',
+                                'error' => 'Skipped: warehouse integration disabled (U_OmnifulSync) in SAP',
+                            ]
+                        );
+                    }
                     $skipped++;
                     continue;
                 }
 
-                // Mirror ONLY the pushed Omniful hub into the local table so
-                // the page shows exactly what we synced (Omniful → SAP). We
-                // deliberately do NOT pull the full SAP warehouse list back
-                // here — that previously flooded this page with every SAP
-                // warehouse and falsely marked them "pending" for an
-                // Omniful push that no longer runs in this direction.
+                // Mirror the pushed Omniful hub into the local table, storing the
+                // FULL Omniful payload so it can be viewed on the page.
                 if ($code !== '') {
                     SapWarehouse::updateOrCreate(
                         ['code' => $code],
                         [
                             'name' => $name,
+                            'payload' => $row,
                             'status' => 'synced',
                             'omniful_status' => 'synced',
                             'omniful_synced_at' => now(),
@@ -289,6 +299,7 @@ class SapWarehouseSyncService
                         ['code' => $code],
                         [
                             'name' => $name,
+                            'payload' => $row,
                             'status' => 'failed',
                             'error' => $e->getMessage(),
                         ]
