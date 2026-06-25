@@ -1,8 +1,5 @@
 @php
     $related = (array) ($target->related ?? []);
-    $payments = $related['payments'] ?? [];
-    $deliveries = $related['deliveries'] ?? [];
-    $cogs = $related['cogs_journals'] ?? [];
     $lines = (array) ($target->lines ?? []);
 
     $statusColor = match ($target->sap_doc_status) {
@@ -13,80 +10,85 @@
     };
 
     $sections = [
-        ['key' => 'payments', 'label' => 'Incoming payments', 'rows' => $payments, 'num' => 'doc_num'],
-        ['key' => 'deliveries', 'label' => 'Delivery notes', 'rows' => $deliveries, 'num' => 'doc_num'],
-        ['key' => 'cogs', 'label' => 'COGS journals', 'rows' => $cogs, 'num' => 'number'],
+        ['label' => 'Incoming payments', 'rows' => $related['payments'] ?? [], 'num' => 'doc_num'],
+        ['label' => 'Delivery notes', 'rows' => $related['deliveries'] ?? [], 'num' => 'doc_num'],
+        ['label' => 'COGS journals', 'rows' => $related['cogs_journals'] ?? [], 'num' => 'number'],
     ];
 @endphp
 
-<div class="space-y-4">
-    {{-- Invoice summary --}}
-    <div class="rounded-xl border border-gray-200 dark:border-white/10 bg-gray-50/60 dark:bg-white/5 p-4">
-        <div class="flex items-center justify-between gap-3 mb-3">
-            <div class="text-sm text-gray-500">AR Reserve Invoice</div>
+<style>
+    .sct-wrap { display: flex; flex-direction: column; gap: 0.85rem; }
+    .sct-card { border: 1px solid #e5e7eb; border-radius: 14px; padding: 0.95rem 1.05rem; background: #fafafa; }
+    .sct-head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.7rem; }
+    .sct-title { font-size: 0.8rem; color: #6b7280; font-weight: 600; }
+    .sct-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem 1.75rem; }
+    .sct-pair { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; font-size: 0.875rem; padding: 0.15rem 0; border-bottom: 1px dashed #eceff1; }
+    .sct-k { color: #6b7280; }
+    .sct-v { font-weight: 600; color: #1f2937; }
+    .sct-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .sct-docs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.65rem; }
+    .sct-doccard { border: 1px solid #e5e7eb; border-radius: 12px; padding: 0.75rem 0.85rem; background: #fff; }
+    .sct-label { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: #6b7280; margin-bottom: 0.55rem; }
+    .sct-list { display: flex; flex-direction: column; gap: 0.4rem; }
+    .sct-num { display: flex; align-items: center; gap: 0.45rem; font-size: 0.9rem; font-weight: 600; color: #173830; }
+    .sct-none { font-size: 0.85rem; color: #9ca3af; }
+    .sct-x { font-size: 0.66rem; font-weight: 700; color: #b42318; background: #fdeaea; border-radius: 999px; padding: 0.05rem 0.45rem; }
+    .sct-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+    .sct-chip { display: inline-flex; align-items: center; gap: 0.3rem; background: #eef5f3; border: 1px solid #dcebe7; border-radius: 10px; padding: 0.28rem 0.6rem; font-size: 0.85rem; color: #214f47; }
+    .sct-err { border: 1px solid #f3c4c4; background: #fdf0f0; color: #a12c2c; border-radius: 12px; padding: 0.6rem 0.85rem; font-size: 0.85rem; }
+    @media (max-width: 640px) {
+        .sct-docs { grid-template-columns: 1fr; }
+        .sct-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+<div class="sct-wrap">
+    <div class="sct-card">
+        <div class="sct-head">
+            <div class="sct-title">AR Reserve Invoice</div>
             <x-filament::badge :color="$statusColor">{{ $target->sap_doc_status ?? '—' }}</x-filament::badge>
         </div>
-
-        <dl class="grid grid-cols-2 gap-x-8 gap-y-2 text-sm">
-            <div class="flex items-center justify-between gap-3">
-                <dt class="text-gray-500">DocNum</dt>
-                <dd class="font-mono font-semibold">{{ $target->doc_num ?? '—' }}</dd>
-            </div>
-            <div class="flex items-center justify-between gap-3">
-                <dt class="text-gray-500">DocEntry</dt>
-                <dd class="font-mono">{{ $target->doc_entry }}</dd>
-            </div>
-            <div class="flex items-center justify-between gap-3">
-                <dt class="text-gray-500">Order (U_omo)</dt>
-                <dd class="font-mono">{{ $target->order_external_id ?? '—' }}</dd>
-            </div>
-            <div class="flex items-center justify-between gap-3">
-                <dt class="text-gray-500">Customer</dt>
-                <dd class="font-mono">{{ $target->card_code ?? '—' }}</dd>
-            </div>
-            <div class="flex items-center justify-between gap-3">
-                <dt class="text-gray-500">Total</dt>
-                <dd class="font-semibold">{{ $target->doc_total === null ? '—' : number_format((float) $target->doc_total, 2) }}</dd>
-            </div>
-        </dl>
+        <div class="sct-grid">
+            <div class="sct-pair"><span class="sct-k">DocNum</span><span class="sct-v sct-mono">{{ $target->doc_num ?? '—' }}</span></div>
+            <div class="sct-pair"><span class="sct-k">DocEntry</span><span class="sct-v sct-mono">{{ $target->doc_entry }}</span></div>
+            <div class="sct-pair"><span class="sct-k">Order (U_omo)</span><span class="sct-v sct-mono">{{ $target->order_external_id ?? '—' }}</span></div>
+            <div class="sct-pair"><span class="sct-k">Customer</span><span class="sct-v sct-mono">{{ $target->card_code ?? '—' }}</span></div>
+            <div class="sct-pair"><span class="sct-k">Total</span><span class="sct-v">{{ $target->doc_total === null ? '—' : number_format((float) $target->doc_total, 2) }}</span></div>
+        </div>
     </div>
 
-    {{-- Related documents --}}
-    <div class="grid gap-3 sm:grid-cols-3">
+    <div class="sct-docs">
         @foreach ($sections as $section)
-            <div class="rounded-xl border border-gray-200 dark:border-white/10 p-4">
-                <div class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">{{ $section['label'] }}</div>
-
+            <div class="sct-doccard">
+                <div class="sct-label">{{ $section['label'] }}</div>
                 @if (empty($section['rows']))
-                    <div class="text-sm text-gray-400">None</div>
+                    <div class="sct-none">None</div>
                 @else
-                    <ul class="space-y-1.5">
+                    <div class="sct-list">
                         @foreach ($section['rows'] as $row)
-                            <li class="flex items-center gap-2">
-                                <span class="font-mono text-sm font-medium">{{ $row[$section['num']] ?? ($row['jdt_num'] ?? '—') }}</span>
+                            <div class="sct-num">
+                                <span class="sct-mono">{{ $row[$section['num']] ?? ($row['jdt_num'] ?? '—') }}</span>
                                 @if (! empty($row['cancelled']))
-                                    <x-filament::badge color="danger" size="sm">cancelled</x-filament::badge>
+                                    <span class="sct-x">cancelled</span>
                                 @endif
-                            </li>
+                            </div>
                         @endforeach
-                    </ul>
+                    </div>
                 @endif
             </div>
         @endforeach
     </div>
 
-    {{-- Invoice lines --}}
-    <div class="rounded-xl border border-gray-200 dark:border-white/10 p-4">
-        <div class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Invoice lines</div>
+    <div class="sct-card">
+        <div class="sct-label">Invoice lines</div>
         @if (empty($lines))
-            <div class="text-sm text-gray-400">—</div>
+            <div class="sct-none">—</div>
         @else
-            <div class="flex flex-wrap gap-2">
+            <div class="sct-chips">
                 @foreach ($lines as $line)
-                    <span class="inline-flex items-center gap-1 rounded-lg bg-gray-100 dark:bg-white/10 px-2.5 py-1 text-sm">
-                        <span class="font-mono">{{ $line['item'] ?? '' }}</span>
-                        <span class="text-gray-500">×</span>
-                        <span class="font-semibold">{{ rtrim(rtrim(number_format((float) ($line['qty'] ?? 0), 2), '0'), '.') }}</span>
+                    <span class="sct-chip">
+                        <span class="sct-mono">{{ $line['item'] ?? '' }}</span> ×
+                        <strong>{{ rtrim(rtrim(number_format((float) ($line['qty'] ?? 0), 2), '0'), '.') }}</strong>
                     </span>
                 @endforeach
             </div>
@@ -94,8 +96,6 @@
     </div>
 
     @if (! empty($target->last_error))
-        <div class="rounded-xl border border-danger-200 bg-danger-50 dark:bg-danger-500/10 p-3 text-sm text-danger-700 dark:text-danger-400">
-            {{ $target->last_error }}
-        </div>
+        <div class="sct-err">{{ $target->last_error }}</div>
     @endif
 </div>
