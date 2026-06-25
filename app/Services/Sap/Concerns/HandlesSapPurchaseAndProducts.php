@@ -5318,6 +5318,395 @@ trait HandlesSapPurchaseAndProducts
     }
 
     /**
+     * MAINTENANCE: fully reverse ONE AR Reserve Invoice that was posted for a
+     * wrongly auto-created item, stamping a "-0reversed" marker on the order
+     * references. Mirrors the order-cancellation flow:
+     *   1) cancel the invoice's incoming payment(s) + delivery note(s)
+     *   2) re-read the (now-reopened) invoice and post a base-referenced AR
+     *      Credit Memo to reverse the financials — stamped U_omo / U_ZidId =
+     *      "<order>-0reversed" so the reversal batch is easy to find
+     *   3) rename the original invoice's U_omo / NumAtCard / U_ZidId to the same
+     *      marker so the live order id is released, and mark the cancelled
+     *      payment / delivery refs too
+     *   4) post a COGS reversal journal for the credit memo (Reference = order
+     *      id, Reference2 = credit-memo DocNum — same convention as cancellation)
+     *
+     * @return array<string,mixed>
+     */
+    public function cleanupReverseInvoice(int $docEntry): array
+    {
+        $marker = '-0reversed';
+
+        if ($docEntry <= 0) {
+            return ['ok' => false, 'doc_entry' => $docEntry, 'reason' => 'Missing invoice doc entry'];
+        }
+
+        $invoice = $this->getArReserveInvoice($docEntry);
+        if ($invoice === []) {
+            return ['ok' => false, 'doc_entry' => $docEntry, 'reason' => 'Invoice not found in SAP'];
+        }
+
+        $docNum = (int) ($invoice['DocNum'] ?? 0);
+        $orderUdf = trim((string) config('omniful.order_sync.order_number_udf_field', 'U_omo'));
+        if ($orderUdf === '') {
+            $orderUdf = 'U_omo';
+        }
+        $externalId = trim((string) ($invoice[$orderUdf] ?? ''));
+        $omoLower = strtolower($externalId);
+
+        // Already reversed (ref carries a reversal/cancel marker) or has no live
+        // order reference — nothing to do.
+        if ($externalId === '' || str_contains($omoLower, 'reversed')
+            || str_contains($omoLower, '-reverse') || str_contains($omoLower, '-cancel')) {
+            return [
+                'ok' => true,
+                'skipped' => true,
+                'doc_entry' => $docEntry,
+                'doc_num' => $docNum,
+                'order' => $externalId,
+                'reason' => 'Invoice already reversed or carries no live order reference',
+            ];
+        }
+
+        // 1) cancel dependent incoming payments + delivery notes (reopens the invoice)
+        $teardown = $this->tearDownOrderDependentsForResend($externalId);
+
+        // 2) re-read the invoice for its post-teardown status + lines
+        $invoice = $this->getArReserveInvoice($docEntry);
+        $isCancelled = (string) ($invoice['Cancelled'] ?? 'tNO') === 'tYES'
+            || in_array((string) ($invoice['CancelStatus'] ?? ''), ['csYes', 'csCancellation'], true);
+        $isClosed = (string) ($invoice['DocumentStatus'] ?? '') === 'bost_Close';
+
+        $markerRef = $this->resolveFreeReversedInvoiceRef($orderUdf, $externalId, $marker);
+        $creditMemo = null;
+
+        if (!$isCancelled && !$isClosed) {
+            $creditLines = [];
+            foreach ((array) ($invoice['DocumentLines'] ?? []) as $line) {
+                if (!is_array($line)) {
+                    continue;
+                }
+                $lineQty = (float) ($line['Quantity'] ?? 0);
+                if ($lineQty <= 0) {
+                    continue;
+                }
+                $creditLines[] = [
+                    'BaseType' => 13,
+                    'BaseEntry' => $docEntry,
+                    'BaseLine' => (int) ($line['LineNum'] ?? 0),
+                    'Quantity' => $lineQty,
+                ];
+            }
+
+            if ($creditLines === []) {
+                return ['ok' => false, 'doc_entry' => $docEntry, 'doc_num' => $docNum, 'reason' => 'Invoice has no lines to reverse'];
+            }
+
+            $today = now()->format('Y-m-d');
+            $creditBody = [
+                'CardCode' => (string) ($invoice['CardCode'] ?? ''),
+                'DocDate' => $today,
+                'DocDueDate' => $today,
+                'TaxDate' => $today,
+                'DocumentLines' => $creditLines,
+                'Comments' => 'Item-cleanup reversal of AR reserve invoice DocNum '
+                    . ($docNum ?: $docEntry) . ' for Omniful order ' . $externalId,
+                $orderUdf => $markerRef,
+            ];
+            if ($orderUdf !== 'U_ZidId') {
+                $creditBody['U_ZidId'] = $markerRef;
+            }
+
+            $creditResponse = $this->post('/CreditNotes', $creditBody);
+            if (!$creditResponse->successful()) {
+                return [
+                    'ok' => false,
+                    'doc_entry' => $docEntry,
+                    'doc_num' => $docNum,
+                    'reason' => 'Credit memo create failed: ' . $creditResponse->status() . ' ' . $creditResponse->body(),
+                ];
+            }
+            $creditMemo = $creditResponse->json() ?? [];
+        }
+
+        // 3) release the live order id on the original invoice
+        $patchBody = [$orderUdf => $markerRef, 'NumAtCard' => $markerRef];
+        if ($orderUdf !== 'U_ZidId') {
+            $patchBody['U_ZidId'] = $markerRef;
+        }
+        $patch = $this->patch('/Invoices(' . $docEntry . ')', $patchBody);
+        if (!$patch->successful() && $patch->status() !== 204) {
+            return [
+                'ok' => false,
+                'doc_entry' => $docEntry,
+                'doc_num' => $docNum,
+                'credit_memo_doc_entry' => is_array($creditMemo) ? (int) ($creditMemo['DocEntry'] ?? 0) : null,
+                'reason' => 'Failed to free invoice order references: ' . $patch->status() . ' ' . $patch->body(),
+            ];
+        }
+
+        // 3b) mark the cancelled payment / delivery refs too (best-effort)
+        $this->markCancelledDependentsReversed($externalId, $marker);
+
+        // 4) COGS reversal journal for the credit memo (same Reference convention as cancellation)
+        $cogs = null;
+        $creditMemoDocEntry = is_array($creditMemo) ? (int) ($creditMemo['DocEntry'] ?? 0) : 0;
+        if ($creditMemoDocEntry > 0) {
+            $expense = (string) ($this->getIntegrationSettingValue('order_cogs_expense_account')
+                ?? config('omniful.order_accounting.cogs_expense_account', ''));
+            $offset = (string) ($this->getIntegrationSettingValue('order_cogs_inventory_offset_account')
+                ?? config('omniful.order_accounting.inventory_offset_account', ''));
+
+            if (trim($expense) === '' || trim($offset) === '') {
+                $cogs = ['ignored' => true, 'reason' => 'COGS expense/offset account not configured'];
+            } else {
+                try {
+                    $cogs = $this->createCogsReversalJournalForCreditMemo([
+                        'credit_memo_doc_entry' => $creditMemoDocEntry,
+                        'reference' => $externalId,
+                        'cogs_order_reference' => $externalId,
+                        'memo' => 'COGS reversal from item-cleanup of Omniful order ' . $externalId,
+                        'expense_account' => $expense,
+                        'offset_account' => $offset,
+                    ]);
+                } catch (\Throwable $e) {
+                    $cogs = ['ignored' => false, 'error' => $e->getMessage()];
+                }
+            }
+        }
+
+        Log::info('Item-cleanup invoice reversal complete', [
+            'invoice_doc_entry' => $docEntry,
+            'doc_num' => $docNum,
+            'order' => $externalId,
+            'credit_memo_doc_entry' => $creditMemoDocEntry ?: null,
+            'new_ref' => $markerRef,
+            'payments_cancelled' => $teardown['payments'] ?? 0,
+            'deliveries_cancelled' => $teardown['deliveries'] ?? 0,
+        ]);
+
+        return [
+            'ok' => true,
+            'doc_entry' => $docEntry,
+            'doc_num' => $docNum,
+            'order' => $externalId,
+            'new_ref' => $markerRef,
+            'credit_memo_doc_entry' => $creditMemoDocEntry ?: null,
+            'credit_memo_doc_num' => is_array($creditMemo) ? (int) ($creditMemo['DocNum'] ?? 0) : null,
+            'payments_cancelled' => $teardown['payments'] ?? 0,
+            'deliveries_cancelled' => $teardown['deliveries'] ?? 0,
+            'cogs' => $cogs,
+        ];
+    }
+
+    /**
+     * Rename the order references on the (now-cancelled) incoming payments and
+     * delivery notes of an order to "<order><marker>-<docEntry>" so the live id
+     * is fully released and the reversed batch is traceable. Best-effort.
+     */
+    private function markCancelledDependentsReversed(string $externalId, string $marker): void
+    {
+        $externalId = trim($externalId);
+        if ($externalId === '') {
+            return;
+        }
+
+        $udf = trim((string) config('omniful.order_sync.order_number_udf_field', 'U_omo'));
+        if ($udf === '') {
+            $udf = 'U_omo';
+        }
+        $escUdf = str_replace("'", "''", $udf);
+        $escValue = str_replace("'", "''", $externalId);
+        $filter = rawurlencode("{$escUdf} eq '{$escValue}'");
+
+        foreach (['/IncomingPayments', '/DeliveryNotes'] as $entity) {
+            $response = $this->get("{$entity}?\$filter={$filter}&\$select=DocEntry&\$top=50");
+            if (!$response->successful()) {
+                continue;
+            }
+            foreach ((array) ($response->json('value') ?? []) as $row) {
+                if (!is_array($row) || empty($row['DocEntry'])) {
+                    continue;
+                }
+                $entry = (int) $row['DocEntry'];
+                $newRef = $externalId . $marker . '-' . $entry;
+                $body = [$udf => $newRef];
+                if ($udf !== 'U_ZidId') {
+                    $body['U_ZidId'] = $newRef;
+                }
+                $this->patch("{$entity}({$entry})", $body);
+            }
+        }
+    }
+
+    /**
+     * Find DocEntries of AR invoices whose lines contain the given ItemCode.
+     * Uses the OData any() collection filter; falls back to a capped paginated
+     * scan when the Service Layer rejects the navigation filter.
+     *
+     * @return int[]
+     */
+    public function findInvoiceDocEntriesByItemCode(string $itemCode): array
+    {
+        $itemCode = trim($itemCode);
+        if ($itemCode === '') {
+            return [];
+        }
+
+        $esc = str_replace("'", "''", $itemCode);
+        $filter = rawurlencode("DocumentLines/any(d: d/ItemCode eq '{$esc}')");
+        $response = $this->get("/Invoices?\$filter={$filter}&\$select=DocEntry&\$orderby=DocEntry desc&\$top=200");
+
+        if ($response->successful()) {
+            $entries = [];
+            foreach ((array) ($response->json('value') ?? []) as $row) {
+                if (is_array($row) && !empty($row['DocEntry'])) {
+                    $entries[] = (int) $row['DocEntry'];
+                }
+            }
+
+            return array_values(array_unique($entries));
+        }
+
+        Log::warning('Invoice-by-item any() filter rejected; falling back to scan', [
+            'item_code' => $itemCode,
+            'status' => $response->status(),
+        ]);
+
+        return $this->scanInvoiceDocEntriesByItemCode($itemCode);
+    }
+
+    /**
+     * Fallback for findInvoiceDocEntriesByItemCode: paginate /Invoices and match
+     * the ItemCode inside DocumentLines, capped by the scan limit.
+     *
+     * @return int[]
+     */
+    private function scanInvoiceDocEntriesByItemCode(string $itemCode): array
+    {
+        $limit = (int) config('services.sap.duplicate_invoice_scan_limit', 2000);
+        $page = 100;
+        $skip = 0;
+        $entries = [];
+
+        while ($skip < $limit) {
+            $response = $this->get("/Invoices?\$select=DocEntry,DocumentLines&\$orderby=DocEntry desc&\$top={$page}&\$skip={$skip}");
+            if (!$response->successful()) {
+                break;
+            }
+            $rows = (array) ($response->json('value') ?? []);
+            if ($rows === []) {
+                break;
+            }
+            foreach ($rows as $row) {
+                foreach ((array) ($row['DocumentLines'] ?? []) as $line) {
+                    if (is_array($line) && (string) ($line['ItemCode'] ?? '') === $itemCode) {
+                        $entries[] = (int) ($row['DocEntry'] ?? 0);
+                        break;
+                    }
+                }
+            }
+            if (count($rows) < $page) {
+                break;
+            }
+            $skip += $page;
+        }
+
+        return array_values(array_unique(array_filter($entries)));
+    }
+
+    /**
+     * Find AR invoice DocEntries by SAP DocNum.
+     *
+     * @return int[]
+     */
+    public function findInvoiceDocEntriesByDocNum(string $docNum): array
+    {
+        $docNum = trim($docNum);
+        if ($docNum === '') {
+            return [];
+        }
+
+        $filter = is_numeric($docNum)
+            ? rawurlencode('DocNum eq ' . $docNum)
+            : rawurlencode("DocNum eq '" . str_replace("'", "''", $docNum) . "'");
+        $response = $this->get("/Invoices?\$filter={$filter}&\$select=DocEntry&\$top=10");
+        if (!$response->successful()) {
+            return [];
+        }
+
+        $entries = [];
+        foreach ((array) ($response->json('value') ?? []) as $row) {
+            if (is_array($row) && !empty($row['DocEntry'])) {
+                $entries[] = (int) $row['DocEntry'];
+            }
+        }
+
+        return array_values(array_unique($entries));
+    }
+
+    /**
+     * Read-only preview rows for a set of invoice DocEntries (cleanup UI).
+     *
+     * @param int[] $docEntries
+     * @return array<int,array<string,mixed>>
+     */
+    public function previewInvoicesForCleanup(array $docEntries): array
+    {
+        $orderUdf = trim((string) config('omniful.order_sync.order_number_udf_field', 'U_omo'));
+        if ($orderUdf === '') {
+            $orderUdf = 'U_omo';
+        }
+
+        $rows = [];
+        $seen = [];
+        foreach ($docEntries as $docEntry) {
+            $docEntry = (int) $docEntry;
+            if ($docEntry <= 0 || isset($seen[$docEntry])) {
+                continue;
+            }
+            $seen[$docEntry] = true;
+            if (count($rows) >= 200) {
+                break;
+            }
+
+            $response = $this->get('/Invoices(' . $docEntry . ')');
+            if (!$response->successful()) {
+                continue;
+            }
+            $inv = $response->json() ?? [];
+
+            $lines = [];
+            foreach ((array) ($inv['DocumentLines'] ?? []) as $line) {
+                if (!is_array($line)) {
+                    continue;
+                }
+                $lines[] = [
+                    'item' => (string) ($line['ItemCode'] ?? ''),
+                    'qty' => (float) ($line['Quantity'] ?? 0),
+                ];
+            }
+
+            $omo = (string) ($inv[$orderUdf] ?? '');
+            $omoLower = strtolower($omo);
+            $rows[] = [
+                'doc_entry' => $docEntry,
+                'doc_num' => (int) ($inv['DocNum'] ?? 0),
+                'card_code' => (string) ($inv['CardCode'] ?? ''),
+                'order' => $omo,
+                'doc_total' => (float) ($inv['DocTotal'] ?? 0),
+                'cancelled' => (string) ($inv['Cancelled'] ?? 'tNO') === 'tYES',
+                'status' => (string) ($inv['DocumentStatus'] ?? ''),
+                'already_reversed' => str_contains($omoLower, 'reversed')
+                    || str_contains($omoLower, '-reverse') || str_contains($omoLower, '-cancel'),
+                'lines' => $lines,
+            ];
+        }
+
+        return $rows;
+    }
+
+    /**
      * Find a free "<externalId>-reversed" order-reference value for the renamed
      * invoice, appending -1, -2 ... when an invoice with that value already
      * exists (so repeated reversals of the same order do not collide).
@@ -5661,9 +6050,9 @@ trait HandlesSapPurchaseAndProducts
         return $freed;
     }
 
-    private function resolveFreeReversedInvoiceRef(string $udfField, string $externalId): string
+    private function resolveFreeReversedInvoiceRef(string $udfField, string $externalId, string $reversedMarker = '-reversed'): string
     {
-        $base = $externalId . '-reversed';
+        $base = $externalId . $reversedMarker;
         $candidate = $base;
         $suffix = 0;
 
