@@ -234,17 +234,32 @@ class StockTransferWebhookService
 
     private function isActionableStockTransferEvent(string $eventName, string $status): bool
     {
-        if ($eventName !== '') {
-            if (str_contains($eventName, 'request-approve') || str_contains($eventName, '.received.')) {
+        // STRICT: only the configured events (default sto.received.event +
+        // sto.shipped.event) post to SAP. Every other event/status is ignored.
+        $eventName = strtolower(trim($eventName));
+        if ($eventName === '') {
+            return false;
+        }
+
+        $allowedEvents = (array) config('omniful.stock_transfer.actionable_events', ['sto.received.event', 'sto.shipped.event']);
+        foreach ($allowedEvents as $allowed) {
+            $allowed = strtolower(trim((string) $allowed));
+            if ($allowed === '') {
+                continue;
+            }
+            if ($eventName === $allowed || str_contains($eventName, $allowed)) {
+                return true;
+            }
+            // Tolerant fallback: match the distinctive token (e.g. ".received.")
+            // so a minor event-name formatting difference still resolves.
+            $parts = array_values(array_filter(explode('.', $allowed)));
+            $token = $parts[1] ?? ($parts[0] ?? '');
+            if ($token !== '' && str_contains($eventName, '.' . $token . '.')) {
                 return true;
             }
         }
 
-        if ($status === '') {
-            return false;
-        }
-
-        return in_array($status, ['accepted', 'approved', 'received', 'completed'], true);
+        return false;
     }
 
     private function extractStockTransferRequestId(array $data, array $payload): ?string

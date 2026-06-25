@@ -452,6 +452,12 @@ return [
         'in_transit_enabled' => (bool) env('OMNIFUL_IN_TRANSIT_ENABLED', false),
         'in_transit_warehouse' => env('OMNIFUL_IN_TRANSIT_WAREHOUSE', ''),
         'force_in_transit' => (bool) env('OMNIFUL_IN_TRANSIT_FORCE', false),
+        // ONLY these Omniful stock-transfer events post to SAP; every other event
+        // (and any status) is ignored. Comma-separated env override.
+        'actionable_events' => array_values(array_filter(array_map(
+            fn ($e) => trim((string) $e),
+            explode(',', (string) env('OMNIFUL_STO_ACTIONABLE_EVENTS', 'sto.received.event,sto.shipped.event'))
+        ))),
         // Stamp the destination warehouse of each StockTransfer line into this
         // row-level UDF (in addition to the standard WarehouseCode). Set empty
         // to disable. Requires the UDF to exist on the WTR1 (lines) table.
