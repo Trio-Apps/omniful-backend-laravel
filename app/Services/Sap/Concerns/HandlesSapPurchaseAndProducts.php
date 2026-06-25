@@ -5433,35 +5433,11 @@ trait HandlesSapPurchaseAndProducts
 
         $creditMemoDocEntry = is_array($creditMemo) ? (int) ($creditMemo['DocEntry'] ?? 0) : 0;
 
-        // 3) COGS reversal journal (idempotent) — only when a credit memo exists
-        $cogs = null;
-        if ($creditMemoDocEntry > 0) {
-            $expense = (string) ($this->getIntegrationSettingValue('order_cogs_expense_account')
-                ?? config('omniful.order_accounting.cogs_expense_account', ''));
-            $offset = (string) ($this->getIntegrationSettingValue('order_cogs_inventory_offset_account')
-                ?? config('omniful.order_accounting.inventory_offset_account', ''));
-
-            if (trim($expense) === '' || trim($offset) === '') {
-                $cogs = ['ok' => false, 'reason' => 'COGS expense/offset account not configured'];
-            } else {
-                try {
-                    $cogs = $this->createCogsReversalJournalForCreditMemo([
-                        'credit_memo_doc_entry' => $creditMemoDocEntry,
-                        'reference' => $baseOrderId,
-                        'cogs_order_reference' => $baseOrderId,
-                        'memo' => 'COGS reversal from item-cleanup of Omniful order ' . $baseOrderId,
-                        'expense_account' => $expense,
-                        'offset_account' => $offset,
-                    ]);
-                    if (!is_array($cogs)) {
-                        $cogs = [];
-                    }
-                    $cogs['ok'] = true; // success (the method throws on a real failure)
-                } catch (\Throwable $e) {
-                    $cogs = ['ok' => false, 'reason' => $e->getMessage()];
-                }
-            }
-        }
+        // 3) COGS reversal — mirror the forward COGS journal directly (swap
+        //    Debit<->Credit on the same accounts/amounts). A reserve-invoice credit
+        //    memo carries no stock cost, so deriving the amount from it yields zero
+        //    and posts nothing; mirroring the posted COGS journal is deterministic.
+        $cogs = $this->reverseCogsJournalForOrder($baseOrderId);
 
         // 4) release the live order id on the invoice (only if it still holds it)
         if (strcasecmp($currentRef, $baseOrderId) === 0) {
@@ -5475,7 +5451,7 @@ trait HandlesSapPurchaseAndProducts
         // 5) mark the cancelled payment / delivery refs too (best-effort)
         $this->markCancelledDependentsReversed($baseOrderId, $marker);
 
-        $cogsOk = $creditMemoDocEntry <= 0 ? true : !empty($cogs['ok']);
+        $cogsOk = !empty($cogs['ok']);
         $reversedFinancials = $creditMemoDocEntry > 0 || $isCancelled;
         $ok = $reversedFinancials && $cogsOk;
 
@@ -5639,6 +5615,94 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return $lines;
+    }
+
+    /**
+     * Reverse an order's COGS by posting a MIRROR of its forward COGS journal(s):
+     * swap Debit<->Credit on the same accounts / amounts / dimensions. Deterministic
+     * (uses the actually-posted figures, not the credit memo's stock cost) and
+     * idempotent via a distinct Reference2 = "COGSREV-<order>".
+     *
+     * @return array<string,mixed>
+     */
+    public function reverseCogsJournalForOrder(string $baseOrderId): array
+    {
+        $baseOrderId = trim($baseOrderId);
+        if ($baseOrderId === '') {
+            return ['ok' => false, 'reason' => 'Missing order id'];
+        }
+
+        $revRef2 = $this->buildJournalRef2('COGSREV', $baseOrderId);
+        $escRev = str_replace("'", "''", $revRef2);
+        $check = $this->get('/JournalEntries?$filter=' . rawurlencode("Reference2 eq '{$escRev}'") . '&$select=JdtNum&$top=1');
+        if ($check->successful() && !empty((array) ($check->json('value') ?? []))) {
+            return ['ok' => true, 'already' => true, 'reason' => 'COGS already reversed'];
+        }
+
+        $jdtNums = $this->findOrderCogsJournalKeys($baseOrderId);
+        if ($jdtNums === []) {
+            return ['ok' => true, 'reason' => 'No forward COGS journal to reverse'];
+        }
+
+        $today = now()->format('Y-m-d');
+        $posted = [];
+        foreach ($jdtNums as $jdtNum) {
+            $resp = $this->get('/JournalEntries(' . (int) $jdtNum . ')');
+            if (!$resp->successful()) {
+                return ['ok' => false, 'reason' => 'Forward COGS fetch failed: ' . $resp->status()];
+            }
+            $je = $resp->json() ?? [];
+
+            $lines = [];
+            foreach ((array) ($je['JournalEntryLines'] ?? []) as $l) {
+                if (!is_array($l)) {
+                    continue;
+                }
+                $debit = (float) ($l['Debit'] ?? 0);
+                $credit = (float) ($l['Credit'] ?? 0);
+                if ($debit == 0.0 && $credit == 0.0) {
+                    continue;
+                }
+                $account = (string) ($l['AccountCode'] ?? '');
+                if ($account === '') {
+                    continue;
+                }
+                $line = [
+                    'AccountCode' => $account,
+                    'Debit' => $credit, // swap
+                    'Credit' => $debit, // swap
+                ];
+                foreach (['CostingCode', 'CostingCode2', 'CostingCode3', 'CostingCode4', 'CostingCode5', 'ProjectCode'] as $dim) {
+                    if (!empty($l[$dim])) {
+                        $line[$dim] = $l[$dim];
+                    }
+                }
+                $lines[] = $line;
+            }
+
+            if ($lines === []) {
+                continue;
+            }
+
+            $body = [
+                'ReferenceDate' => $today,
+                'DueDate' => $today,
+                'TaxDate' => $today,
+                'Reference' => $baseOrderId,
+                'Reference2' => $revRef2,
+                'Reference3' => $baseOrderId,
+                'Memo' => 'COGS reversal from item-cleanup of Omniful order ' . $baseOrderId,
+                'JournalEntryLines' => $lines,
+            ];
+            $post = $this->post('/JournalEntries', $body);
+            if (!$post->successful()) {
+                return ['ok' => false, 'reason' => 'COGS reversal post failed: ' . $post->status() . ' ' . mb_substr((string) $post->body(), 0, 300)];
+            }
+            $j = $post->json() ?? [];
+            $posted[] = (int) ($j['JdtNum'] ?? $j['Number'] ?? 0);
+        }
+
+        return ['ok' => true, 'reversed_jdtnums' => $posted];
     }
 
     /**
