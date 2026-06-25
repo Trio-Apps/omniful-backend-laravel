@@ -145,11 +145,13 @@ class OmnifulStockTransferEvents extends Page implements HasTable
     private function applyStatusScope(Builder $query, array $statuses): Builder
     {
         $variants = [];
+        $tokens = [];
         foreach ($statuses as $status) {
             $status = strtolower(trim((string) $status));
             if ($status === '') {
                 continue;
             }
+            $tokens[] = $status;
             $variants[$status] = true;
             $variants[ucfirst($status)] = true;
             $variants[strtoupper($status)] = true;
@@ -160,7 +162,7 @@ class OmnifulStockTransferEvents extends Page implements HasTable
             return $query;
         }
 
-        return $query->where(function (Builder $inner) use ($variants): void {
+        return $query->where(function (Builder $inner) use ($variants, $tokens): void {
             foreach ([
                 'payload->data->status',
                 'payload->data->status_code',
@@ -168,6 +170,13 @@ class OmnifulStockTransferEvents extends Page implements HasTable
                 'payload->status_code',
             ] as $path) {
                 $inner->orWhereIn($path, $variants);
+            }
+
+            // The transfer state is also carried by the event name
+            // (sto.received.event / sto.shipped.event); the payload status field
+            // often holds a different value, so match the event name too.
+            foreach ($tokens as $token) {
+                $inner->orWhere('payload->event_name', 'like', '%' . $token . '%');
             }
         });
     }
