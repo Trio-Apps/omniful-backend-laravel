@@ -93,70 +93,161 @@ class SapItemCleanupService
      *
      * @return array{found:int,rows:int,added:int,updated:int}
      */
-    public function scanAndAdd(string $mode, string $value, ?SapSyncEvent $event = null): array
+    /**
+     * Whether the latest scan stopped (failed/cancelled) with work still pending,
+     * so a "Continue" button can resume it.
+     */
+    public function scanResumable(): bool
     {
-        $value = trim($value);
-        $docEntries = $this->resolveDocEntries($mode, $value);
-
-        $added = 0;
-        $updated = 0;
-        $processed = 0;
-        $cancelled = false;
-
-        foreach ($docEntries as $docEntry) {
-            $docEntry = (int) $docEntry;
-            if ($docEntry <= 0) {
-                continue;
-            }
-            if ($event !== null && (string) (optional($event->fresh())->sap_status) === 'cancel_requested') {
-                $cancelled = true;
-                break;
-            }
-
-            // Fast snapshot only — related docs (payment/delivery/COGS) are fetched
-            // lazily on Check/Details so a large scan stays quick.
-            $rows = $this->client->previewInvoicesForCleanup([$docEntry], false);
-            $row = $rows[0] ?? null;
-            if ($row === null) {
-                continue;
-            }
-
-            $target = SapCleanupTarget::query()->firstOrNew(['doc_entry' => $docEntry]);
-            $isNew = !$target->exists;
-
-            $target->fill([
-                'doc_num' => $row['doc_num'] ?? null,
-                'order_external_id' => $row['order'] ?? null,
-                'card_code' => $row['card_code'] ?? null,
-                'doc_total' => $row['doc_total'] ?? null,
-                'sap_doc_status' => $this->deriveDocStatus($row),
-                'lines' => $row['lines'] ?? [],
-                'last_checked_at' => now(),
-                'source_mode' => $mode,
-                'source_value' => $value,
-            ]);
-
-            if ($isNew) {
-                $target->cleanup_state = !empty($row['already_reversed']) ? 'reversed' : 'new';
-                $added++;
-            } else {
-                if (!empty($row['already_reversed']) && $target->cleanup_state === 'new') {
-                    $target->cleanup_state = 'reversed';
-                }
-                $updated++;
-            }
-
-            $target->save();
-            $processed++;
+        $event = $this->latestScanEvent();
+        if ($event === null) {
+            return false;
         }
 
-        return [
-            'found' => count($docEntries),
-            'rows' => $processed,
-            'added' => $added,
-            'updated' => $updated,
-            'cancelled' => $cancelled,
-        ];
+        $pending = (array) (($event->payload['pending'] ?? []));
+
+        return in_array((string) $event->sap_status, ['failed', 'cancelled'], true) && $pending !== [];
+    }
+
+    /**
+     * Resume the latest scan from where it stopped (re-dispatches the same event;
+     * its payload still holds the remaining work-list).
+     *
+     * @return array{ok:bool,reason?:string,event:?\App\Models\SapSyncEvent}
+     */
+    public function continueScan(): array
+    {
+        $event = $this->latestScanEvent();
+        if ($event === null) {
+            return ['ok' => false, 'reason' => 'No scan to continue', 'event' => null];
+        }
+
+        $active = SapSyncEvent::query()
+            ->where('source_type', self::SOURCE_TYPE)
+            ->whereIn('sap_status', ['queued', 'running'])
+            ->where('id', '!=', $event->id)
+            ->where('updated_at', '>=', now()->subHours(6))
+            ->exists();
+        if ($active) {
+            return ['ok' => false, 'reason' => 'Another cleanup is already running', 'event' => $event];
+        }
+
+        $event->update(['sap_status' => 'queued', 'sap_error' => null]);
+        RunSapItemCleanup::dispatch($event->id);
+
+        return ['ok' => true, 'event' => $event];
+    }
+
+    private function latestScanEvent(): ?SapSyncEvent
+    {
+        return SapSyncEvent::query()
+            ->where('source_type', self::SOURCE_TYPE)
+            ->where('sap_action', 'item_cleanup_scan')
+            ->latest('id')
+            ->first();
+    }
+
+    /**
+     * Build a scan's pending work-list. Returns [kind, list]: 'orders' (order ids,
+     * each resolved to its invoices during processing) for product/order modes, or
+     * 'docs' (doc entries resolved up front) for the SAP-doc-number mode.
+     *
+     * @return array{0:string,1:array<int,string>}
+     */
+    private function buildScanPending(string $mode, string $value): array
+    {
+        $value = trim($value);
+        if ($value === '') {
+            return ['orders', []];
+        }
+
+        if ($mode === 'product_id') {
+            $ids = OmnifulOrder::query()
+                ->where('last_payload', 'like', '%' . $value . '%')
+                ->orderByDesc('id')
+                ->limit(5000)
+                ->pluck('external_id')
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+
+            return ['orders', array_map('strval', $ids)];
+        }
+
+        if ($mode === 'omniful_order_id') {
+            return ['orders', [$value]];
+        }
+
+        return ['docs', array_map('strval', $this->client->findInvoiceDocEntriesByDocNum($value))];
+    }
+
+    /**
+     * Process one scan token (an order id, or a doc entry) and upsert its invoice
+     * worklist row(s).
+     *
+     * @return array{added:int,updated:int}
+     */
+    private function processScanToken(string $kind, string $token, string $mode, string $value): array
+    {
+        $added = 0;
+        $updated = 0;
+
+        $docEntries = $kind === 'docs'
+            ? [(int) $token]
+            : $this->client->findOrderInvoiceDocEntriesHoldingReference((string) $token);
+
+        foreach ($docEntries as $docEntry) {
+            $result = $this->upsertInvoiceTarget((int) $docEntry, $mode, $value);
+            if ($result === 'added') {
+                $added++;
+            } elseif ($result === 'updated') {
+                $updated++;
+            }
+        }
+
+        return ['added' => $added, 'updated' => $updated];
+    }
+
+    /**
+     * Fetch a fast snapshot (no related docs) for one invoice and upsert its row.
+     */
+    private function upsertInvoiceTarget(int $docEntry, string $mode, string $value): ?string
+    {
+        if ($docEntry <= 0) {
+            return null;
+        }
+
+        $rows = $this->client->previewInvoicesForCleanup([$docEntry], false);
+        $row = $rows[0] ?? null;
+        if ($row === null) {
+            return null;
+        }
+
+        $target = SapCleanupTarget::query()->firstOrNew(['doc_entry' => $docEntry]);
+        $isNew = !$target->exists;
+
+        $target->fill([
+            'doc_num' => $row['doc_num'] ?? null,
+            'order_external_id' => $row['order'] ?? null,
+            'card_code' => $row['card_code'] ?? null,
+            'doc_total' => $row['doc_total'] ?? null,
+            'sap_doc_status' => $this->deriveDocStatus($row),
+            'lines' => $row['lines'] ?? [],
+            'last_checked_at' => now(),
+            'source_mode' => $mode,
+            'source_value' => $value,
+        ]);
+
+        if ($isNew) {
+            $target->cleanup_state = !empty($row['already_reversed']) ? 'reversed' : 'new';
+        } elseif (!empty($row['already_reversed']) && $target->cleanup_state === 'new') {
+            $target->cleanup_state = 'reversed';
+        }
+
+        $target->save();
+
+        return $isNew ? 'added' : 'updated';
     }
 
     /**
@@ -196,11 +287,66 @@ class SapItemCleanupService
      *
      * @return array<string,mixed>
      */
+    /**
+     * Process ONE chunk of a scan and persist progress on the event. Returns
+     * 'done'=false when more chunks remain (the job re-dispatches itself), so no
+     * single run is long enough to trip the queue's retry_after.
+     *
+     * @return array<string,mixed>
+     */
     public function runScan(SapSyncEvent $event): array
     {
+        $chunkSize = 10;
         $payload = (array) ($event->payload ?? []);
+        $mode = (string) ($payload['mode'] ?? '');
+        $value = (string) ($payload['value'] ?? '');
 
-        return $this->scanAndAdd((string) ($payload['mode'] ?? ''), (string) ($payload['value'] ?? ''), $event);
+        // Build the pending work-list once and persist it on the event.
+        if (!array_key_exists('pending', $payload)) {
+            [$kind, $pending] = $this->buildScanPending($mode, $value);
+            $payload['pending'] = $pending;
+            $payload['pending_kind'] = $kind;
+            $payload['total'] = count($pending);
+            $payload['added'] = 0;
+            $payload['updated'] = 0;
+            $event->update(['payload' => $payload]);
+        }
+
+        $kind = (string) ($payload['pending_kind'] ?? 'docs');
+        $pending = array_values((array) ($payload['pending'] ?? []));
+        $added = (int) ($payload['added'] ?? 0);
+        $updated = (int) ($payload['updated'] ?? 0);
+
+        $cancelled = false;
+        $processed = 0;
+        foreach ($pending as $token) {
+            if ($processed >= $chunkSize) {
+                break;
+            }
+            if ((string) (optional($event->fresh())->sap_status) === 'cancel_requested') {
+                $cancelled = true;
+                break;
+            }
+            $r = $this->processScanToken($kind, (string) $token, $mode, $value);
+            $added += $r['added'];
+            $updated += $r['updated'];
+            $processed++;
+        }
+
+        $remaining = array_slice($pending, $processed);
+        $payload['pending'] = $remaining;
+        $payload['added'] = $added;
+        $payload['updated'] = $updated;
+        $event->update(['payload' => $payload]);
+
+        return [
+            'done' => $cancelled || $remaining === [],
+            'cancelled' => $cancelled,
+            'found' => (int) ($payload['total'] ?? 0),
+            'added' => $added,
+            'updated' => $updated,
+            'remaining' => count($remaining),
+        ];
     }
 
     /**

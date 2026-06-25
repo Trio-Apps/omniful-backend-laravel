@@ -49,24 +49,59 @@ class RunSapItemCleanup implements ShouldQueue
         ]);
 
         try {
+            // SCAN: process ONE chunk, then re-dispatch a fresh job to continue.
+            // This keeps every run short (no retry_after timeout) and resumable —
+            // runScan persists the remaining work on the event payload.
             if ((string) ($basePayload['action'] ?? '') === 'scan') {
                 $details = $cleanup->runScan($event);
+                $fresh = (array) ($event->fresh()?->payload ?? $basePayload);
                 $summary = [
                     'action' => 'scan',
                     'found' => (int) ($details['found'] ?? 0),
                     'added' => (int) ($details['added'] ?? 0),
                     'updated' => (int) ($details['updated'] ?? 0),
+                    'remaining' => (int) ($details['remaining'] ?? 0),
                 ];
-            } else {
-                $details = $cleanup->runBulk($event);
-                $summary = [
-                    'action' => (string) ($details['action'] ?? ''),
-                    'total' => (int) ($details['total'] ?? 0),
-                    'done' => (int) ($details['done'] ?? 0),
-                    'failed' => (int) ($details['failed'] ?? 0),
-                    'requeued' => (int) ($details['requeued'] ?? 0),
-                ];
+
+                if (!empty($details['cancelled'])) {
+                    $event->update([
+                        'sap_status' => 'cancelled',
+                        'sap_error' => 'Scan stopped by user request.',
+                        'payload' => array_merge($fresh, ['finished_at' => now()->toDateTimeString(), 'summary' => $summary]),
+                    ]);
+
+                    return;
+                }
+
+                if (empty($details['done'])) {
+                    $event->update([
+                        'sap_status' => 'running',
+                        'sap_error' => null,
+                        'payload' => array_merge($fresh, ['summary' => $summary]),
+                    ]);
+
+                    self::dispatch($this->syncEventId);
+
+                    return;
+                }
+
+                $event->update([
+                    'sap_status' => 'completed',
+                    'sap_error' => null,
+                    'payload' => array_merge($fresh, ['finished_at' => now()->toDateTimeString(), 'summary' => $summary]),
+                ]);
+
+                return;
             }
+
+            $details = $cleanup->runBulk($event);
+            $summary = [
+                'action' => (string) ($details['action'] ?? ''),
+                'total' => (int) ($details['total'] ?? 0),
+                'done' => (int) ($details['done'] ?? 0),
+                'failed' => (int) ($details['failed'] ?? 0),
+                'requeued' => (int) ($details['requeued'] ?? 0),
+            ];
 
             $finalStatus = !empty($details['cancelled']) ? 'cancelled' : 'completed';
 
@@ -84,7 +119,7 @@ class RunSapItemCleanup implements ShouldQueue
             $event->update([
                 'sap_status' => 'failed',
                 'sap_error' => $exception->getMessage(),
-                'payload' => array_merge($basePayload, [
+                'payload' => array_merge((array) ($event->fresh()?->payload ?? $basePayload), [
                     'finished_at' => now()->toDateTimeString(),
                 ]),
             ]);

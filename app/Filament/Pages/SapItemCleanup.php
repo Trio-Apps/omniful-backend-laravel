@@ -234,6 +234,30 @@ class SapItemCleanup extends Page implements HasTable
                 ])
                 ->action(fn (array $data) => $this->scanTargets($data)),
 
+            Action::make('continueScan')
+                ->label('Continue scan')
+                ->icon('heroicon-o-play')
+                ->color('primary')
+                ->visible(fn (): bool => $this->cleanup()->scanResumable())
+                ->action(function (): void {
+                    $result = $this->cleanup()->continueScan();
+                    if (empty($result['ok'])) {
+                        Notification::make()
+                            ->title('Cannot continue scan')
+                            ->body((string) ($result['reason'] ?? ''))
+                            ->warning()
+                            ->send();
+
+                        return;
+                    }
+
+                    Notification::make()
+                        ->title('Resuming scan')
+                        ->body('Continuing from where it stopped. Event: ' . ($result['event']->event_key ?? ''))
+                        ->success()
+                        ->send();
+                }),
+
             Action::make('cancelAll')
                 ->label('Cancel all')
                 ->icon('heroicon-o-arrow-uturn-left')
