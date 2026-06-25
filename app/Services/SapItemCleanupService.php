@@ -528,6 +528,7 @@ class SapItemCleanupService
         $results = [];
 
         foreach ($targets as $target) {
+            $event->touch(); // keep the lock fresh so it is not treated as stuck
             if ((string) (optional($event->fresh())->sap_status) === 'cancel_requested') {
                 return [
                     'cancelled' => true,
@@ -639,11 +640,42 @@ class SapItemCleanupService
 
     private function activeEvent(): ?SapSyncEvent
     {
+        // Only a RECENTLY-updated event holds the single-flight lock. Running jobs
+        // touch the event continuously (chunked scan re-dispatches; runBulk touches
+        // per item), so a lock older than this window is stuck (dead worker / lost
+        // job) and must not block new actions forever.
         return SapSyncEvent::query()
             ->where('source_type', self::SOURCE_TYPE)
             ->whereIn('sap_status', ['queued', 'running', 'cancel_requested'])
-            ->where('updated_at', '>=', now()->subHours(6))
+            ->where('updated_at', '>=', now()->subMinutes(10))
             ->latest('id')
             ->first();
+    }
+
+    /**
+     * Whether any cleanup event is still queued/running/stop-requested (any age),
+     * so the page can offer a "Reset status" escape hatch.
+     */
+    public function hasUnfinishedEvent(): bool
+    {
+        return SapSyncEvent::query()
+            ->where('source_type', self::SOURCE_TYPE)
+            ->whereIn('sap_status', ['queued', 'running', 'cancel_requested'])
+            ->exists();
+    }
+
+    /**
+     * Force-clear stuck cleanup events (mark them failed) so the lock is released
+     * and new actions can run. Returns the number cleared.
+     */
+    public function resetActiveEvents(): int
+    {
+        return SapSyncEvent::query()
+            ->where('source_type', self::SOURCE_TYPE)
+            ->whereIn('sap_status', ['queued', 'running', 'cancel_requested'])
+            ->update([
+                'sap_status' => 'failed',
+                'sap_error' => 'Reset by user (stuck cleanup cleared).',
+            ]);
     }
 }

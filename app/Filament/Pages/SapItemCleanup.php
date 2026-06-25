@@ -323,6 +323,23 @@ class SapItemCleanup extends Page implements HasTable
                 ->visible(fn (): bool => $this->getCleanupPanel()['can_stop'] ?? false)
                 ->requiresConfirmation()
                 ->action(fn () => $this->cancelCleanup()),
+
+            Action::make('resetStatus')
+                ->label('Reset status')
+                ->icon('heroicon-o-arrow-path-rounded-square')
+                ->color('gray')
+                ->visible(fn (): bool => $this->cleanup()->hasUnfinishedEvent())
+                ->requiresConfirmation()
+                ->modalHeading('Clear a stuck cleanup status')
+                ->modalDescription('If the buttons say a cleanup is already running but nothing is progressing, this clears the stuck queued/running/stop-requested status so you can start again. It does not touch SAP.')
+                ->action(function (): void {
+                    $cleared = $this->cleanup()->resetActiveEvents();
+                    Notification::make()
+                        ->title($cleared > 0 ? 'Status reset' : 'Nothing to reset')
+                        ->body($cleared > 0 ? ($cleared . ' stuck event(s) cleared — you can run actions now.') : 'No active cleanup found.')
+                        ->success()
+                        ->send();
+                }),
         ];
     }
 
