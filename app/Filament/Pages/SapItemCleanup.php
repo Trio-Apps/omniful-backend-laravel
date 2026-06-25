@@ -279,11 +279,23 @@ class SapItemCleanup extends Page implements HasTable
             return;
         }
 
-        $r = $this->cleanup()->scanAndAdd($mode, $value);
+        $result = $this->cleanup()->dispatchScan($mode, $value, 'sap_item_cleanup_page');
+        $event = $result['event'];
+
+        if ((bool) $result['already_running']) {
+            Notification::make()
+                ->title('A cleanup is already running')
+                ->body('Current event: ' . $event->event_key)
+                ->warning()
+                ->send();
+
+            return;
+        }
+
         Notification::make()
-            ->title('Scan complete')
-            ->body('Found ' . $r['found'] . ' · added ' . $r['added'] . ' · updated ' . $r['updated'])
-            ->{$r['rows'] > 0 ? 'success' : 'warning'}()
+            ->title('Scan queued')
+            ->body('Searching in the background — matching invoices will appear in the list below as they are found. Event: ' . $event->event_key)
+            ->success()
             ->send();
     }
 

@@ -145,6 +145,50 @@ class SapItemCleanupService
     }
 
     /**
+     * Queue a background SCAN (resolve + add targets). Heavy for a product with
+     * many orders, so it runs on the queue instead of blocking the page.
+     *
+     * @return array{queued:bool,already_running:bool,event:\App\Models\SapSyncEvent}
+     */
+    public function dispatchScan(string $mode, string $value, ?string $triggeredBy = null): array
+    {
+        $active = $this->activeEvent();
+        if ($active !== null) {
+            return ['queued' => false, 'already_running' => true, 'event' => $active];
+        }
+
+        $event = SapSyncEvent::create([
+            'event_key' => 'sap_item_cleanup_' . (string) Str::ulid(),
+            'source_type' => self::SOURCE_TYPE,
+            'sap_action' => 'item_cleanup_scan',
+            'sap_status' => 'queued',
+            'payload' => [
+                'action' => 'scan',
+                'mode' => $mode,
+                'value' => trim($value),
+                'requested_at' => now()->toDateTimeString(),
+                'triggered_by' => $triggeredBy,
+            ],
+        ]);
+
+        RunSapItemCleanup::dispatch($event->id);
+
+        return ['queued' => true, 'already_running' => false, 'event' => $event];
+    }
+
+    /**
+     * Execute a queued scan.
+     *
+     * @return array<string,mixed>
+     */
+    public function runScan(SapSyncEvent $event): array
+    {
+        $payload = (array) ($event->payload ?? []);
+
+        return $this->scanAndAdd((string) ($payload['mode'] ?? ''), (string) ($payload['value'] ?? ''));
+    }
+
+    /**
      * Re-read a target's invoice from SAP and refresh its stored snapshot.
      *
      * @return array<string,mixed>

@@ -49,14 +49,24 @@ class RunSapItemCleanup implements ShouldQueue
         ]);
 
         try {
-            $details = $cleanup->runBulk($event);
-            $summary = [
-                'action' => (string) ($details['action'] ?? ''),
-                'total' => (int) ($details['total'] ?? 0),
-                'done' => (int) ($details['done'] ?? 0),
-                'failed' => (int) ($details['failed'] ?? 0),
-                'requeued' => (int) ($details['requeued'] ?? 0),
-            ];
+            if ((string) ($basePayload['action'] ?? '') === 'scan') {
+                $details = $cleanup->runScan($event);
+                $summary = [
+                    'action' => 'scan',
+                    'found' => (int) ($details['found'] ?? 0),
+                    'added' => (int) ($details['added'] ?? 0),
+                    'updated' => (int) ($details['updated'] ?? 0),
+                ];
+            } else {
+                $details = $cleanup->runBulk($event);
+                $summary = [
+                    'action' => (string) ($details['action'] ?? ''),
+                    'total' => (int) ($details['total'] ?? 0),
+                    'done' => (int) ($details['done'] ?? 0),
+                    'failed' => (int) ($details['failed'] ?? 0),
+                    'requeued' => (int) ($details['requeued'] ?? 0),
+                ];
+            }
 
             $finalStatus = !empty($details['cancelled']) ? 'cancelled' : 'completed';
 
