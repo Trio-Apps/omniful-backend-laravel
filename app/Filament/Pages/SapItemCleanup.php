@@ -2,22 +2,32 @@
 
 namespace App\Filament\Pages;
 
+use App\Models\SapCleanupTarget;
 use App\Models\SapSyncEvent;
 use App\Services\SapItemCleanupService;
 use Filament\Actions\Action;
+use Filament\Actions\BulkAction;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
+use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Concerns\InteractsWithTable;
+use Filament\Tables\Contracts\HasTable;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Collection;
 
 /**
- * Maintenance tool: reverse every AR Reserve Invoice tied to a wrongly
- * auto-created item — by product id, SAP doc number, or Omniful order id.
- * Always preview (read-only) first, then confirm to execute on LIVE SAP.
+ * Persistent worklist for reversing AR Reserve Invoices created for wrongly
+ * auto-created items. Scan adds rows (read-only); each row can be Checked
+ * (re-read live), Cancelled (reversed + order re-queued), or Resent (Force
+ * Resend). Bulk actions and "Cancel all" run in the background.
  */
-class SapItemCleanup extends Page
+class SapItemCleanup extends Page implements HasTable
 {
+    use InteractsWithTable;
+
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-wrench-screwdriver';
 
     protected static ?string $navigationLabel = 'SAP Item Cleanup';
@@ -27,17 +37,6 @@ class SapItemCleanup extends Page
     protected static ?int $navigationSort = 90;
 
     protected string $view = 'filament.pages.sap-item-cleanup';
-
-    public ?string $cleanupMode = null;
-
-    public ?string $cleanupValue = null;
-
-    /** @var array<int,array<string,mixed>> */
-    public array $previewRows = [];
-
-    public bool $hasPreview = false;
-
-    public bool $cleanupRequeue = true;
 
     /**
      * @return array<string,string>
@@ -51,13 +50,166 @@ class SapItemCleanup extends Page
         ];
     }
 
+    private function cleanup(): SapItemCleanupService
+    {
+        return app(SapItemCleanupService::class);
+    }
+
+    protected function getTableQuery(): Builder
+    {
+        return SapCleanupTarget::query()->latest('id');
+    }
+
+    protected function getTableColumns(): array
+    {
+        return [
+            TextColumn::make('doc_num')->label('DocNum')->searchable()->sortable(),
+            TextColumn::make('order_external_id')->label('Order')->searchable(),
+            TextColumn::make('card_code')->label('Customer')->searchable(),
+            TextColumn::make('doc_total')
+                ->label('Total')
+                ->formatStateUsing(fn ($state) => $state === null ? '—' : number_format((float) $state, 2)),
+            TextColumn::make('sap_doc_status')->label('SAP')->badge()->color('gray')->placeholder('—'),
+            TextColumn::make('related_summary')
+                ->label('Docs')
+                ->getStateUsing(function (SapCleanupTarget $record): string {
+                    $r = (array) ($record->related ?? []);
+                    return 'P:' . count($r['payments'] ?? [])
+                        . ' · D:' . count($r['deliveries'] ?? [])
+                        . ' · J:' . count($r['cogs_journals'] ?? []);
+                })
+                ->tooltip('Payments · Deliveries · COGS journals (open Details for numbers)'),
+            TextColumn::make('cleanup_state')
+                ->label('State')
+                ->badge()
+                ->color(fn ($state) => match ($state) {
+                    'reversed' => 'info',
+                    'resent' => 'success',
+                    'failed' => 'danger',
+                    'skipped' => 'warning',
+                    default => 'gray',
+                }),
+            TextColumn::make('last_action')->label('Last action')->placeholder('—'),
+            TextColumn::make('last_checked_at')->label('Checked')->dateTime()->since()->placeholder('—'),
+            TextColumn::make('last_error')
+                ->label('Error')
+                ->limit(40)
+                ->tooltip(fn ($state) => $state)
+                ->placeholder('—'),
+        ];
+    }
+
+    protected function getTableActions(): array
+    {
+        return [
+            Action::make('details')
+                ->label('Details')
+                ->icon('heroicon-o-eye')
+                ->color('gray')
+                ->modalHeading(fn (SapCleanupTarget $record) => 'Invoice DocNum ' . $record->doc_num . ' — documents')
+                ->modalSubmitAction(false)
+                ->modalCancelActionLabel('Close')
+                ->modalContent(fn (SapCleanupTarget $record) => view('filament.pages.sap-cleanup-target-details', [
+                    'target' => $record,
+                ])),
+
+            Action::make('check')
+                ->label('Check')
+                ->icon('heroicon-o-arrow-path')
+                ->color('gray')
+                ->action(function (SapCleanupTarget $record): void {
+                    $res = $this->cleanup()->checkTarget($record);
+                    Notification::make()
+                        ->title('Checked DocNum ' . $record->doc_num)
+                        ->body('SAP status: ' . ($res['status'] ?? ($res['reason'] ?? '—')))
+                        ->{!empty($res['ok']) ? 'success' : 'warning'}()
+                        ->send();
+                }),
+
+            Action::make('cancel')
+                ->label('Cancel')
+                ->icon('heroicon-o-arrow-uturn-left')
+                ->color('danger')
+                ->requiresConfirmation()
+                ->modalHeading('Reverse this invoice on LIVE SAP')
+                ->modalDescription('Cancels the payment + delivery, posts a credit note + COGS reversal, and stamps "-0reversed".')
+                ->form([
+                    Toggle::make('requeue')
+                        ->label('Re-queue order for re-send to SAP')
+                        ->default(true),
+                ])
+                ->action(function (array $data, SapCleanupTarget $record): void {
+                    $res = $this->cleanup()->cancelTarget($record, (bool) ($data['requeue'] ?? true));
+                    Notification::make()
+                        ->title(!empty($res['ok']) ? 'Invoice reversed' : 'Reversal failed')
+                        ->body(!empty($res['ok'])
+                            ? ('DocNum ' . $record->doc_num . (!empty($res['skipped']) ? ' (already reversed)' : ''))
+                            : (string) ($res['reason'] ?? ''))
+                        ->{!empty($res['ok']) ? 'success' : 'danger'}()
+                        ->send();
+                }),
+
+            Action::make('resend')
+                ->label('Resend')
+                ->icon('heroicon-o-paper-airplane')
+                ->color('warning')
+                ->visible(fn (SapCleanupTarget $record) => filled($record->order_external_id))
+                ->requiresConfirmation()
+                ->modalHeading('Re-send this order to SAP')
+                ->modalDescription('Queues a clean Force Resend (assumes the old documents were already reversed).')
+                ->action(function (SapCleanupTarget $record): void {
+                    $res = $this->cleanup()->resendTarget($record);
+                    Notification::make()
+                        ->title(!empty($res['ok']) ? 'Re-send queued' : 'Re-send failed')
+                        ->body((string) ($res['message'] ?? $res['reason'] ?? ''))
+                        ->{!empty($res['ok']) ? 'success' : 'danger'}()
+                        ->send();
+                }),
+        ];
+    }
+
+    protected function getTableBulkActions(): array
+    {
+        return [
+            BulkAction::make('checkSelected')
+                ->label('Check selected')
+                ->icon('heroicon-o-arrow-path')
+                ->color('gray')
+                ->deselectRecordsAfterCompletion()
+                ->action(fn (Collection $records) => $this->queueBulk('check', $records->pluck('id')->all())),
+
+            BulkAction::make('cancelSelected')
+                ->label('Cancel selected (reverse)')
+                ->icon('heroicon-o-arrow-uturn-left')
+                ->color('danger')
+                ->requiresConfirmation()
+                ->modalHeading('Reverse selected invoices on LIVE SAP')
+                ->form([
+                    Toggle::make('requeue')
+                        ->label('Re-queue orders for re-send to SAP')
+                        ->default(true),
+                ])
+                ->deselectRecordsAfterCompletion()
+                ->action(fn (array $data, Collection $records) => $this->queueBulk('cancel', $records->pluck('id')->all(), (bool) ($data['requeue'] ?? true))),
+
+            BulkAction::make('resendSelected')
+                ->label('Resend selected')
+                ->icon('heroicon-o-paper-airplane')
+                ->color('warning')
+                ->requiresConfirmation()
+                ->modalHeading('Re-send selected orders to SAP')
+                ->deselectRecordsAfterCompletion()
+                ->action(fn (Collection $records) => $this->queueBulk('resend', $records->pluck('id')->all())),
+        ];
+    }
+
     protected function getHeaderActions(): array
     {
         return [
-            Action::make('preview')
-                ->label('Preview targets')
+            Action::make('scan')
+                ->label('Scan & add')
                 ->icon('heroicon-o-magnifying-glass')
-                ->color('gray')
+                ->color('primary')
                 ->form([
                     Select::make('mode')
                         ->label('Search by')
@@ -66,32 +218,34 @@ class SapItemCleanup extends Page
                         ->required(),
                     TextInput::make('value')
                         ->label('Value')
-                        ->helperText('Product/item code, OR a SAP invoice DocNum, OR an Omniful order id — matching the chosen mode.')
+                        ->helperText('Product/item code, OR a SAP invoice DocNum, OR an Omniful order id — matching the chosen mode. Read-only; adds matches to the list below.')
                         ->required(),
-                    Toggle::make('requeue')
-                        ->label('Re-queue reversed orders for re-send to SAP')
-                        ->helperText('After reversing, reset the matching Omniful orders to "pending" so they return to the In Queue list and can be re-sent (Force Resend). Turn off to only reverse in SAP.')
-                        ->default(true),
                 ])
-                ->action(function (array $data): void {
-                    $this->runPreview((string) $data['mode'], (string) $data['value'], (bool) ($data['requeue'] ?? true));
-                }),
+                ->action(fn (array $data) => $this->scanTargets($data)),
 
-            Action::make('execute')
-                ->label('Reverse previewed invoices')
+            Action::make('cancelAll')
+                ->label('Cancel all')
                 ->icon('heroicon-o-arrow-uturn-left')
                 ->color('danger')
-                ->visible(fn (): bool => $this->hasPreview && $this->previewReversibleCount() > 0)
+                ->visible(fn (): bool => SapCleanupTarget::query()->whereNotIn('cleanup_state', ['reversed', 'resent'])->exists())
                 ->requiresConfirmation()
-                ->modalHeading('Reverse invoices on LIVE SAP')
-                ->modalDescription(fn (): string => 'This will reverse '
-                    . $this->previewReversibleCount() . ' invoice(s) on LIVE SAP: cancel each incoming payment + delivery, '
-                    . 'create a credit note, post a COGS reversal, and stamp "-0reversed" on the order references. '
-                    . 'This cannot be undone automatically.')
-                ->modalSubmitActionLabel('Yes, reverse them')
-                ->action(function (SapItemCleanupService $cleanup): void {
-                    $this->runExecute($cleanup);
-                }),
+                ->modalHeading('Reverse ALL not-yet-reversed targets on LIVE SAP')
+                ->modalDescription('Runs in the background for every row whose state is not reversed/resent.')
+                ->form([
+                    Toggle::make('requeue')
+                        ->label('Re-queue orders for re-send to SAP')
+                        ->default(true),
+                ])
+                ->action(fn (array $data) => $this->cancelAll((bool) ($data['requeue'] ?? true))),
+
+            Action::make('clearList')
+                ->label('Clear list')
+                ->icon('heroicon-o-trash')
+                ->color('gray')
+                ->requiresConfirmation()
+                ->modalHeading('Clear the cleanup worklist')
+                ->modalDescription('Removes all rows from this list. SAP is not touched.')
+                ->action(fn () => $this->clearList()),
 
             Action::make('stopCleanup')
                 ->label('Stop')
@@ -103,40 +257,57 @@ class SapItemCleanup extends Page
         ];
     }
 
-    public function runPreview(string $mode, string $value, bool $requeue = true): void
+    public function scanTargets(array $data): void
     {
+        $mode = (string) ($data['mode'] ?? '');
+        $value = (string) ($data['value'] ?? '');
+
         if (!in_array($mode, SapItemCleanupService::MODES, true)) {
             Notification::make()->title('Invalid mode')->danger()->send();
 
             return;
         }
 
-        $cleanup = app(SapItemCleanupService::class);
-        $this->cleanupMode = $mode;
-        $this->cleanupValue = trim($value);
-        $this->cleanupRequeue = $requeue;
-        $this->previewRows = $cleanup->preview($mode, $this->cleanupValue);
-        $this->hasPreview = true;
-
-        $count = count($this->previewRows);
+        $r = $this->cleanup()->scanAndAdd($mode, $value);
         Notification::make()
-            ->title($count > 0 ? ($count . ' invoice(s) found') : 'No invoices found')
-            ->body($count > 0
-                ? 'Review the list below, then "Reverse previewed invoices" to execute.'
-                : 'Nothing matches ' . $mode . ' = ' . $this->cleanupValue . '.')
-            ->{$count > 0 ? 'success' : 'warning'}()
+            ->title('Scan complete')
+            ->body('Found ' . $r['found'] . ' · added ' . $r['added'] . ' · updated ' . $r['updated'])
+            ->{$r['rows'] > 0 ? 'success' : 'warning'}()
             ->send();
     }
 
-    public function runExecute(SapItemCleanupService $cleanup): void
+    public function cancelAll(bool $requeue = true): void
     {
-        if (!$this->hasPreview || $this->cleanupMode === null || (string) $this->cleanupValue === '') {
-            Notification::make()->title('Run a preview first')->warning()->send();
+        $ids = SapCleanupTarget::query()
+            ->whereNotIn('cleanup_state', ['reversed', 'resent'])
+            ->pluck('id')
+            ->all();
+
+        $this->queueBulk('cancel', $ids, $requeue);
+    }
+
+    public function clearList(): void
+    {
+        $count = SapCleanupTarget::query()->count();
+        SapCleanupTarget::query()->delete();
+
+        Notification::make()
+            ->title('Worklist cleared')
+            ->body($count . ' row(s) removed.')
+            ->success()
+            ->send();
+    }
+
+    private function queueBulk(string $action, array $ids, bool $requeue = true): void
+    {
+        $ids = array_values(array_filter(array_map('intval', $ids)));
+        if ($ids === []) {
+            Notification::make()->title('Nothing to process')->warning()->send();
 
             return;
         }
 
-        $result = $cleanup->dispatch($this->cleanupMode, (string) $this->cleanupValue, $this->cleanupRequeue, 'sap_item_cleanup_page');
+        $result = $this->cleanup()->dispatchBulk($action, $ids, $requeue, 'sap_item_cleanup_page');
         $event = $result['event'];
 
         if ((bool) $result['already_running']) {
@@ -150,8 +321,8 @@ class SapItemCleanup extends Page
         }
 
         Notification::make()
-            ->title('Cleanup queued')
-            ->body('Reversing the matched invoices in the background. Event: ' . $event->event_key)
+            ->title(ucfirst($action) . ' queued for ' . count($ids) . ' row(s)')
+            ->body('Running in the background. Event: ' . $event->event_key)
             ->success()
             ->send();
     }
@@ -180,14 +351,9 @@ class SapItemCleanup extends Page
 
         Notification::make()
             ->title('Stop requested')
-            ->body('The cleanup will stop after the current invoice finishes.')
+            ->body('The cleanup will stop after the current row finishes.')
             ->success()
             ->send();
-    }
-
-    public function previewReversibleCount(): int
-    {
-        return count(array_filter($this->previewRows, fn ($row) => empty($row['already_reversed'])));
     }
 
     /**

@@ -4,20 +4,18 @@ namespace App\Services;
 
 use App\Jobs\RunSapItemCleanup;
 use App\Models\OmnifulOrder;
+use App\Models\SapCleanupTarget;
 use App\Models\SapSyncEvent;
+use App\Services\Webhooks\WebhookRetryService;
 use Illuminate\Support\Str;
 
 /**
- * Maintenance: reverse every AR Reserve Invoice tied to a wrongly auto-created
- * item (or a single SAP doc / Omniful order). For each target invoice it cancels
- * the incoming payment + delivery, posts an AR credit memo, marks the order refs
- * "<order>-0reversed", and posts a COGS reversal journal. See
- * SapServiceLayerClient::cleanupReverseInvoice().
- *
- * Optionally (default on) the matching local OmnifulOrder is reset to a
- * re-queueable state (sap_status='pending', SAP bindings cleared) so it returns
- * to the "In Queue Orders" list and can be re-sent to SAP at any time; a failed
- * re-send then lands in the order-errors page as usual.
+ * Maintenance worklist: reverse AR Reserve Invoices tied to wrongly auto-created
+ * items, and re-send the orders later. Targets (one per invoice) are SCANNED into
+ * the sap_cleanup_targets table and persist; each can then be Checked (re-read
+ * live), Cancelled (reversed -> "<order>-0reversed" + order re-queued to pending),
+ * or Resent (Force Resend to SAP). Bulk runs go through a background job tracked
+ * on SapSyncEvent. See SapServiceLayerClient::cleanupReverseInvoice().
  */
 class SapItemCleanupService
 {
@@ -25,6 +23,9 @@ class SapItemCleanupService
 
     /** @var array<int,string> */
     public const MODES = ['product_id', 'sap_doc_number', 'omniful_order_id'];
+
+    /** @var array<int,string> */
+    public const BULK_ACTIONS = ['check', 'cancel', 'resend'];
 
     public function __construct(private SapServiceLayerClient $client)
     {
@@ -51,22 +52,197 @@ class SapItemCleanupService
     }
 
     /**
-     * Read-only preview: the invoices that WOULD be reversed.
+     * Scan SAP for matching invoices (read-only) and upsert them into the
+     * persistent worklist. Existing rows are refreshed, not duplicated.
      *
-     * @return array<int,array<string,mixed>>
+     * @return array{found:int,rows:int,added:int,updated:int}
      */
-    public function preview(string $mode, string $value): array
+    public function scanAndAdd(string $mode, string $value): array
     {
-        return $this->client->previewInvoicesForCleanup($this->resolveDocEntries($mode, $value));
+        $value = trim($value);
+        $docEntries = $this->resolveDocEntries($mode, $value);
+        $rows = $this->client->previewInvoicesForCleanup($docEntries);
+
+        $added = 0;
+        $updated = 0;
+        foreach ($rows as $row) {
+            $docEntry = (int) ($row['doc_entry'] ?? 0);
+            if ($docEntry <= 0) {
+                continue;
+            }
+
+            $target = SapCleanupTarget::query()->firstOrNew(['doc_entry' => $docEntry]);
+            $isNew = !$target->exists;
+
+            $target->fill([
+                'doc_num' => $row['doc_num'] ?? null,
+                'order_external_id' => $row['order'] ?? null,
+                'card_code' => $row['card_code'] ?? null,
+                'doc_total' => $row['doc_total'] ?? null,
+                'sap_doc_status' => $this->deriveDocStatus($row),
+                'lines' => $row['lines'] ?? [],
+                'related' => $row['related'] ?? [],
+                'last_checked_at' => now(),
+                'source_mode' => $mode,
+                'source_value' => $value,
+            ]);
+
+            if ($isNew) {
+                $target->cleanup_state = !empty($row['already_reversed']) ? 'reversed' : 'new';
+                $added++;
+            } else {
+                if (!empty($row['already_reversed']) && $target->cleanup_state === 'new') {
+                    $target->cleanup_state = 'reversed';
+                }
+                $updated++;
+            }
+
+            $target->save();
+        }
+
+        return [
+            'found' => count($docEntries),
+            'rows' => count($rows),
+            'added' => $added,
+            'updated' => $updated,
+        ];
     }
 
     /**
-     * Queue a background cleanup run.
+     * Re-read a target's invoice from SAP and refresh its stored snapshot.
      *
+     * @return array<string,mixed>
+     */
+    public function checkTarget(SapCleanupTarget $target): array
+    {
+        $rows = $this->client->previewInvoicesForCleanup([(int) $target->doc_entry]);
+        $row = $rows[0] ?? null;
+
+        if ($row === null) {
+            $target->last_action = 'check';
+            $target->last_checked_at = now();
+            $target->last_error = 'Invoice not found in SAP';
+            $target->save();
+
+            return ['ok' => false, 'reason' => 'Invoice not found in SAP'];
+        }
+
+        $target->fill([
+            'doc_num' => $row['doc_num'] ?? $target->doc_num,
+            'order_external_id' => $row['order'] ?? $target->order_external_id,
+            'card_code' => $row['card_code'] ?? $target->card_code,
+            'doc_total' => $row['doc_total'] ?? $target->doc_total,
+            'sap_doc_status' => $this->deriveDocStatus($row),
+            'lines' => $row['lines'] ?? $target->lines,
+            'related' => $row['related'] ?? $target->related,
+            'last_action' => 'check',
+            'last_checked_at' => now(),
+            'last_error' => null,
+        ]);
+
+        if (!empty($row['already_reversed']) && $target->cleanup_state === 'new') {
+            $target->cleanup_state = 'reversed';
+        }
+
+        $target->save();
+
+        return ['ok' => true, 'status' => $target->sap_doc_status];
+    }
+
+    /**
+     * Reverse a target's invoice (cancel payment/delivery, credit memo, COGS
+     * reversal, "-0reversed" stamping) and, when $requeue, reset the local order
+     * to a re-queueable "pending" state.
+     *
+     * @return array<string,mixed>
+     */
+    public function cancelTarget(SapCleanupTarget $target, bool $requeue = true): array
+    {
+        try {
+            $result = $this->client->cleanupReverseInvoice((int) $target->doc_entry);
+        } catch (\Throwable $e) {
+            $result = ['ok' => false, 'reason' => $e->getMessage()];
+        }
+
+        $target->last_action = 'cancel';
+        $target->last_checked_at = now();
+        if (!empty($result['order'])) {
+            $target->order_external_id = (string) $result['order'];
+        }
+
+        if (!empty($result['ok'])) {
+            $target->cleanup_state = 'reversed';
+            $target->sap_doc_status = !empty($result['skipped']) ? 'already_reversed' : 'reversed';
+            $target->last_error = !empty($result['skipped']) ? (string) ($result['reason'] ?? '') : null;
+
+            if ($requeue && empty($result['skipped']) && !empty($result['order'])) {
+                $this->requeueReversedOrder((string) $result['order']);
+                $target->last_action = 'cancel+requeue';
+            }
+        } else {
+            $target->cleanup_state = 'failed';
+            $target->last_error = (string) ($result['reason'] ?? 'Cancel failed');
+        }
+
+        $target->save();
+
+        return $result;
+    }
+
+    /**
+     * Re-send the target's Omniful order to SAP (clean send via Force Resend).
+     *
+     * @return array<string,mixed>
+     */
+    public function resendTarget(SapCleanupTarget $target): array
+    {
+        $externalId = trim((string) $target->order_external_id);
+        if ($externalId === '') {
+            $target->last_action = 'resend';
+            $target->cleanup_state = 'failed';
+            $target->last_error = 'No Omniful order id on this target';
+            $target->save();
+
+            return ['ok' => false, 'reason' => 'No Omniful order id'];
+        }
+
+        $order = OmnifulOrder::query()->where('external_id', $externalId)->first();
+        if ($order === null) {
+            $target->last_action = 'resend';
+            $target->cleanup_state = 'failed';
+            $target->last_error = 'Omniful order not found locally';
+            $target->save();
+
+            return ['ok' => false, 'reason' => 'Omniful order not found locally'];
+        }
+
+        $result = app(WebhookRetryService::class)->forceResendOrder($order, false);
+
+        $target->last_action = 'resend';
+        $target->last_checked_at = now();
+        if (!empty($result['ok'])) {
+            $target->cleanup_state = 'resent';
+            $target->last_error = null;
+        } else {
+            $target->cleanup_state = 'failed';
+            $target->last_error = (string) ($result['message'] ?? 'Resend failed');
+        }
+        $target->save();
+
+        return $result;
+    }
+
+    /**
+     * Queue a background bulk run over a set of target ids.
+     *
+     * @param int[] $targetIds
      * @return array{queued:bool,already_running:bool,event:\App\Models\SapSyncEvent}
      */
-    public function dispatch(string $mode, string $value, bool $requeue = true, ?string $triggeredBy = null): array
+    public function dispatchBulk(string $action, array $targetIds, bool $requeue = true, ?string $triggeredBy = null): array
     {
+        $action = in_array($action, self::BULK_ACTIONS, true) ? $action : 'check';
+        $targetIds = array_values(array_unique(array_map('intval', $targetIds)));
+
         $active = $this->activeEvent();
         if ($active !== null) {
             return ['queued' => false, 'already_running' => true, 'event' => $active];
@@ -75,11 +251,11 @@ class SapItemCleanupService
         $event = SapSyncEvent::create([
             'event_key' => 'sap_item_cleanup_' . (string) Str::ulid(),
             'source_type' => self::SOURCE_TYPE,
-            'sap_action' => 'item_cleanup',
+            'sap_action' => 'item_cleanup_' . $action,
             'sap_status' => 'queued',
             'payload' => [
-                'mode' => $mode,
-                'value' => trim($value),
+                'action' => $action,
+                'target_ids' => $targetIds,
                 'requeue' => $requeue,
                 'requested_at' => now()->toDateTimeString(),
                 'triggered_by' => $triggeredBy,
@@ -92,81 +268,88 @@ class SapItemCleanupService
     }
 
     /**
-     * Execute the cleanup for a queued event. Honors a mid-run stop request.
+     * Execute the queued bulk action. Honors a mid-run stop request.
      *
      * @return array<string,mixed>
      */
-    public function run(SapSyncEvent $event): array
+    public function runBulk(SapSyncEvent $event): array
     {
         $payload = (array) ($event->payload ?? []);
-        $mode = (string) ($payload['mode'] ?? '');
-        $value = (string) ($payload['value'] ?? '');
+        $action = (string) ($payload['action'] ?? 'check');
         $requeue = (bool) ($payload['requeue'] ?? true);
+        $targetIds = array_map('intval', (array) ($payload['target_ids'] ?? []));
 
-        $docEntries = $this->resolveDocEntries($mode, $value);
+        $targets = SapCleanupTarget::query()->whereIn('id', $targetIds)->get();
 
-        $results = [];
-        $reversed = 0;
-        $skipped = 0;
+        $done = 0;
         $failed = 0;
         $requeued = 0;
+        $results = [];
 
-        foreach ($docEntries as $docEntry) {
+        foreach ($targets as $target) {
             if ((string) (optional($event->fresh())->sap_status) === 'cancel_requested') {
                 return [
                     'cancelled' => true,
-                    'mode' => $mode,
-                    'value' => $value,
-                    'requeue' => $requeue,
-                    'found' => count($docEntries),
-                    'reversed' => $reversed,
-                    'skipped' => $skipped,
+                    'action' => $action,
+                    'total' => count($targetIds),
+                    'done' => $done,
                     'failed' => $failed,
                     'requeued' => $requeued,
                     'results' => $results,
                 ];
             }
 
-            try {
-                $result = $this->client->cleanupReverseInvoice((int) $docEntry);
-            } catch (\Throwable $e) {
-                $result = ['ok' => false, 'doc_entry' => (int) $docEntry, 'reason' => $e->getMessage()];
-            }
+            $res = match ($action) {
+                'cancel' => $this->cancelTarget($target, $requeue),
+                'resend' => $this->resendTarget($target),
+                default => $this->checkTarget($target),
+            };
 
-            if (!empty($result['skipped'])) {
-                $skipped++;
-            } elseif (!empty($result['ok'])) {
-                $reversed++;
-                if ($requeue && !empty($result['order'])) {
-                    $requeued += $this->requeueReversedOrder((string) $result['order']);
+            if (!empty($res['ok'])) {
+                $done++;
+                if ($action === 'cancel' && $requeue && empty($res['skipped']) && !empty($res['order'])) {
+                    $requeued++;
                 }
             } else {
                 $failed++;
             }
 
-            $results[] = $result;
+            $results[] = [
+                'target_id' => $target->id,
+                'doc_num' => $target->doc_num,
+                'order' => $target->order_external_id,
+                'ok' => !empty($res['ok']),
+                'reason' => $res['reason'] ?? null,
+            ];
         }
 
         return [
             'cancelled' => false,
-            'mode' => $mode,
-            'value' => $value,
-            'requeue' => $requeue,
-            'found' => count($docEntries),
-            'reversed' => $reversed,
-            'skipped' => $skipped,
+            'action' => $action,
+            'total' => count($targetIds),
+            'done' => $done,
             'failed' => $failed,
             'requeued' => $requeued,
             'results' => $results,
         ];
     }
 
+    private function deriveDocStatus(array $row): string
+    {
+        if (!empty($row['already_reversed'])) {
+            return 'already_reversed';
+        }
+        if (!empty($row['cancelled'])) {
+            return 'cancelled';
+        }
+
+        return (string) ($row['status'] ?? '');
+    }
+
     /**
-     * Reset the local OmnifulOrder(s) for a reversed order back to a re-queueable
-     * state: clear the SAP document bindings and set sap_status='pending' so the
-     * order reappears in the "In Queue Orders" list and can be re-sent to SAP via
-     * Force Resend. The original Omniful event + payload are kept intact so the
-     * resend has everything it needs; a failed resend lands in the errors page.
+     * Reset the local OmnifulOrder(s) back to a re-queueable "pending" state with
+     * cleared SAP bindings, so the order returns to the In Queue list and can be
+     * re-sent to SAP. The Omniful event + payload are kept for the resend.
      */
     private function requeueReversedOrder(string $externalId): int
     {

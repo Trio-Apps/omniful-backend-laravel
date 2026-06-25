@@ -5699,11 +5699,70 @@ trait HandlesSapPurchaseAndProducts
                 'status' => (string) ($inv['DocumentStatus'] ?? ''),
                 'already_reversed' => str_contains($omoLower, 'reversed')
                     || str_contains($omoLower, '-reverse') || str_contains($omoLower, '-cancel'),
+                'related' => $this->findOrderRelatedDocuments($omo),
                 'lines' => $lines,
             ];
         }
 
         return $rows;
+    }
+
+    /**
+     * Look up the payment / delivery / COGS-journal documents that carry an
+     * order's reference (for display in the cleanup worklist). Includes both
+     * active and cancelled docs so the user sees the full picture.
+     *
+     * @return array{payments:array<int,array<string,mixed>>,deliveries:array<int,array<string,mixed>>,cogs_journals:array<int,array<string,mixed>>}
+     */
+    public function findOrderRelatedDocuments(string $externalId): array
+    {
+        $out = ['payments' => [], 'deliveries' => [], 'cogs_journals' => []];
+        $externalId = trim($externalId);
+        if ($externalId === '') {
+            return $out;
+        }
+
+        $udf = trim((string) config('omniful.order_sync.order_number_udf_field', 'U_omo'));
+        if ($udf === '') {
+            $udf = 'U_omo';
+        }
+        $escUdf = str_replace("'", "''", $udf);
+        $escVal = str_replace("'", "''", $externalId);
+        $filter = rawurlencode("{$escUdf} eq '{$escVal}'");
+
+        foreach (['payments' => '/IncomingPayments', 'deliveries' => '/DeliveryNotes'] as $key => $entity) {
+            $resp = $this->get("{$entity}?\$filter={$filter}&\$select=DocEntry,DocNum,Cancelled&\$top=50");
+            if (!$resp->successful()) {
+                continue;
+            }
+            foreach ((array) ($resp->json('value') ?? []) as $row) {
+                if (!is_array($row) || empty($row['DocEntry'])) {
+                    continue;
+                }
+                $out[$key][] = [
+                    'doc_entry' => (int) $row['DocEntry'],
+                    'doc_num' => (int) ($row['DocNum'] ?? 0),
+                    'cancelled' => (string) ($row['Cancelled'] ?? 'tNO') === 'tYES',
+                ];
+            }
+        }
+
+        // COGS journal(s): Reference2 is stamped "COGS-<order>" by the COGS builder.
+        $ref2 = str_replace("'", "''", $this->buildJournalRef2('COGS', $externalId));
+        $jeFilter = rawurlencode("Reference2 eq '{$ref2}'");
+        $jeResp = $this->get("/JournalEntries?\$filter={$jeFilter}&\$select=JdtNum,Number&\$top=50");
+        if ($jeResp->successful()) {
+            foreach ((array) ($jeResp->json('value') ?? []) as $row) {
+                if (is_array($row) && !empty($row['JdtNum'])) {
+                    $out['cogs_journals'][] = [
+                        'jdt_num' => (int) $row['JdtNum'],
+                        'number' => (int) ($row['Number'] ?? $row['JdtNum']),
+                    ];
+                }
+            }
+        }
+
+        return $out;
     }
 
     /**

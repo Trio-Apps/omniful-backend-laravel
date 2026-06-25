@@ -49,11 +49,11 @@ class RunSapItemCleanup implements ShouldQueue
         ]);
 
         try {
-            $details = $cleanup->run($event);
+            $details = $cleanup->runBulk($event);
             $summary = [
-                'found' => (int) ($details['found'] ?? 0),
-                'reversed' => (int) ($details['reversed'] ?? 0),
-                'skipped' => (int) ($details['skipped'] ?? 0),
+                'action' => (string) ($details['action'] ?? ''),
+                'total' => (int) ($details['total'] ?? 0),
+                'done' => (int) ($details['done'] ?? 0),
                 'failed' => (int) ($details['failed'] ?? 0),
                 'requeued' => (int) ($details['requeued'] ?? 0),
             ];
