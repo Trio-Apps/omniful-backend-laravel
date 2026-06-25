@@ -3952,10 +3952,22 @@ trait HandlesSapPurchaseAndProducts
     }
 
 
-    private function ensureItemExists(string $itemCode, array $item, int $lineIndex): bool
+    private function ensureItemExists(string $itemCode, array $item, int $lineIndex, bool $allowCreate = false): bool
     {
         if ($this->isValidItem($itemCode)) {
             return false;
+        }
+
+        // Item is missing. Only the Omniful products webhook (which passes
+        // $allowCreate = true) — or the explicit SAP_ITEM_AUTO_CREATE override —
+        // may create items in SAP. Every other flow (orders, PO, GRPO, stock
+        // transfer, credit memo) must fail loudly instead of silently
+        // provisioning a master record.
+        if (!$allowCreate && !(bool) config('omniful.sap_item_defaults.auto_create', false)) {
+            throw new \RuntimeException(
+                'SAP item does not exist and auto-create is disabled outside the products webhook'
+                . ' for line ' . $lineIndex . ' (' . $itemCode . ').'
+            );
         }
 
         $name = data_get($item, 'sku.name')
@@ -4029,6 +4041,17 @@ trait HandlesSapPurchaseAndProducts
         $response = $this->get("/Items('{$encoded}')?\$select=ItemCode,SalesItem");
 
         if ($response->status() === 404) {
+            // Orders must NOT create items in SAP — only the products webhook
+            // may. Fail loudly so the order surfaces as an error instead of
+            // silently provisioning a master record. Set SAP_ITEM_AUTO_CREATE=true
+            // to restore the legacy auto-provision-for-sale behaviour.
+            if (!(bool) config('omniful.sap_item_defaults.auto_create', false)) {
+                throw new \RuntimeException(
+                    'SAP item does not exist and auto-create is disabled for orders'
+                    . ' for line ' . $lineIndex . ' (' . $itemCode . ').'
+                );
+            }
+
             $this->createSapItemForSale($itemCode, $omnifulItem, $lineIndex);
             return;
         }
@@ -4314,7 +4337,8 @@ trait HandlesSapPurchaseAndProducts
             $this->ensureItemExists(
                 (string) $component['item_code'],
                 ['sku_code' => $component['item_code'], 'name' => $component['item_code']],
-                $index + 1
+                $index + 1,
+                true // products webhook: bundle components may be auto-created
             );
         }
 

@@ -130,6 +130,12 @@ return [
         'barcode_fallback_to_code' => (bool) env('OMNIFUL_ITEM_BARCODE_FALLBACK_TO_CODE', true),
     ],
     'sap_item_defaults' => [
+        // Master-data safety: by default ONLY the Omniful products webhook may
+        // create items in SAP. Every other flow (orders, PO, GRPO, stock
+        // transfer, credit memo) fails loudly on a missing item instead of
+        // auto-provisioning one. Set SAP_ITEM_AUTO_CREATE=true to restore the
+        // legacy behaviour where those flows auto-create the missing item.
+        'auto_create' => (bool) env('SAP_ITEM_AUTO_CREATE', false),
         'item_type' => env('SAP_ITEM_TYPE', 'itItems'),
         'item_type_numeric_fallback' => (int) env('SAP_ITEM_TYPE_NUMERIC_FALLBACK', 0),
         'item_type_udf_field' => env('SAP_ITEM_TYPE_UDF_FIELD', ''),
