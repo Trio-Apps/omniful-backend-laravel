@@ -5369,47 +5369,20 @@ trait HandlesSapPurchaseAndProducts
         $invoice = $this->getArReserveInvoice($docEntry);
         $isCancelled = (string) ($invoice['Cancelled'] ?? 'tNO') === 'tYES'
             || in_array((string) ($invoice['CancelStatus'] ?? ''), ['csYes', 'csCancellation'], true);
-        $isClosed = (string) ($invoice['DocumentStatus'] ?? '') === 'bost_Close';
+        // Anything that is NOT explicitly open (bost_Close, bost_Paid, ...) cannot be
+        // base-referenced — SAP rejects with -5002 "base already closed".
+        $isOpen = (string) ($invoice['DocumentStatus'] ?? '') === 'bost_Open';
 
         // Idempotency: reuse a cleanup credit memo already posted for this order.
         $creditMemo = $this->findCleanupCreditMemo($baseOrderId, $markerRef, $orderUdf);
 
         if ($creditMemo === null && !$isCancelled) {
-            // Base-referenced (BaseType 13) for an OPEN invoice; STANDALONE (BaseType
-            // -1, lines copied from the invoice) for a CLOSED/paid one — base-referencing
-            // a closed invoice raises -5002 "base already closed".
-            if (!$isClosed) {
-                $creditLines = [];
-                foreach ((array) ($invoice['DocumentLines'] ?? []) as $line) {
-                    if (!is_array($line)) {
-                        continue;
-                    }
-                    $lineQty = (float) ($line['Quantity'] ?? 0);
-                    if ($lineQty <= 0) {
-                        continue;
-                    }
-                    $creditLines[] = [
-                        'BaseType' => 13,
-                        'BaseEntry' => $docEntry,
-                        'BaseLine' => (int) ($line['LineNum'] ?? 0),
-                        'Quantity' => $lineQty,
-                    ];
-                }
-            } else {
-                $creditLines = $this->buildStandaloneCreditLinesFromInvoice($invoice);
-            }
-
-            if ($creditLines === []) {
-                return ['ok' => false, 'doc_entry' => $docEntry, 'doc_num' => $docNum, 'order' => $baseOrderId, 'reason' => 'Invoice has no lines to reverse'];
-            }
-
             $today = now()->format('Y-m-d');
             $creditBody = [
                 'CardCode' => (string) ($invoice['CardCode'] ?? ''),
                 'DocDate' => $today,
                 'DocDueDate' => $today,
                 'TaxDate' => $today,
-                'DocumentLines' => $creditLines,
                 'Comments' => 'Item-cleanup reversal of AR reserve invoice DocNum '
                     . ($docNum ?: $docEntry) . ' for Omniful order ' . $baseOrderId,
                 $orderUdf => $markerRef,
@@ -5418,7 +5391,31 @@ trait HandlesSapPurchaseAndProducts
                 $creditBody['U_ZidId'] = $markerRef;
             }
 
+            // Base-referenced (BaseType 13) for an OPEN invoice; STANDALONE (BaseType
+            // -1, lines copied from the invoice) for a closed/paid one.
+            $usedStandalone = !$isOpen;
+            $creditLines = $isOpen
+                ? $this->buildBaseReferencedCreditLines($invoice, $docEntry)
+                : $this->buildStandaloneCreditLinesFromInvoice($invoice);
+
+            if ($creditLines === []) {
+                return ['ok' => false, 'doc_entry' => $docEntry, 'doc_num' => $docNum, 'order' => $baseOrderId, 'reason' => 'Invoice has no lines to reverse'];
+            }
+
+            $creditBody['DocumentLines'] = $creditLines;
             $creditResponse = $this->post('/CreditNotes', $creditBody);
+
+            // Safety net: a base-referenced memo can still hit "base already closed"
+            // (e.g. the line was drawn down) — retry once as a standalone memo.
+            if (!$creditResponse->successful() && !$usedStandalone
+                && stripos((string) $creditResponse->body(), 'already been closed') !== false) {
+                $standaloneLines = $this->buildStandaloneCreditLinesFromInvoice($invoice);
+                if ($standaloneLines !== []) {
+                    $creditBody['DocumentLines'] = $standaloneLines;
+                    $creditResponse = $this->post('/CreditNotes', $creditBody);
+                }
+            }
+
             if (!$creditResponse->successful()) {
                 return [
                     'ok' => false,
@@ -5580,6 +5577,34 @@ trait HandlesSapPurchaseAndProducts
      *
      * @return array<int,array<string,mixed>>
      */
+    /**
+     * Base-referenced (BaseType 13) credit-memo lines copied from an OPEN invoice's
+     * lines (SAP draws the amounts/tax from the referenced invoice).
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function buildBaseReferencedCreditLines(array $invoice, int $docEntry): array
+    {
+        $lines = [];
+        foreach ((array) ($invoice['DocumentLines'] ?? []) as $line) {
+            if (!is_array($line)) {
+                continue;
+            }
+            $qty = (float) ($line['Quantity'] ?? 0);
+            if ($qty <= 0) {
+                continue;
+            }
+            $lines[] = [
+                'BaseType' => 13,
+                'BaseEntry' => $docEntry,
+                'BaseLine' => (int) ($line['LineNum'] ?? 0),
+                'Quantity' => $qty,
+            ];
+        }
+
+        return $lines;
+    }
+
     private function buildStandaloneCreditLinesFromInvoice(array $invoice): array
     {
         $lines = [];
