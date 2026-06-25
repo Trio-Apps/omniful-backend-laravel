@@ -27,6 +27,32 @@ class StockTransferWebhookService
             $event->save();
         }
 
+        // Serialize every event for the SAME transfer (e.g. received + shipped, or
+        // retries) behind a per-transfer lock. Processing is synchronous, so without
+        // this two simultaneous webhooks could both pass the dedup check before
+        // either saves sap_doc_entry — creating a DUPLICATE StockTransfer in SAP.
+        $externalId = (string) ($event->external_id ?? '');
+        if ($externalId === '') {
+            $this->processTransfer($event, $data, $payload, $status);
+
+            return;
+        }
+
+        $lock = \Illuminate\Support\Facades\Cache::lock('sto_process_' . $externalId, 120);
+        try {
+            $lock->block(20);
+            $this->processTransfer($event, $data, $payload, $status);
+        } catch (\Illuminate\Contracts\Cache\LockTimeoutException $e) {
+            $event->sap_status = 'skipped';
+            $event->sap_error = 'Skipped: another event for the same stock transfer is still processing.';
+            $event->save();
+        } finally {
+            optional($lock)->release();
+        }
+    }
+
+    private function processTransfer(Model $event, array $data, array $payload, string $status): void
+    {
         if ($event->external_id) {
             $eventModel = $event::class;
             $existing = $eventModel::query()
