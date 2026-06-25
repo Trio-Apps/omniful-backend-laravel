@@ -93,17 +93,31 @@ class SapItemCleanupService
      *
      * @return array{found:int,rows:int,added:int,updated:int}
      */
-    public function scanAndAdd(string $mode, string $value): array
+    public function scanAndAdd(string $mode, string $value, ?SapSyncEvent $event = null): array
     {
         $value = trim($value);
         $docEntries = $this->resolveDocEntries($mode, $value);
-        $rows = $this->client->previewInvoicesForCleanup($docEntries);
 
         $added = 0;
         $updated = 0;
-        foreach ($rows as $row) {
-            $docEntry = (int) ($row['doc_entry'] ?? 0);
+        $processed = 0;
+        $cancelled = false;
+
+        foreach ($docEntries as $docEntry) {
+            $docEntry = (int) $docEntry;
             if ($docEntry <= 0) {
+                continue;
+            }
+            if ($event !== null && (string) (optional($event->fresh())->sap_status) === 'cancel_requested') {
+                $cancelled = true;
+                break;
+            }
+
+            // Fast snapshot only — related docs (payment/delivery/COGS) are fetched
+            // lazily on Check/Details so a large scan stays quick.
+            $rows = $this->client->previewInvoicesForCleanup([$docEntry], false);
+            $row = $rows[0] ?? null;
+            if ($row === null) {
                 continue;
             }
 
@@ -117,7 +131,6 @@ class SapItemCleanupService
                 'doc_total' => $row['doc_total'] ?? null,
                 'sap_doc_status' => $this->deriveDocStatus($row),
                 'lines' => $row['lines'] ?? [],
-                'related' => $row['related'] ?? [],
                 'last_checked_at' => now(),
                 'source_mode' => $mode,
                 'source_value' => $value,
@@ -134,13 +147,15 @@ class SapItemCleanupService
             }
 
             $target->save();
+            $processed++;
         }
 
         return [
             'found' => count($docEntries),
-            'rows' => count($rows),
+            'rows' => $processed,
             'added' => $added,
             'updated' => $updated,
+            'cancelled' => $cancelled,
         ];
     }
 
@@ -185,7 +200,7 @@ class SapItemCleanupService
     {
         $payload = (array) ($event->payload ?? []);
 
-        return $this->scanAndAdd((string) ($payload['mode'] ?? ''), (string) ($payload['value'] ?? ''));
+        return $this->scanAndAdd((string) ($payload['mode'] ?? ''), (string) ($payload['value'] ?? ''), $event);
     }
 
     /**

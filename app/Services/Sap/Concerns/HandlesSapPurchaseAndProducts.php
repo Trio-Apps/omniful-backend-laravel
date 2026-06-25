@@ -5885,7 +5885,7 @@ trait HandlesSapPurchaseAndProducts
      * @param int[] $docEntries
      * @return array<int,array<string,mixed>>
      */
-    public function previewInvoicesForCleanup(array $docEntries): array
+    public function previewInvoicesForCleanup(array $docEntries, bool $withRelated = true): array
     {
         $orderUdf = trim((string) config('omniful.order_sync.order_number_udf_field', 'U_omo'));
         if ($orderUdf === '') {
@@ -5933,7 +5933,7 @@ trait HandlesSapPurchaseAndProducts
                 'status' => (string) ($inv['DocumentStatus'] ?? ''),
                 'already_reversed' => str_contains($omoLower, 'reversed')
                     || str_contains($omoLower, '-reverse') || str_contains($omoLower, '-cancel'),
-                'related' => $this->findOrderRelatedDocuments($omo),
+                'related' => $withRelated ? $this->findOrderRelatedDocuments($omo) : [],
                 'lines' => $lines,
             ];
         }
