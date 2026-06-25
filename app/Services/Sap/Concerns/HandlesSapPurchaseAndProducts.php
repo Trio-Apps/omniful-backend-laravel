@@ -5637,21 +5637,33 @@ trait HandlesSapPurchaseAndProducts
             return ['ok' => false, 'reason' => 'Missing order id'];
         }
 
+        // The SAP team reads the "reversed" marker in Reference3 of the COGS
+        // journals, so we stamp it on both the original and the reversal entries.
+        $reversedMarker = mb_substr($baseOrderId . '-0reversed', 0, 27);
         $revRef2 = $this->buildJournalRef2('COGSREV', $baseOrderId);
-        $escRev = str_replace("'", "''", $revRef2);
-        $check = $this->get('/JournalEntries?$filter=' . rawurlencode("Reference2 eq '{$escRev}'") . '&$select=JdtNum&$top=1');
-        if ($check->successful() && !empty((array) ($check->json('value') ?? []))) {
-            return ['ok' => true, 'already' => true, 'reason' => 'COGS already reversed'];
+        $forwardKeys = $this->findOrderCogsJournalKeys($baseOrderId);
+        $reversalKeys = $this->findCogsJournalKeysByReference2($revRef2);
+
+        // Already reversed: just ensure the Reference3 "reversed" marker is present
+        // on the original + reversal journals, then stop (no duplicate reversal).
+        if ($reversalKeys !== []) {
+            $this->stampJournalsReference3(array_merge($forwardKeys, $reversalKeys), $reversedMarker);
+
+            return [
+                'ok' => true,
+                'already' => true,
+                'reason' => 'COGS already reversed',
+                'marked_jdtnums' => array_values(array_unique(array_merge($forwardKeys, $reversalKeys))),
+            ];
         }
 
-        $jdtNums = $this->findOrderCogsJournalKeys($baseOrderId);
-        if ($jdtNums === []) {
+        if ($forwardKeys === []) {
             return ['ok' => true, 'reason' => 'No forward COGS journal to reverse'];
         }
 
         $today = now()->format('Y-m-d');
         $posted = [];
-        foreach ($jdtNums as $jdtNum) {
+        foreach ($forwardKeys as $jdtNum) {
             $resp = $this->get('/JournalEntries(' . (int) $jdtNum . ')');
             if (!$resp->successful()) {
                 return ['ok' => false, 'reason' => 'Forward COGS fetch failed: ' . $resp->status()];
@@ -5695,7 +5707,7 @@ trait HandlesSapPurchaseAndProducts
                 'TaxDate' => $today,
                 'Reference' => $baseOrderId,
                 'Reference2' => $revRef2,
-                'Reference3' => $baseOrderId,
+                'Reference3' => $reversedMarker,
                 'Memo' => 'COGS reversal from item-cleanup of Omniful order ' . $baseOrderId,
                 'JournalEntryLines' => $lines,
             ];
@@ -5707,7 +5719,58 @@ trait HandlesSapPurchaseAndProducts
             $posted[] = (int) ($j['JdtNum'] ?? $j['Number'] ?? 0);
         }
 
+        // Stamp the "reversed" marker on Reference3 of the original COGS journal(s)
+        // too (the new reversal entries already carry it via their body).
+        $this->stampJournalsReference3($forwardKeys, $reversedMarker);
+
         return ['ok' => true, 'reversed_jdtnums' => $posted];
+    }
+
+    /**
+     * JdtNum keys of journal entries carrying a given Reference2.
+     *
+     * @return int[]
+     */
+    private function findCogsJournalKeysByReference2(string $reference2): array
+    {
+        $esc = str_replace("'", "''", $reference2);
+        $filter = rawurlencode("Reference2 eq '{$esc}'");
+        $response = $this->get("/JournalEntries?\$filter={$filter}&\$select=JdtNum&\$top=50");
+        if (!$response->successful()) {
+            return [];
+        }
+
+        $keys = [];
+        foreach ((array) ($response->json('value') ?? []) as $row) {
+            if (is_array($row) && !empty($row['JdtNum'])) {
+                $keys[] = (int) $row['JdtNum'];
+            }
+        }
+
+        return $keys;
+    }
+
+    /**
+     * Write a "reversed" marker into Reference3 of the given journal entries
+     * (best-effort, idempotent — skips an entry already carrying the marker).
+     *
+     * @param int[] $jdtNums
+     */
+    private function stampJournalsReference3(array $jdtNums, string $reference3): void
+    {
+        foreach (array_values(array_unique(array_map('intval', $jdtNums))) as $jdtNum) {
+            if ($jdtNum <= 0) {
+                continue;
+            }
+            $current = $this->get('/JournalEntries(' . $jdtNum . ')');
+            if ($current->successful()) {
+                $je = $current->json() ?? [];
+                if ((string) ($je['Reference3'] ?? '') === $reference3) {
+                    continue;
+                }
+            }
+            $this->patch('/JournalEntries(' . $jdtNum . ')', ['Reference3' => $reference3]);
+        }
     }
 
     /**
