@@ -44,11 +44,47 @@ class SapItemCleanupService
         }
 
         return match ($mode) {
-            'product_id' => $this->client->findInvoiceDocEntriesByItemCode($value),
+            'product_id' => $this->resolveInvoicesByItemLocally($value),
             'sap_doc_number' => $this->client->findInvoiceDocEntriesByDocNum($value),
             'omniful_order_id' => $this->client->findOrderInvoiceDocEntriesHoldingReference($value),
             default => [],
         };
+    }
+
+    /**
+     * Resolve invoice DocEntries for a product/item code via the LOCAL order
+     * mirror: the SAP Service Layer cannot filter invoices by a line ItemCode
+     * (DocumentLines/any() is rejected and list queries omit the lines), so we
+     * find the Omniful orders whose stored payload contains the SKU, then resolve
+     * each order's invoice by its U_omo reference. Already-reversed orders (whose
+     * invoice U_omo was renamed) are naturally skipped.
+     *
+     * @return int[]
+     */
+    private function resolveInvoicesByItemLocally(string $sku): array
+    {
+        $sku = trim($sku);
+        if ($sku === '') {
+            return [];
+        }
+
+        $externalIds = OmnifulOrder::query()
+            ->where('last_payload', 'like', '%' . $sku . '%')
+            ->orderByDesc('id')
+            ->limit(2000)
+            ->pluck('external_id')
+            ->filter()
+            ->unique()
+            ->values();
+
+        $docEntries = [];
+        foreach ($externalIds as $externalId) {
+            foreach ($this->client->findOrderInvoiceDocEntriesHoldingReference((string) $externalId) as $docEntry) {
+                $docEntries[] = (int) $docEntry;
+            }
+        }
+
+        return array_values(array_unique($docEntries));
     }
 
     /**

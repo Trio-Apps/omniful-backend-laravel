@@ -5351,55 +5351,56 @@ trait HandlesSapPurchaseAndProducts
         if ($orderUdf === '') {
             $orderUdf = 'U_omo';
         }
-        $externalId = trim((string) ($invoice[$orderUdf] ?? ''));
-        $omoLower = strtolower($externalId);
 
-        // Already reversed (ref carries a reversal/cancel marker) or has no live
-        // order reference — nothing to do.
-        if ($externalId === '' || str_contains($omoLower, 'reversed')
-            || str_contains($omoLower, '-reverse') || str_contains($omoLower, '-cancel')) {
-            return [
-                'ok' => true,
-                'skipped' => true,
-                'doc_entry' => $docEntry,
-                'doc_num' => $docNum,
-                'order' => $externalId,
-                'reason' => 'Invoice already reversed or carries no live order reference',
-            ];
+        // The invoice's order UDF may ALREADY carry a reversal marker from an earlier
+        // partial run. Recover the ORIGINAL order id so we can re-scan LIVE and finish
+        // whatever is still not cancelled/reversed (idempotent + self-healing).
+        $currentRef = trim((string) ($invoice[$orderUdf] ?? ''));
+        $baseOrderId = $this->stripReversalSuffix($currentRef);
+        if ($baseOrderId === '') {
+            return ['ok' => false, 'doc_entry' => $docEntry, 'doc_num' => $docNum, 'reason' => 'Invoice carries no order reference'];
         }
+        $markerRef = $baseOrderId . $marker;
 
-        // 1) cancel dependent incoming payments + delivery notes (reopens the invoice)
-        $teardown = $this->tearDownOrderDependentsForResend($externalId);
+        // 1) cancel any STILL-ACTIVE incoming payments + delivery notes for the order
+        $teardown = $this->tearDownOrderDependentsForResend($baseOrderId);
 
-        // 2) re-read the invoice for its post-teardown status + lines
+        // 2) re-read the invoice (post-teardown) and ensure a credit memo exists
         $invoice = $this->getArReserveInvoice($docEntry);
         $isCancelled = (string) ($invoice['Cancelled'] ?? 'tNO') === 'tYES'
             || in_array((string) ($invoice['CancelStatus'] ?? ''), ['csYes', 'csCancellation'], true);
         $isClosed = (string) ($invoice['DocumentStatus'] ?? '') === 'bost_Close';
 
-        $markerRef = $this->resolveFreeReversedInvoiceRef($orderUdf, $externalId, $marker);
-        $creditMemo = null;
+        // Idempotency: reuse a cleanup credit memo already posted for this order.
+        $creditMemo = $this->findCleanupCreditMemo($baseOrderId, $markerRef, $orderUdf);
 
-        if (!$isCancelled && !$isClosed) {
-            $creditLines = [];
-            foreach ((array) ($invoice['DocumentLines'] ?? []) as $line) {
-                if (!is_array($line)) {
-                    continue;
+        if ($creditMemo === null && !$isCancelled) {
+            // Base-referenced (BaseType 13) for an OPEN invoice; STANDALONE (BaseType
+            // -1, lines copied from the invoice) for a CLOSED/paid one — base-referencing
+            // a closed invoice raises -5002 "base already closed".
+            if (!$isClosed) {
+                $creditLines = [];
+                foreach ((array) ($invoice['DocumentLines'] ?? []) as $line) {
+                    if (!is_array($line)) {
+                        continue;
+                    }
+                    $lineQty = (float) ($line['Quantity'] ?? 0);
+                    if ($lineQty <= 0) {
+                        continue;
+                    }
+                    $creditLines[] = [
+                        'BaseType' => 13,
+                        'BaseEntry' => $docEntry,
+                        'BaseLine' => (int) ($line['LineNum'] ?? 0),
+                        'Quantity' => $lineQty,
+                    ];
                 }
-                $lineQty = (float) ($line['Quantity'] ?? 0);
-                if ($lineQty <= 0) {
-                    continue;
-                }
-                $creditLines[] = [
-                    'BaseType' => 13,
-                    'BaseEntry' => $docEntry,
-                    'BaseLine' => (int) ($line['LineNum'] ?? 0),
-                    'Quantity' => $lineQty,
-                ];
+            } else {
+                $creditLines = $this->buildStandaloneCreditLinesFromInvoice($invoice);
             }
 
             if ($creditLines === []) {
-                return ['ok' => false, 'doc_entry' => $docEntry, 'doc_num' => $docNum, 'reason' => 'Invoice has no lines to reverse'];
+                return ['ok' => false, 'doc_entry' => $docEntry, 'doc_num' => $docNum, 'order' => $baseOrderId, 'reason' => 'Invoice has no lines to reverse'];
             }
 
             $today = now()->format('Y-m-d');
@@ -5410,7 +5411,7 @@ trait HandlesSapPurchaseAndProducts
                 'TaxDate' => $today,
                 'DocumentLines' => $creditLines,
                 'Comments' => 'Item-cleanup reversal of AR reserve invoice DocNum '
-                    . ($docNum ?: $docEntry) . ' for Omniful order ' . $externalId,
+                    . ($docNum ?: $docEntry) . ' for Omniful order ' . $baseOrderId,
                 $orderUdf => $markerRef,
             ];
             if ($orderUdf !== 'U_ZidId') {
@@ -5423,34 +5424,17 @@ trait HandlesSapPurchaseAndProducts
                     'ok' => false,
                     'doc_entry' => $docEntry,
                     'doc_num' => $docNum,
+                    'order' => $baseOrderId,
                     'reason' => 'Credit memo create failed: ' . $creditResponse->status() . ' ' . $creditResponse->body(),
                 ];
             }
             $creditMemo = $creditResponse->json() ?? [];
         }
 
-        // 3) release the live order id on the original invoice
-        $patchBody = [$orderUdf => $markerRef, 'NumAtCard' => $markerRef];
-        if ($orderUdf !== 'U_ZidId') {
-            $patchBody['U_ZidId'] = $markerRef;
-        }
-        $patch = $this->patch('/Invoices(' . $docEntry . ')', $patchBody);
-        if (!$patch->successful() && $patch->status() !== 204) {
-            return [
-                'ok' => false,
-                'doc_entry' => $docEntry,
-                'doc_num' => $docNum,
-                'credit_memo_doc_entry' => is_array($creditMemo) ? (int) ($creditMemo['DocEntry'] ?? 0) : null,
-                'reason' => 'Failed to free invoice order references: ' . $patch->status() . ' ' . $patch->body(),
-            ];
-        }
-
-        // 3b) mark the cancelled payment / delivery refs too (best-effort)
-        $this->markCancelledDependentsReversed($externalId, $marker);
-
-        // 4) COGS reversal journal for the credit memo (same Reference convention as cancellation)
-        $cogs = null;
         $creditMemoDocEntry = is_array($creditMemo) ? (int) ($creditMemo['DocEntry'] ?? 0) : 0;
+
+        // 3) COGS reversal journal (idempotent) — only when a credit memo exists
+        $cogs = null;
         if ($creditMemoDocEntry > 0) {
             $expense = (string) ($this->getIntegrationSettingValue('order_cogs_expense_account')
                 ?? config('omniful.order_accounting.cogs_expense_account', ''));
@@ -5458,38 +5442,58 @@ trait HandlesSapPurchaseAndProducts
                 ?? config('omniful.order_accounting.inventory_offset_account', ''));
 
             if (trim($expense) === '' || trim($offset) === '') {
-                $cogs = ['ignored' => true, 'reason' => 'COGS expense/offset account not configured'];
+                $cogs = ['ok' => false, 'reason' => 'COGS expense/offset account not configured'];
             } else {
                 try {
                     $cogs = $this->createCogsReversalJournalForCreditMemo([
                         'credit_memo_doc_entry' => $creditMemoDocEntry,
-                        'reference' => $externalId,
-                        'cogs_order_reference' => $externalId,
-                        'memo' => 'COGS reversal from item-cleanup of Omniful order ' . $externalId,
+                        'reference' => $baseOrderId,
+                        'cogs_order_reference' => $baseOrderId,
+                        'memo' => 'COGS reversal from item-cleanup of Omniful order ' . $baseOrderId,
                         'expense_account' => $expense,
                         'offset_account' => $offset,
                     ]);
+                    if (!is_array($cogs)) {
+                        $cogs = [];
+                    }
+                    $cogs['ok'] = true; // success (the method throws on a real failure)
                 } catch (\Throwable $e) {
-                    $cogs = ['ignored' => false, 'error' => $e->getMessage()];
+                    $cogs = ['ok' => false, 'reason' => $e->getMessage()];
                 }
             }
         }
 
-        Log::info('Item-cleanup invoice reversal complete', [
+        // 4) release the live order id on the invoice (only if it still holds it)
+        if (strcasecmp($currentRef, $baseOrderId) === 0) {
+            $patchBody = [$orderUdf => $markerRef, 'NumAtCard' => $markerRef];
+            if ($orderUdf !== 'U_ZidId') {
+                $patchBody['U_ZidId'] = $markerRef;
+            }
+            $this->patch('/Invoices(' . $docEntry . ')', $patchBody);
+        }
+
+        // 5) mark the cancelled payment / delivery refs too (best-effort)
+        $this->markCancelledDependentsReversed($baseOrderId, $marker);
+
+        $cogsOk = $creditMemoDocEntry <= 0 ? true : !empty($cogs['ok']);
+        $reversedFinancials = $creditMemoDocEntry > 0 || $isCancelled;
+        $ok = $reversedFinancials && $cogsOk;
+
+        Log::info('Item-cleanup invoice reversal', [
             'invoice_doc_entry' => $docEntry,
             'doc_num' => $docNum,
-            'order' => $externalId,
+            'order' => $baseOrderId,
             'credit_memo_doc_entry' => $creditMemoDocEntry ?: null,
-            'new_ref' => $markerRef,
+            'cogs_ok' => $cogsOk,
             'payments_cancelled' => $teardown['payments'] ?? 0,
             'deliveries_cancelled' => $teardown['deliveries'] ?? 0,
         ]);
 
-        return [
-            'ok' => true,
+        $result = [
+            'ok' => $ok,
             'doc_entry' => $docEntry,
             'doc_num' => $docNum,
-            'order' => $externalId,
+            'order' => $baseOrderId,
             'new_ref' => $markerRef,
             'credit_memo_doc_entry' => $creditMemoDocEntry ?: null,
             'credit_memo_doc_num' => is_array($creditMemo) ? (int) ($creditMemo['DocNum'] ?? 0) : null,
@@ -5497,6 +5501,13 @@ trait HandlesSapPurchaseAndProducts
             'deliveries_cancelled' => $teardown['deliveries'] ?? 0,
             'cogs' => $cogs,
         ];
+        if (!$ok) {
+            $result['reason'] = !$cogsOk
+                ? ('COGS reversal failed: ' . (string) ($cogs['reason'] ?? ''))
+                : 'Could not reverse invoice financials (no credit memo created)';
+        }
+
+        return $result;
     }
 
     /**
@@ -5537,6 +5548,97 @@ trait HandlesSapPurchaseAndProducts
                 $this->patch("{$entity}({$entry})", $body);
             }
         }
+    }
+
+    /**
+     * Strip a reversal/cancel marker from an order reference to recover the
+     * original order id. e.g. "71009848-0reversed" / "71009848-reversed-3" /
+     * "71009848-cancel" -> "71009848".
+     */
+    private function stripReversalSuffix(string $value): string
+    {
+        $value = trim($value);
+        if ($value === '') {
+            return '';
+        }
+
+        $stripped = preg_replace('/-(0?reversed|reverse|cancel(?:led)?)(-\d+)?$/i', '', $value);
+
+        return trim((string) $stripped);
+    }
+
+    /**
+     * Find an existing item-cleanup credit memo for an order (stamped with the
+     * "<order>-0reversed" marker), so a re-run does not create a duplicate.
+     *
+     * @return array<string,mixed>|null
+     */
+    private function findCleanupCreditMemo(string $baseOrderId, string $markerRef, string $orderUdf): ?array
+    {
+        $escVal = str_replace("'", "''", $markerRef);
+        $fields = $orderUdf === 'U_ZidId' ? ['U_ZidId'] : [$orderUdf, 'U_ZidId'];
+
+        foreach ($fields as $field) {
+            $escField = str_replace("'", "''", $field);
+            $filter = rawurlencode("{$escField} eq '{$escVal}'");
+            $response = $this->get("/CreditNotes?\$filter={$filter}&\$select=DocEntry,DocNum&\$top=1");
+            if (!$response->successful()) {
+                continue;
+            }
+            $rows = (array) ($response->json('value') ?? []);
+            if (!empty($rows[0]['DocEntry'])) {
+                return [
+                    'DocEntry' => (int) $rows[0]['DocEntry'],
+                    'DocNum' => (int) ($rows[0]['DocNum'] ?? 0),
+                ];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Build STANDALONE (BaseType -1) credit-memo lines from an invoice's own
+     * lines, used to reverse a CLOSED/paid reserve invoice that cannot be
+     * base-referenced. Mirrors the invoice's price/tax/warehouse per line.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function buildStandaloneCreditLinesFromInvoice(array $invoice): array
+    {
+        $lines = [];
+        foreach ((array) ($invoice['DocumentLines'] ?? []) as $line) {
+            if (!is_array($line)) {
+                continue;
+            }
+            $itemCode = trim((string) ($line['ItemCode'] ?? ''));
+            $qty = (float) ($line['Quantity'] ?? 0);
+            if ($itemCode === '' || $qty <= 0) {
+                continue;
+            }
+
+            $creditLine = ['ItemCode' => $itemCode, 'Quantity' => $qty];
+
+            $priceAfterVat = (float) ($line['PriceAfterVAT'] ?? 0);
+            if ($priceAfterVat > 0) {
+                $creditLine['PriceAfterVAT'] = $priceAfterVat;
+            } else {
+                $creditLine['UnitPrice'] = (float) ($line['UnitPrice'] ?? 0);
+            }
+
+            $vat = trim((string) ($line['VatGroup'] ?? ''));
+            if ($vat !== '') {
+                $creditLine['VatGroup'] = $vat;
+            }
+            $warehouse = trim((string) ($line['WarehouseCode'] ?? ''));
+            if ($warehouse !== '') {
+                $creditLine['WarehouseCode'] = $warehouse;
+            }
+
+            $lines[] = $creditLine;
+        }
+
+        return $lines;
     }
 
     /**
