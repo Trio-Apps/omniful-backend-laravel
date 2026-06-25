@@ -13,6 +13,7 @@ use Filament\Forms\Components\Toggle;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Illuminate\Database\Eloquent\Builder;
@@ -107,6 +108,21 @@ class SapItemCleanup extends Page implements HasTable
                     'skipped' => 'warning',
                     default => 'gray',
                 }),
+        ];
+    }
+
+    protected function getTableFilters(): array
+    {
+        return [
+            SelectFilter::make('cleanup_state')
+                ->label('State')
+                ->options([
+                    'new' => 'New',
+                    'reversed' => 'Reversed',
+                    'resent' => 'Re-sent',
+                    'failed' => 'Failed',
+                    'skipped' => 'Skipped',
+                ]),
         ];
     }
 
@@ -272,6 +288,24 @@ class SapItemCleanup extends Page implements HasTable
                         ->default(true),
                 ])
                 ->action(fn (array $data) => $this->cancelAll((bool) ($data['requeue'] ?? true))),
+
+            Action::make('retryFailed')
+                ->label('Retry failed')
+                ->icon('heroicon-o-arrow-path')
+                ->color('warning')
+                ->visible(fn (): bool => SapCleanupTarget::query()->where('cleanup_state', 'failed')->exists())
+                ->requiresConfirmation()
+                ->modalHeading('Retry all failed targets on LIVE SAP')
+                ->modalDescription('Re-runs the reversal for every row whose state is "failed" (idempotent — it completes whatever is missing).')
+                ->form([
+                    Toggle::make('requeue')
+                        ->label('Re-queue orders for re-send to SAP')
+                        ->default(true),
+                ])
+                ->action(function (array $data): void {
+                    $ids = SapCleanupTarget::query()->where('cleanup_state', 'failed')->pluck('id')->all();
+                    $this->queueBulk('cancel', $ids, (bool) ($data['requeue'] ?? true));
+                }),
 
             Action::make('clearList')
                 ->label('Clear list')
