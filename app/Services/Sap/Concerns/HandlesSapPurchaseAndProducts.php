@@ -5819,7 +5819,10 @@ trait HandlesSapPurchaseAndProducts
     public function findOrderRelatedDocuments(string $externalId): array
     {
         $out = ['payments' => [], 'deliveries' => [], 'cogs_journals' => []];
-        $externalId = trim($externalId);
+        // Search by the ORIGINAL order id even when the invoice ref was already
+        // renamed to "<order>-0reversed": the forward COGS keeps "COGS-<order>",
+        // so stripping the marker lets Check/Details still surface it.
+        $externalId = $this->stripReversalSuffix(trim($externalId));
         if ($externalId === '') {
             return $out;
         }
