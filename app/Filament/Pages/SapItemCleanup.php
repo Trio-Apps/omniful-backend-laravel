@@ -55,6 +55,26 @@ class SapItemCleanup extends Page implements HasTable
         return app(SapItemCleanupService::class);
     }
 
+    /**
+     * Comma-joined document numbers for a related-docs group (payments /
+     * deliveries / cogs_journals); a cancelled doc is suffixed with "(x)".
+     */
+    private function relatedNumbers(SapCleanupTarget $record, string $key): string
+    {
+        $items = (array) (($record->related[$key] ?? []));
+        $nums = [];
+        foreach ($items as $item) {
+            $num = $key === 'cogs_journals'
+                ? (string) ($item['number'] ?? $item['jdt_num'] ?? '')
+                : (string) ($item['doc_num'] ?? '');
+            if ($num !== '') {
+                $nums[] = $num . (!empty($item['cancelled']) ? ' (x)' : '');
+            }
+        }
+
+        return $nums === [] ? '—' : implode(', ', $nums);
+    }
+
     protected function getTableQuery(): Builder
     {
         return SapCleanupTarget::query()->latest('id');
@@ -63,22 +83,20 @@ class SapItemCleanup extends Page implements HasTable
     protected function getTableColumns(): array
     {
         return [
-            TextColumn::make('doc_num')->label('DocNum')->searchable()->sortable(),
+            TextColumn::make('doc_num')->label('Invoice')->searchable()->sortable(),
+            TextColumn::make('payment')
+                ->label('Payment')
+                ->getStateUsing(fn (SapCleanupTarget $record): string => $this->relatedNumbers($record, 'payments'))
+                ->placeholder('—'),
+            TextColumn::make('delivery')
+                ->label('Delivery')
+                ->getStateUsing(fn (SapCleanupTarget $record): string => $this->relatedNumbers($record, 'deliveries'))
+                ->placeholder('—'),
+            TextColumn::make('cogs')
+                ->label('COGS')
+                ->getStateUsing(fn (SapCleanupTarget $record): string => $this->relatedNumbers($record, 'cogs_journals'))
+                ->placeholder('—'),
             TextColumn::make('order_external_id')->label('Order')->searchable(),
-            TextColumn::make('card_code')->label('Customer')->searchable(),
-            TextColumn::make('doc_total')
-                ->label('Total')
-                ->formatStateUsing(fn ($state) => $state === null ? '—' : number_format((float) $state, 2)),
-            TextColumn::make('sap_doc_status')->label('SAP')->badge()->color('gray')->placeholder('—'),
-            TextColumn::make('related_summary')
-                ->label('Docs')
-                ->getStateUsing(function (SapCleanupTarget $record): string {
-                    $r = (array) ($record->related ?? []);
-                    return 'P:' . count($r['payments'] ?? [])
-                        . ' · D:' . count($r['deliveries'] ?? [])
-                        . ' · J:' . count($r['cogs_journals'] ?? []);
-                })
-                ->tooltip('Payments · Deliveries · COGS journals (open Details for numbers)'),
             TextColumn::make('cleanup_state')
                 ->label('State')
                 ->badge()
@@ -89,13 +107,6 @@ class SapItemCleanup extends Page implements HasTable
                     'skipped' => 'warning',
                     default => 'gray',
                 }),
-            TextColumn::make('last_action')->label('Last action')->placeholder('—'),
-            TextColumn::make('last_checked_at')->label('Checked')->dateTime()->since()->placeholder('—'),
-            TextColumn::make('last_error')
-                ->label('Error')
-                ->limit(40)
-                ->tooltip(fn ($state) => $state)
-                ->placeholder('—'),
         ];
     }
 
