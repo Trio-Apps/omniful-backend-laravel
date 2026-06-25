@@ -5618,11 +5618,15 @@ trait HandlesSapPurchaseAndProducts
     }
 
     /**
-     * Reverse an order's COGS by STORNO (SAP's native Cancel) of the forward COGS
-     * journal(s) — the original journal is marked Cancelled and SAP posts the
-     * reversing entry. First undoes any offsetting "COGSREV-<order>" reversal a
-     * prior run may have posted (so the storno does not double-reverse). Idempotent:
-     * a journal already cancelled is skipped.
+     * Reverse an order's COGS with a net-zero OFFSETTING journal — the same
+     * mechanism the order-cancellation flow uses. Mirrors the forward COGS
+     * journal(s) (swap Debit<->Credit on the same accounts / amounts / dimensions),
+     * which is deterministic and independent of the credit memo's stock cost.
+     * Idempotent via Reference2 = "COGSREV-<order>".
+     *
+     * Note: a posted Journal Entry cannot be document-cancelled in SAP B1; this
+     * leaves the COGS account balance at zero (the original entry remains visible),
+     * exactly like the cancellation flow's COGS reversal.
      *
      * @return array<string,mixed>
      */
@@ -5633,95 +5637,77 @@ trait HandlesSapPurchaseAndProducts
             return ['ok' => false, 'reason' => 'Missing order id'];
         }
 
-        // Undo any offsetting reversal a previous version posted, so the storno of
-        // the forward journal nets correctly (does not double-reverse).
-        $undone = [];
-        foreach ($this->findCogsJournalKeysByReference2($this->buildJournalRef2('COGSREV', $baseOrderId)) as $jdtNum) {
-            $status = $this->cancelJournalEntryByKey($jdtNum);
-            if ($status === 'failed') {
-                return ['ok' => false, 'reason' => 'Failed to cancel prior offsetting COGS reversal JdtNum ' . $jdtNum];
+        $revRef2 = $this->buildJournalRef2('COGSREV', $baseOrderId);
+        $escRev = str_replace("'", "''", $revRef2);
+        $check = $this->get('/JournalEntries?$filter=' . rawurlencode("Reference2 eq '{$escRev}'") . '&$select=JdtNum&$top=1');
+        if ($check->successful() && !empty((array) ($check->json('value') ?? []))) {
+            return ['ok' => true, 'already' => true, 'reason' => 'COGS already reversed'];
+        }
+
+        $jdtNums = $this->findOrderCogsJournalKeys($baseOrderId);
+        if ($jdtNums === []) {
+            return ['ok' => true, 'reason' => 'No forward COGS journal to reverse'];
+        }
+
+        $today = now()->format('Y-m-d');
+        $posted = [];
+        foreach ($jdtNums as $jdtNum) {
+            $resp = $this->get('/JournalEntries(' . (int) $jdtNum . ')');
+            if (!$resp->successful()) {
+                return ['ok' => false, 'reason' => 'Forward COGS fetch failed: ' . $resp->status()];
             }
-            if ($status === 'cancelled') {
-                $undone[] = $jdtNum;
+            $je = $resp->json() ?? [];
+
+            $lines = [];
+            foreach ((array) ($je['JournalEntryLines'] ?? []) as $l) {
+                if (!is_array($l)) {
+                    continue;
+                }
+                $debit = (float) ($l['Debit'] ?? 0);
+                $credit = (float) ($l['Credit'] ?? 0);
+                if ($debit == 0.0 && $credit == 0.0) {
+                    continue;
+                }
+                $account = (string) ($l['AccountCode'] ?? '');
+                if ($account === '') {
+                    continue;
+                }
+                $line = [
+                    'AccountCode' => $account,
+                    'Debit' => $credit, // swap
+                    'Credit' => $debit, // swap
+                ];
+                foreach (['CostingCode', 'CostingCode2', 'CostingCode3', 'CostingCode4', 'CostingCode5', 'ProjectCode'] as $dim) {
+                    if (!empty($l[$dim])) {
+                        $line[$dim] = $l[$dim];
+                    }
+                }
+                $lines[] = $line;
             }
-        }
 
-        // Storno the forward COGS journal(s) (Reference2 = "COGS-<order>").
-        $forward = $this->findOrderCogsJournalKeys($baseOrderId);
-        if ($forward === [] && $undone === []) {
-            return ['ok' => true, 'reason' => 'No COGS journal found to cancel'];
-        }
-
-        $stornoed = [];
-        foreach ($forward as $jdtNum) {
-            $status = $this->cancelJournalEntryByKey($jdtNum);
-            if ($status === 'failed') {
-                return ['ok' => false, 'reason' => 'COGS storno failed for JdtNum ' . $jdtNum];
+            if ($lines === []) {
+                continue;
             }
-            if ($status === 'cancelled') {
-                $stornoed[] = $jdtNum;
+
+            $body = [
+                'ReferenceDate' => $today,
+                'DueDate' => $today,
+                'TaxDate' => $today,
+                'Reference' => $baseOrderId,
+                'Reference2' => $revRef2,
+                'Reference3' => $baseOrderId,
+                'Memo' => 'COGS reversal from item-cleanup of Omniful order ' . $baseOrderId,
+                'JournalEntryLines' => $lines,
+            ];
+            $post = $this->post('/JournalEntries', $body);
+            if (!$post->successful()) {
+                return ['ok' => false, 'reason' => 'COGS reversal post failed: ' . $post->status() . ' ' . mb_substr((string) $post->body(), 0, 300)];
             }
+            $j = $post->json() ?? [];
+            $posted[] = (int) ($j['JdtNum'] ?? $j['Number'] ?? 0);
         }
 
-        return ['ok' => true, 'stornoed_jdtnums' => $stornoed, 'undone_reversals' => $undone];
-    }
-
-    /**
-     * Cancel (storno) a single journal entry. Idempotent: returns 'already' when
-     * the entry is already cancelled, 'cancelled' on success, 'failed' otherwise.
-     */
-    private function cancelJournalEntryByKey(int $jdtNum): string
-    {
-        if ($jdtNum <= 0) {
-            return 'failed';
-        }
-
-        $current = $this->get('/JournalEntries(' . $jdtNum . ')');
-        if ($current->successful()) {
-            $je = $current->json() ?? [];
-            if ((string) ($je['Cancelled'] ?? 'tNO') === 'tYES') {
-                return 'already';
-            }
-        }
-
-        $cancel = $this->post('/JournalEntries(' . $jdtNum . ')/Cancel', (object) []);
-        if ($cancel->successful() || $cancel->status() === 204) {
-            Log::info('COGS journal cancelled (storno)', ['jdt_num' => $jdtNum]);
-
-            return 'cancelled';
-        }
-
-        Log::warning('COGS journal cancel failed', [
-            'jdt_num' => $jdtNum,
-            'status' => $cancel->status(),
-            'body' => mb_substr((string) $cancel->body(), 0, 300),
-        ]);
-
-        return 'failed';
-    }
-
-    /**
-     * JdtNum keys of journal entries carrying a given Reference2.
-     *
-     * @return int[]
-     */
-    private function findCogsJournalKeysByReference2(string $reference2): array
-    {
-        $esc = str_replace("'", "''", $reference2);
-        $filter = rawurlencode("Reference2 eq '{$esc}'");
-        $response = $this->get("/JournalEntries?\$filter={$filter}&\$select=JdtNum&\$top=50");
-        if (!$response->successful()) {
-            return [];
-        }
-
-        $keys = [];
-        foreach ((array) ($response->json('value') ?? []) as $row) {
-            if (is_array($row) && !empty($row['JdtNum'])) {
-                $keys[] = (int) $row['JdtNum'];
-            }
-        }
-
-        return $keys;
+        return ['ok' => true, 'reversed_jdtnums' => $posted];
     }
 
     /**
