@@ -70,6 +70,22 @@ class StockTransferWebhookService
                 $event->save();
                 return;
             }
+
+            // SAP-side guard (source of truth): if a StockTransfer for this STO
+            // already exists in SAP (by U_omo reference), reuse it — never create a
+            // second one. Catches duplicate deliveries/retries even if the local row
+            // lost its doc entry, and (with the per-STO lock) closes the race.
+            $existingSap = app(SapServiceLayerClient::class)
+                ->findExistingStockTransferByReference((string) $event->external_id);
+            if ($existingSap !== null) {
+                $event->sap_status = 'skipped';
+                $event->sap_doc_entry = (string) ($existingSap['DocEntry'] ?? '');
+                $event->sap_doc_num = (string) ($existingSap['DocNum'] ?? '');
+                $event->sap_error = 'Skipped: a stock transfer already exists in SAP for this STO ('
+                    . (string) $event->external_id . ').';
+                $event->save();
+                return;
+            }
         }
 
         $fromWarehouse = $this->extractFromWarehouse($data, $payload);

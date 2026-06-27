@@ -252,6 +252,41 @@ trait HandlesSapInventoryDocs
     }
 
     /**
+     * Find an existing SAP StockTransfer (OWTR) by its Omniful reference (the U_omo
+     * UDF), so the webhook can avoid creating a duplicate for the same STO. Returns
+     * the latest match's DocEntry/DocNum, or null if none (or if the UDF is absent).
+     *
+     * @return array{DocEntry:int,DocNum:int}|null
+     */
+    public function findExistingStockTransferByReference(string $reference): ?array
+    {
+        $reference = trim($reference);
+        if ($reference === '') {
+            return null;
+        }
+
+        $udf = trim((string) config('omniful.order_sync.order_number_udf_field', 'U_omo'));
+        if ($udf === '') {
+            $udf = 'U_omo';
+        }
+        $escUdf = str_replace("'", "''", $udf);
+        $escVal = str_replace("'", "''", $reference);
+        $filter = rawurlencode("{$escUdf} eq '{$escVal}'");
+        $response = $this->get("/StockTransfers?\$filter={$filter}&\$select=DocEntry,DocNum&\$orderby=DocEntry desc&\$top=1");
+        if (!$response->successful()) {
+            // U_omo UDF may not exist on OWTR in this company — skip SAP-side dedup.
+            return null;
+        }
+
+        $row = (array) (($response->json('value')[0]) ?? []);
+        if (!empty($row['DocEntry'])) {
+            return ['DocEntry' => (int) $row['DocEntry'], 'DocNum' => (int) ($row['DocNum'] ?? 0)];
+        }
+
+        return null;
+    }
+
+    /**
      * @param array<int,array{seller_sku_code:string,quantity:float}> $items
      */
     public function createStockTransfer(array $items, string $fromWarehouse, string $toWarehouse, string $remarks = '', string $reference = '', string $channel = ''): array
