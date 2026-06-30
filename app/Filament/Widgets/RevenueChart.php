@@ -4,6 +4,7 @@ namespace App\Filament\Widgets;
 
 use App\Models\OmnifulOrder;
 use Filament\Widgets\ChartWidget;
+use Illuminate\Support\Facades\Cache;
 
 class RevenueChart extends ChartWidget
 {
@@ -26,43 +27,9 @@ class RevenueChart extends ChartWidget
 
     protected function getData(): array
     {
-        $start = now()->startOfDay()->subDays(13);
-        $rows = OmnifulOrder::query()
-            ->whereBetween('last_event_at', [$start, now()])
-            ->get(['last_payload']);
-
-        $totals = [];
-
-        foreach ($rows as $row) {
-            $payload = (array) ($row->last_payload ?? []);
-            $paymentMethod = trim((string) (
-                data_get($payload, 'data.payment_method')
-                ?? data_get($payload, 'data.payment.method')
-                ?? data_get($payload, 'data.payment_type')
-                ?? 'unknown'
-            ));
-            if ($paymentMethod === '') {
-                $paymentMethod = 'unknown';
-            }
-
-            $amount = data_get($payload, 'data.invoice.total');
-            if (!is_numeric($amount)) {
-                $amount = data_get($payload, 'data.invoice.grand_total');
-            }
-            if (!is_numeric($amount)) {
-                $amount = data_get($payload, 'data.total_amount');
-            }
-            if (!is_numeric($amount)) {
-                $amount = data_get($payload, 'data.total');
-            }
-
-            if (!is_numeric($amount)) {
-                continue;
-            }
-
-            $key = strtolower($paymentMethod);
-            $totals[$key] = ($totals[$key] ?? 0) + (float) $amount;
-        }
+        // Cache the computed series for a few minutes: the chart covers 14 days,
+        // so per-render freshness is unnecessary and keeps the dashboard fast.
+        $totals = Cache::remember('dashboard.revenue_chart.v1', 300, fn (): array => $this->computeTotals());
 
         arsort($totals);
         $top = array_slice($totals, 0, 7, true);
@@ -83,5 +50,56 @@ class RevenueChart extends ChartWidget
                 ],
             ],
         ];
+    }
+
+    /**
+     * Sum revenue per payment method over the last 14 days. Streams rows with
+     * ->lazy() instead of ->get() so the order payloads (large JSON blobs) are
+     * never all held in memory at once — the same memory-exhaustion class of
+     * bug that crashed the dashboard via the heavier OverviewStats widget.
+     *
+     * @return array<string,float>
+     */
+    private function computeTotals(): array
+    {
+        $start = now()->startOfDay()->subDays(13);
+        $totals = [];
+
+        OmnifulOrder::query()
+            ->whereBetween('last_event_at', [$start, now()])
+            ->select(['last_payload'])
+            ->lazy(200)
+            ->each(function (OmnifulOrder $row) use (&$totals): void {
+                $payload = (array) ($row->last_payload ?? []);
+                $paymentMethod = trim((string) (
+                    data_get($payload, 'data.payment_method')
+                    ?? data_get($payload, 'data.payment.method')
+                    ?? data_get($payload, 'data.payment_type')
+                    ?? 'unknown'
+                ));
+                if ($paymentMethod === '') {
+                    $paymentMethod = 'unknown';
+                }
+
+                $amount = data_get($payload, 'data.invoice.total');
+                if (!is_numeric($amount)) {
+                    $amount = data_get($payload, 'data.invoice.grand_total');
+                }
+                if (!is_numeric($amount)) {
+                    $amount = data_get($payload, 'data.total_amount');
+                }
+                if (!is_numeric($amount)) {
+                    $amount = data_get($payload, 'data.total');
+                }
+
+                if (!is_numeric($amount)) {
+                    return;
+                }
+
+                $key = strtolower($paymentMethod);
+                $totals[$key] = ($totals[$key] ?? 0) + (float) $amount;
+            });
+
+        return $totals;
     }
 }

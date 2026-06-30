@@ -5,35 +5,68 @@ namespace App\Filament\Widgets;
 use App\Models\OmnifulOrder;
 use App\Models\OmnifulReturnOrderEvent;
 use Carbon\Carbon;
-use Illuminate\Support\Collection;
 use Filament\Widgets\StatsOverviewWidget;
 use Filament\Widgets\StatsOverviewWidget\Stat;
+use Illuminate\Support\Facades\Cache;
 
 class OverviewStats extends StatsOverviewWidget
 {
+    /**
+     * How long the computed dashboard metrics are cached. The dashboard covers
+     * a 30-day window, so a few minutes of staleness is fine — and it keeps the
+     * landing page fast instead of re-scanning every order on each render/poll.
+     */
+    private const CACHE_TTL = 300;
+
     protected function getStats(): array
+    {
+        $data = Cache::remember('dashboard.overview_stats.v1', self::CACHE_TTL, fn (): array => $this->computeMetrics());
+
+        return [
+            Stat::make('Orders (30d)', number_format($data['orders_current']))
+                ->description($this->describeDelta($data['orders_current'], $data['orders_previous']))
+                ->descriptionIcon($this->deltaIcon($data['orders_current'], $data['orders_previous']))
+                ->chart($data['orders_trend'])
+                ->color($this->deltaColor($data['orders_current'], $data['orders_previous'])),
+            Stat::make('Revenue (30d)', number_format($data['revenue_current'], 2))
+                ->description($this->describeDelta($data['revenue_current'], $data['revenue_previous']))
+                ->descriptionIcon($this->deltaIcon($data['revenue_current'], $data['revenue_previous']))
+                ->chart($data['revenue_trend'])
+                ->color($this->deltaColor($data['revenue_current'], $data['revenue_previous'])),
+            Stat::make('Return Events (30d)', number_format($data['returns_current']))
+                ->description($this->describeDelta($data['returns_current'], $data['returns_previous']))
+                ->descriptionIcon($this->deltaIcon($data['returns_current'], $data['returns_previous']))
+                ->chart($data['returns_trend'])
+                ->color($this->deltaColor($data['returns_previous'], $data['returns_current'])),
+            Stat::make('Active Customers (30d)', number_format($data['active_customers_current']))
+                ->description($this->describeDelta($data['active_customers_current'], $data['active_customers_previous']))
+                ->descriptionIcon($this->deltaIcon($data['active_customers_current'], $data['active_customers_previous']))
+                ->chart($data['customers_trend'])
+                ->color($this->deltaColor($data['active_customers_current'], $data['active_customers_previous'])),
+        ];
+    }
+
+    /**
+     * Compute every dashboard metric with a memory-bounded single pass per
+     * period. The previous implementation loaded each order's full last_payload
+     * JSON for 30 days (twice) into memory via ->get(), which exhausted PHP's
+     * memory_limit on large datasets and crashed the dashboard with a blank 500
+     * (the fatal happened before Laravel could even render an error page).
+     * We now stream rows with ->lazy() so only a small chunk is held at a time.
+     *
+     * @return array<string,mixed>
+     */
+    private function computeMetrics(): array
     {
         $today = now()->startOfDay();
         $currentStart = $today->copy()->subDays(29);
         $previousStart = $today->copy()->subDays(59);
         $previousEnd = $today->copy()->subDays(30)->endOfDay();
+        $trendCut = $currentStart->copy()->addDays(23);
 
-        $ordersCurrent = OmnifulOrder::query()
-            ->whereBetween('last_event_at', [$currentStart, now()])
-            ->count();
-        $ordersPrevious = OmnifulOrder::query()
-            ->whereBetween('last_event_at', [$previousStart, $previousEnd])
-            ->count();
-
-        $orderRowsCurrent = OmnifulOrder::query()
-            ->whereBetween('last_event_at', [$currentStart, now()])
-            ->get(['last_payload', 'last_event_at', 'sap_status', 'sap_error']);
-        $orderRowsPrevious = OmnifulOrder::query()
-            ->whereBetween('last_event_at', [$previousStart, $previousEnd])
-            ->get(['last_payload', 'last_event_at']);
-
-        $revenueCurrent = $this->sumRevenue($orderRowsCurrent);
-        $revenuePrevious = $this->sumRevenue($orderRowsPrevious);
+        // Current period needs trends; previous period only needs totals.
+        $current = $this->aggregatePeriod($currentStart, now(), $trendCut);
+        $previous = $this->aggregatePeriod($previousStart, $previousEnd, null);
 
         $returnsCurrent = OmnifulReturnOrderEvent::query()
             ->whereBetween('received_at', [$currentStart, now()])
@@ -42,146 +75,110 @@ class OverviewStats extends StatsOverviewWidget
             ->whereBetween('received_at', [$previousStart, $previousEnd])
             ->count();
 
-        $activeCustomers = $this->countActiveCustomers($orderRowsCurrent);
-        $activeCustomersPrevious = $this->countActiveCustomers($orderRowsPrevious);
-
-        $ordersTrend = $this->buildDailyOrdersTrend($orderRowsCurrent, $currentStart);
-        $revenueTrend = $this->buildDailyRevenueTrend($orderRowsCurrent, $currentStart);
-        $returnsTrend = $this->buildDailyReturnsTrend($currentStart);
-        $customersTrend = $this->buildDailyCustomersTrend($orderRowsCurrent, $currentStart);
-
         return [
-            Stat::make('Orders (30d)', number_format($ordersCurrent))
-                ->description($this->describeDelta($ordersCurrent, $ordersPrevious))
-                ->descriptionIcon($this->deltaIcon($ordersCurrent, $ordersPrevious))
-                ->chart($ordersTrend)
-                ->color($this->deltaColor($ordersCurrent, $ordersPrevious)),
-            Stat::make('Revenue (30d)', number_format($revenueCurrent, 2))
-                ->description($this->describeDelta($revenueCurrent, $revenuePrevious))
-                ->descriptionIcon($this->deltaIcon($revenueCurrent, $revenuePrevious))
-                ->chart($revenueTrend)
-                ->color($this->deltaColor($revenueCurrent, $revenuePrevious)),
-            Stat::make('Return Events (30d)', number_format($returnsCurrent))
-                ->description($this->describeDelta($returnsCurrent, $returnsPrevious))
-                ->descriptionIcon($this->deltaIcon($returnsCurrent, $returnsPrevious))
-                ->chart($returnsTrend)
-                ->color($this->deltaColor($returnsPrevious, $returnsCurrent)),
-            Stat::make('Active Customers (30d)', number_format($activeCustomers))
-                ->description($this->describeDelta($activeCustomers, $activeCustomersPrevious))
-                ->descriptionIcon($this->deltaIcon($activeCustomers, $activeCustomersPrevious))
-                ->chart($customersTrend)
-                ->color($this->deltaColor($activeCustomers, $activeCustomersPrevious)),
+            'orders_current' => $current['orders'],
+            'orders_previous' => $previous['orders'],
+            'orders_trend' => $current['orders_trend'],
+            'revenue_current' => $current['revenue'],
+            'revenue_previous' => $previous['revenue'],
+            'revenue_trend' => $current['revenue_trend'],
+            'returns_current' => $returnsCurrent,
+            'returns_previous' => $returnsPrevious,
+            'returns_trend' => $this->buildDailyReturnsTrend($trendCut),
+            'active_customers_current' => $current['active_customers'],
+            'active_customers_previous' => $previous['active_customers'],
+            'customers_trend' => $current['customers_trend'],
         ];
     }
 
     /**
-     * @param Collection<int,OmnifulOrder> $rows
+     * Stream all orders in [$start, $end] exactly once, accumulating order
+     * count, revenue, distinct customer emails, and — when $trendCut is given —
+     * the weekday trend series for orders, revenue and customers. Memory stays
+     * bounded because ->lazy() hydrates rows in small chunks instead of loading
+     * every payload at once.
+     *
+     * @return array{orders:int,revenue:float,active_customers:int,orders_trend:array<int,int>,revenue_trend:array<int,int>,customers_trend:array<int,int>}
      */
-    private function sumRevenue(Collection $rows): float
+    private function aggregatePeriod(Carbon $start, Carbon $end, ?Carbon $trendCut): array
     {
-        $sum = 0.0;
-
-        foreach ($rows as $row) {
-            $payload = (array) ($row->last_payload ?? []);
-            $candidates = [
-                data_get($payload, 'data.invoice.total'),
-                data_get($payload, 'data.invoice.grand_total'),
-                data_get($payload, 'data.total_amount'),
-                data_get($payload, 'data.total'),
-            ];
-
-            foreach ($candidates as $value) {
-                if (is_numeric($value)) {
-                    $sum += (float) $value;
-                    break;
-                }
-            }
-        }
-
-        return round($sum, 2);
-    }
-
-    /**
-     * @param Collection<int,OmnifulOrder> $rows
-     */
-    private function countActiveCustomers(Collection $rows): int
-    {
+        $orders = 0;
+        $revenue = 0.0;
         $emails = [];
+        $ordersTrend = array_fill(0, 7, 0);
+        $revenueTrend = array_fill(0, 7, 0);
+        $customersByDay = [];
 
-        foreach ($rows as $row) {
-            $payload = (array) ($row->last_payload ?? []);
-            $email = strtolower(trim((string) (
-                data_get($payload, 'data.customer.email')
-                ?? data_get($payload, 'data.shipping_address.email')
-                ?? data_get($payload, 'data.billing_address.email')
-            )));
+        OmnifulOrder::query()
+            ->whereBetween('last_event_at', [$start, $end])
+            ->select(['last_payload', 'last_event_at'])
+            ->lazy(200)
+            ->each(function (OmnifulOrder $row) use (
+                &$orders,
+                &$revenue,
+                &$emails,
+                &$ordersTrend,
+                &$revenueTrend,
+                &$customersByDay,
+                $trendCut
+            ): void {
+                $orders++;
+                $payload = (array) ($row->last_payload ?? []);
 
-            if ($email !== '') {
-                $emails[$email] = true;
-            }
+                $value = data_get($payload, 'data.invoice.total')
+                    ?? data_get($payload, 'data.invoice.grand_total')
+                    ?? data_get($payload, 'data.total_amount')
+                    ?? data_get($payload, 'data.total');
+                $numeric = is_numeric($value) ? (float) $value : null;
+                if ($numeric !== null) {
+                    $revenue += $numeric;
+                }
+
+                $email = strtolower(trim((string) (
+                    data_get($payload, 'data.customer.email')
+                    ?? data_get($payload, 'data.shipping_address.email')
+                    ?? data_get($payload, 'data.billing_address.email')
+                )));
+                if ($email !== '') {
+                    $emails[$email] = true;
+                }
+
+                if ($trendCut !== null && $row->last_event_at && $row->last_event_at->gte($trendCut)) {
+                    $index = max(0, min(6, $row->last_event_at->dayOfWeekIso - 1));
+                    $ordersTrend[$index]++;
+                    if ($numeric !== null) {
+                        $revenueTrend[$index] += (int) round($numeric);
+                    }
+                    if ($email !== '') {
+                        $customersByDay[$row->last_event_at->toDateString()][$email] = true;
+                    }
+                }
+            });
+
+        $customersTrend = array_fill(0, 7, 0);
+        foreach ($customersByDay as $day => $set) {
+            $index = max(0, min(6, Carbon::parse($day)->dayOfWeekIso - 1));
+            $customersTrend[$index] = max($customersTrend[$index], count($set));
         }
 
-        return count($emails);
+        return [
+            'orders' => $orders,
+            'revenue' => round($revenue, 2),
+            'active_customers' => count($emails),
+            'orders_trend' => $ordersTrend,
+            'revenue_trend' => $revenueTrend,
+            'customers_trend' => $customersTrend,
+        ];
     }
 
     /**
-     * @param Collection<int,OmnifulOrder> $rows
+     * Returns are light (single timestamp column), so a direct query is fine.
+     *
      * @return array<int,int>
      */
-    private function buildDailyOrdersTrend(Collection $rows, Carbon $start): array
+    private function buildDailyReturnsTrend(Carbon $cut): array
     {
         $series = array_fill(0, 7, 0);
-        $cut = $start->copy()->addDays(23);
-
-        foreach ($rows as $row) {
-            if (!$row->last_event_at || $row->last_event_at->lt($cut)) {
-                continue;
-            }
-
-            $index = max(0, min(6, $row->last_event_at->dayOfWeekIso - 1));
-            $series[$index]++;
-        }
-
-        return $series;
-    }
-
-    /**
-     * @param Collection<int,OmnifulOrder> $rows
-     * @return array<int,int>
-     */
-    private function buildDailyRevenueTrend(Collection $rows, Carbon $start): array
-    {
-        $series = array_fill(0, 7, 0);
-        $cut = $start->copy()->addDays(23);
-
-        foreach ($rows as $row) {
-            if (!$row->last_event_at || $row->last_event_at->lt($cut)) {
-                continue;
-            }
-
-            $payload = (array) ($row->last_payload ?? []);
-            $value = data_get($payload, 'data.invoice.total')
-                ?? data_get($payload, 'data.invoice.grand_total')
-                ?? data_get($payload, 'data.total_amount')
-                ?? data_get($payload, 'data.total');
-            if (!is_numeric($value)) {
-                continue;
-            }
-
-            $index = max(0, min(6, $row->last_event_at->dayOfWeekIso - 1));
-            $series[$index] += (int) round((float) $value);
-        }
-
-        return $series;
-    }
-
-    /**
-     * @return array<int,int>
-     */
-    private function buildDailyReturnsTrend(Carbon $start): array
-    {
-        $series = array_fill(0, 7, 0);
-        $cut = $start->copy()->addDays(23);
 
         $rows = OmnifulReturnOrderEvent::query()
             ->whereBetween('received_at', [$cut, now()])
@@ -193,44 +190,6 @@ class OverviewStats extends StatsOverviewWidget
             }
             $index = max(0, min(6, $row->received_at->dayOfWeekIso - 1));
             $series[$index]++;
-        }
-
-        return $series;
-    }
-
-    /**
-     * @param Collection<int,OmnifulOrder> $rows
-     * @return array<int,int>
-     */
-    private function buildDailyCustomersTrend(Collection $rows, Carbon $start): array
-    {
-        $series = array_fill(0, 7, 0);
-        $cut = $start->copy()->addDays(23);
-        $byDay = [];
-
-        foreach ($rows as $row) {
-            if (!$row->last_event_at || $row->last_event_at->lt($cut)) {
-                continue;
-            }
-
-            $payload = (array) ($row->last_payload ?? []);
-            $email = strtolower(trim((string) (
-                data_get($payload, 'data.customer.email')
-                ?? data_get($payload, 'data.shipping_address.email')
-                ?? data_get($payload, 'data.billing_address.email')
-            )));
-            if ($email === '') {
-                continue;
-            }
-
-            $day = $row->last_event_at->toDateString();
-            $byDay[$day][$email] = true;
-        }
-
-        foreach ($byDay as $day => $emails) {
-            $dt = Carbon::parse($day);
-            $index = max(0, min(6, $dt->dayOfWeekIso - 1));
-            $series[$index] = max($series[$index], count($emails));
         }
 
         return $series;
