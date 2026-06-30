@@ -13,16 +13,35 @@ class OrderErrorMonitoring
 {
     public function loadErroredOrders()
     {
+        // Only load orders with an ACTIVE (unresolved) error: an error message is
+        // present, its matching doc-entry is still empty, and the stage status has
+        // not moved to a success state. Orders whose errors were already resolved
+        // by a later retry (doc populated / status created) are dropped by
+        // extractOrderErrors() anyway and contribute nothing to the monitor, so
+        // excluding them in SQL — instead of loading every order that ever had a
+        // lingering *_error string together with its full last_payload JSON —
+        // keeps this page from exhausting PHP memory (which crashed it with a
+        // blank 500). The PHP-side classification below stays authoritative; this
+        // is purely a row-reducing pre-filter that never excludes a shown order.
+        $stages = $this->errorStages();
+
         $orders = OmnifulOrder::query()
-            ->where(function ($query) {
-                $query->whereNotNull('sap_error')
-                    ->orWhereNotNull('sap_payment_error')
-                    ->orWhereNotNull('sap_card_fee_error')
-                    ->orWhereNotNull('sap_delivery_error')
-                    ->orWhereNotNull('sap_cogs_error')
-                    ->orWhereNotNull('sap_credit_note_error')
-                    ->orWhereNotNull('sap_cancel_cogs_error')
-                    ->orWhere('sap_status', 'failed');
+            ->where(function ($query) use ($stages) {
+                foreach ($stages as $stage) {
+                    $query->orWhere(function ($q) use ($stage) {
+                        $q->whereNotNull($stage['error'])
+                            ->where($stage['error'], '!=', '')
+                            ->where(function ($doc) use ($stage) {
+                                $doc->whereNull($stage['doc'])
+                                    ->orWhere($stage['doc'], '=', '');
+                            })
+                            ->where(function ($status) use ($stage) {
+                                $status->whereNull($stage['status'])
+                                    ->orWhereNotIn($stage['status'], ['created', 'logged', 'created_mixed', 'updated', 'ignored']);
+                            });
+                    });
+                }
+                $query->orWhere('sap_status', 'failed');
             })
             ->orderByDesc('last_event_at')
             ->get([
@@ -404,13 +423,19 @@ class OrderErrorMonitoring
         ];
     }
 
-    public function extractOrderErrors(OmnifulOrder $order): array
+    /**
+     * The per-stage column triples used to detect and classify order errors.
+     * Shared by loadErroredOrders() (to pre-filter active errors in SQL) and
+     * extractOrderErrors() (to classify each loaded order in PHP). Each stage:
+     * the error column, the human label, the matching doc-entry column (the op
+     * succeeded once that column has a value), and the matching status column
+     * (a stage that landed on a success state like 'created' is not an error).
+     *
+     * @return array<int,array{error:string,label:string,doc:string,status:string}>
+     */
+    private function errorStages(): array
     {
-        // Each stage: the error column, the human label, the matching doc-entry
-        // column (an op succeeded once that column has a value), and the
-        // matching status column (we skip stages that landed on a success
-        // state like 'created').
-        $stages = [
+        return [
             [
                 'error' => 'sap_error',
                 'label' => 'Order / AR Reserve Invoice',
@@ -454,6 +479,11 @@ class OrderErrorMonitoring
                 'status' => 'sap_cancel_cogs_status',
             ],
         ];
+    }
+
+    public function extractOrderErrors(OmnifulOrder $order): array
+    {
+        $stages = $this->errorStages();
 
         $results = [];
 
