@@ -13,3 +13,8 @@ Artisan::command('inspire', function () {
 // (and only when Auto Sync is enabled there). Requires the OS cron to run
 // `php artisan schedule:run` every minute.
 Schedule::command('omniful:auto-sync')->everyMinute()->withoutOverlapping(10);
+
+// Pre-compute the heavy dashboard metrics (order/revenue payload scans) off the
+// web request. The Filament widgets only READ the cache this writes, so the
+// landing page stays instant instead of timing out (504) on a per-request scan.
+Schedule::command('dashboard:cache-metrics')->everyFiveMinutes()->withoutOverlapping(10);
