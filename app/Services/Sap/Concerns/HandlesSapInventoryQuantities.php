@@ -26,7 +26,10 @@ trait HandlesSapInventoryQuantities
         $udf = (string) config('omniful.item_integration.item_udf_field', 'U_OmnifulSync');
         $udf = preg_replace('/[^A-Za-z0-9_]/', '', $udf) ?: 'U_OmnifulSync';
 
-        $filter = "{$udf} ne null and {$udf} ne ''";
+        // Alphanumeric UDFs default to '' (not null) in SAP, and some companies
+        // reject `ne null` on a UDF — so an "is set" filter of `ne ''` is both
+        // correct and the most portable.
+        $filter = "{$udf} ne ''";
 
         // Prefer a narrow nested $select on the expanded warehouse collection;
         // fall back to broader shapes when a SAP company rejects the nested
