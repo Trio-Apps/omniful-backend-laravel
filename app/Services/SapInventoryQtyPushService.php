@@ -60,6 +60,42 @@ class SapInventoryQtyPushService
     }
 
     /**
+     * Read-only preview: exactly what a run would push, WITHOUT calling Omniful
+     * or touching the snapshot. Use to validate the mapping/quantities (e.g. on
+     * a first LIVE run) before any write.
+     *
+     * @return array<string,mixed>
+     */
+    public function preview(int $sampleSize = 25): array
+    {
+        $mode = strtolower((string) config('omniful.inventory_push.mode', 'delta'));
+        $plan = $this->buildPlan($mode);
+
+        $sample = [];
+        foreach ($plan['by_hub'] as $hub => $skus) {
+            foreach ($skus as $s) {
+                $sample[] = ['hub_code' => (string) $hub, 'sku_code' => $s['sku_code'], 'quantity' => $s['quantity']];
+                if (count($sample) >= $sampleSize) {
+                    break 2;
+                }
+            }
+        }
+
+        return [
+            'dry_run' => true,
+            'mode' => $mode,
+            'seller_code' => $plan['seller_code'],
+            'synced_hubs' => $plan['synced_hubs'],
+            'considered' => $plan['considered'],
+            'to_push' => $plan['total'],
+            'skipped_unmapped' => $plan['skipped_unmapped'],
+            'hubs_with_changes' => count($plan['by_hub']),
+            'sample' => $sample,
+            'note' => $plan['note'] ?? null,
+        ];
+    }
+
+    /**
      * The actual push. Invoked by RunSapInventoryQtyPush.
      *
      * @return array<string,mixed>
@@ -68,74 +104,20 @@ class SapInventoryQtyPushService
     {
         $mode = strtolower((string) (data_get($event->payload, 'mode') ?: config('omniful.inventory_push.mode', 'delta')));
         $batchSize = max(1, (int) config('omniful.inventory_push.batch_size', 200));
-        $clampNegative = (bool) config('omniful.inventory_push.clamp_negative_to_zero', true);
-        $qtySource = strtolower((string) config('omniful.inventory_push.quantity_source', 'available'));
 
-        $sellerCode = $this->resolveSellerCode();
-        if ($sellerCode === '') {
-            throw new \RuntimeException('Omniful seller_code is not configured (inventory_push.seller_code / sap_item_defaults.seller_code / IntegrationSetting.omniful_seller_code).');
-        }
-
-        // Only push to warehouses whose hub is already synced in Omniful. hub_code
-        // == SAP WarehouseCode (see SapWarehouseSyncService), so the mapping is
-        // the warehouse code itself.
-        $syncedHubs = $this->syncedWarehouseCodes();
-        if ($syncedHubs === []) {
+        $plan = $this->buildPlan($mode);
+        if (($plan['synced_hubs'] ?? 0) === 0) {
             return ['ok' => 0, 'failed' => 0, 'skipped' => 0, 'note' => 'no synced warehouses'];
         }
 
-        // m1: read Available per synced item x warehouse (restricted to synced hubs).
-        $rows = app(SapServiceLayerClient::class)->fetchSyncedItemQuantities(array_keys($syncedHubs));
+        $byHub = $plan['by_hub'];
+        $sellerCode = $plan['seller_code'];
 
-        // Snapshot map for delta detection.
-        $snapshots = [];
-        SapInventorySnapshot::query()
-            ->select(['warehouse_code', 'item_code', 'quantity'])
-            ->chunk(2000, function ($chunk) use (&$snapshots) {
-                foreach ($chunk as $s) {
-                    $snapshots[$s->warehouse_code . '|' . $s->item_code] = (int) $s->quantity;
-                }
-            });
-
-        // Build the changed SKU list grouped by hub.
-        $byHub = [];
-        $skippedUnmapped = 0;
-        $considered = 0;
-        foreach ($rows as $r) {
-            $warehouse = (string) $r['warehouse_code'];
-            if (!isset($syncedHubs[$warehouse])) {
-                $skippedUnmapped++;
-                continue;
-            }
-
-            $qty = $qtySource === 'in_stock' ? $r['in_stock'] : $r['available'];
-            $qty = (int) round((float) $qty);
-            if ($clampNegative && $qty < 0) {
-                $qty = 0;
-            }
-            $considered++;
-
-            if ($mode === 'delta') {
-                $key = $warehouse . '|' . $r['item_code'];
-                if (array_key_exists($key, $snapshots) && $snapshots[$key] === $qty) {
-                    continue; // unchanged since last push
-                }
-            }
-
-            $byHub[$warehouse][] = [
-                'sku_code' => (string) $r['item_code'],
-                'quantity' => $qty,
-                'warehouse_code' => $warehouse,
-                'item_code' => (string) $r['item_code'],
-            ];
-        }
-
-        $totalToPush = array_sum(array_map('count', $byHub));
         $this->progress($event, [
             'mode' => $mode,
-            'total' => $totalToPush,
-            'considered' => $considered,
-            'skipped_unmapped' => $skippedUnmapped,
+            'total' => $plan['total'],
+            'considered' => $plan['considered'],
+            'skipped_unmapped' => $plan['skipped_unmapped'],
             'hubs' => count($byHub),
             'pushed' => 0,
             'failed' => 0,
@@ -190,12 +172,91 @@ class SapInventoryQtyPushService
         return [
             'ok' => $pushed,
             'failed' => $failed,
-            'skipped' => $skippedUnmapped,
-            'considered' => $considered,
+            'skipped' => $plan['skipped_unmapped'],
+            'considered' => $plan['considered'],
             'cancelled' => $cancelled,
             'mode' => $mode,
             'seller_code' => $sellerCode,
             'failed_samples' => $failedSamples,
+        ];
+    }
+
+    /**
+     * Read SAP + map + delta-diff into the changed SKU list grouped by hub.
+     * Shared by preview() (read-only) and pushToOmniful().
+     *
+     * @return array{by_hub:array<string,array<int,array<string,mixed>>>,considered:int,skipped_unmapped:int,seller_code:string,synced_hubs:int,total:int,note?:string}
+     */
+    private function buildPlan(string $mode): array
+    {
+        $clampNegative = (bool) config('omniful.inventory_push.clamp_negative_to_zero', true);
+        $qtySource = strtolower((string) config('omniful.inventory_push.quantity_source', 'available'));
+
+        $sellerCode = $this->resolveSellerCode();
+        if ($sellerCode === '') {
+            throw new \RuntimeException('Omniful seller_code is not configured (inventory_push.seller_code / sap_item_defaults.seller_code / IntegrationSetting.omniful_seller_code).');
+        }
+
+        // Only push to warehouses whose hub is already synced in Omniful. hub_code
+        // == SAP WarehouseCode (see SapWarehouseSyncService), so the mapping is
+        // the warehouse code itself.
+        $syncedHubs = $this->syncedWarehouseCodes();
+        if ($syncedHubs === []) {
+            return ['by_hub' => [], 'considered' => 0, 'skipped_unmapped' => 0, 'seller_code' => $sellerCode, 'synced_hubs' => 0, 'total' => 0, 'note' => 'no synced warehouses'];
+        }
+
+        // m1: read Available per synced item x warehouse (restricted to synced hubs).
+        $rows = app(SapServiceLayerClient::class)->fetchSyncedItemQuantities(array_keys($syncedHubs));
+
+        // Snapshot map for delta detection.
+        $snapshots = [];
+        SapInventorySnapshot::query()
+            ->select(['warehouse_code', 'item_code', 'quantity'])
+            ->chunk(2000, function ($chunk) use (&$snapshots) {
+                foreach ($chunk as $s) {
+                    $snapshots[$s->warehouse_code . '|' . $s->item_code] = (int) $s->quantity;
+                }
+            });
+
+        $byHub = [];
+        $skippedUnmapped = 0;
+        $considered = 0;
+        foreach ($rows as $r) {
+            $warehouse = (string) $r['warehouse_code'];
+            if (!isset($syncedHubs[$warehouse])) {
+                $skippedUnmapped++;
+                continue;
+            }
+
+            $qty = $qtySource === 'in_stock' ? $r['in_stock'] : $r['available'];
+            $qty = (int) round((float) $qty);
+            if ($clampNegative && $qty < 0) {
+                $qty = 0;
+            }
+            $considered++;
+
+            if ($mode === 'delta') {
+                $key = $warehouse . '|' . $r['item_code'];
+                if (array_key_exists($key, $snapshots) && $snapshots[$key] === $qty) {
+                    continue; // unchanged since last push
+                }
+            }
+
+            $byHub[$warehouse][] = [
+                'sku_code' => (string) $r['item_code'],
+                'quantity' => $qty,
+                'warehouse_code' => $warehouse,
+                'item_code' => (string) $r['item_code'],
+            ];
+        }
+
+        return [
+            'by_hub' => $byHub,
+            'considered' => $considered,
+            'skipped_unmapped' => $skippedUnmapped,
+            'seller_code' => $sellerCode,
+            'synced_hubs' => count($syncedHubs),
+            'total' => array_sum(array_map('count', $byHub)),
         ];
     }
 

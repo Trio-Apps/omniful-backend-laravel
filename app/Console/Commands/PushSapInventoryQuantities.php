@@ -9,12 +9,42 @@ use Illuminate\Support\Carbon;
 
 class PushSapInventoryQuantities extends Command
 {
-    protected $signature = 'omniful:inventory-qty-push {--mode= : full|delta (defaults to config)} {--force : Ignore the enabled flag and cadence}';
+    protected $signature = 'omniful:inventory-qty-push {--mode= : full|delta (defaults to config)} {--force : Ignore the enabled flag and cadence} {--dry-run : Compute and print what WOULD push, without writing to Omniful}';
 
     protected $description = 'Queue a SAP -> Omniful inventory quantity push (Available per synced item x hub).';
 
     public function handle(SapInventoryQtyPushService $service): int
     {
+        if ((bool) $this->option('dry-run')) {
+            $preview = $service->preview();
+
+            if (!empty($preview['note'])) {
+                $this->warn($preview['note']);
+            }
+
+            $this->table(['Metric', 'Value'], [
+                ['Mode', $preview['mode']],
+                ['Seller code', $preview['seller_code']],
+                ['Synced hubs', $preview['synced_hubs']],
+                ['Considered (item×hub)', $preview['considered']],
+                ['WOULD push', $preview['to_push']],
+                ['Hubs with changes', $preview['hubs_with_changes']],
+                ['Skipped (unmapped whs)', $preview['skipped_unmapped']],
+            ]);
+
+            if (!empty($preview['sample'])) {
+                $this->info('Sample (NOT pushed):');
+                $this->table(
+                    ['hub_code', 'sku_code', 'quantity'],
+                    array_map(static fn ($s) => [$s['hub_code'], $s['sku_code'], $s['quantity']], $preview['sample'])
+                );
+            }
+
+            $this->info('Dry run only — nothing was written to Omniful.');
+
+            return self::SUCCESS;
+        }
+
         $force = (bool) $this->option('force');
 
         if (!$force) {
