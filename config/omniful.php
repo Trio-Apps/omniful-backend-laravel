@@ -36,6 +36,30 @@ return [
         'items' => env('OMNIFUL_ITEMS_UPDATE_METHOD', 'put'),
         'kits' => env('OMNIFUL_KITS_UPDATE_METHOD', 'put'),
     ],
+    // SAP -> Omniful Inventory Quantity Push (change request). Pushes on-hand
+    // Available (= InStock - Committed) per synced item x mapped warehouse to
+    // Omniful's "Push Hub Inventory" endpoint. Hubs are ALREADY synced — this
+    // flow only updates quantities, never creates hubs.
+    'inventory_push' => [
+        'enabled' => (bool) env('OMNIFUL_INVENTORY_PUSH_ENABLED', false),
+        // 'delta' pushes only quantities that changed vs the local snapshot;
+        // 'full' pushes every synced item x mapped warehouse.
+        'mode' => env('OMNIFUL_INVENTORY_PUSH_MODE', 'delta'),
+        'cadence_minutes' => (int) env('OMNIFUL_INVENTORY_PUSH_CADENCE_MINUTES', 30),
+        'batch_size' => (int) env('OMNIFUL_INVENTORY_PUSH_BATCH_SIZE', 200),
+        // Which SAP figure to push: 'available' (InStock - Committed) or 'in_stock'.
+        'quantity_source' => env('OMNIFUL_INVENTORY_PUSH_QTY_SOURCE', 'available'),
+        'clamp_negative_to_zero' => (bool) env('OMNIFUL_INVENTORY_PUSH_CLAMP_NEGATIVE', true),
+        // PUT {base}/sales-channel/public/v1/tenants/hubs/{hub_code}/sellers/{seller_code}/inventory
+        'endpoint_template' => env(
+            'OMNIFUL_INVENTORY_PUSH_ENDPOINT',
+            '/sales-channel/public/v1/tenants/hubs/{hub_code}/sellers/{seller_code}/inventory'
+        ),
+        // Seller the SKUs live under — MUST match the seller items are pushed to.
+        // Left empty here; the service falls back to sap_item_defaults.seller_code
+        // then IntegrationSetting.omniful_seller_code so it stays in lock-step.
+        'seller_code' => env('OMNIFUL_INVENTORY_PUSH_SELLER_CODE', ''),
+    ],
     // SAP -> Omniful item/bundle integration driven by item-master UDF flags.
     // We read OITM items whose integrated flag = "not integrated" and:
     //   * sales-only items (SalesItem=tYES, InventoryItem=tNO) are bundles:
