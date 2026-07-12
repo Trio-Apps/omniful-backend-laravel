@@ -2,10 +2,12 @@
 namespace App\Services;
 use App\Models\IntegrationSetting;
 use App\Services\Omniful\Concerns\HandlesOmnifulAuth;
+use App\Services\Omniful\Concerns\HandlesOmnifulInventory;
 use App\Services\Omniful\Concerns\HandlesOmnifulUpsert;
 class OmnifulApiClient
 {
     use HandlesOmnifulAuth;
+    use HandlesOmnifulInventory;
     use HandlesOmnifulUpsert;
     private string $baseUrl;
     private int $timeout;

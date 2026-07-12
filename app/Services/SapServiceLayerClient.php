@@ -3,6 +3,7 @@ namespace App\Services;
 use App\Models\IntegrationSetting;
 use App\Services\Sap\Concerns\HandlesSapHttp;
 use App\Services\Sap\Concerns\HandlesSapInventoryDocs;
+use App\Services\Sap\Concerns\HandlesSapInventoryQuantities;
 use App\Services\Sap\Concerns\HandlesSapMasterDataFetch;
 use App\Services\Sap\Concerns\HandlesSapPurchaseAndProducts;
 use App\Services\Sap\Concerns\HandlesSapSeries;
@@ -10,6 +11,7 @@ class SapServiceLayerClient
 {
     use HandlesSapHttp;
     use HandlesSapInventoryDocs;
+    use HandlesSapInventoryQuantities;
     use HandlesSapMasterDataFetch;
     use HandlesSapPurchaseAndProducts;
     use HandlesSapSeries;
