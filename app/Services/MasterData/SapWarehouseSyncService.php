@@ -97,10 +97,12 @@ class SapWarehouseSyncService
             $record->save();
 
             try {
-                $sapClient = app(SapServiceLayerClient::class);
-                if (!$sapClient->isWarehouseIntegrationEnabled((string) $record->code)) {
+                // Inclusion is controlled from the portal (SAP Warehouses page
+                // "Sync to Omniful" toggle), not the SAP UDF: skip any warehouse
+                // switched off there.
+                if (!$record->omniful_sync_enabled) {
                     $record->omniful_status = 'skipped';
-                    $record->omniful_error = 'Skipped by warehouse integration UDF control';
+                    $record->omniful_error = 'Excluded from Omniful sync (portal toggle)';
                     $record->save();
                     continue;
                 }

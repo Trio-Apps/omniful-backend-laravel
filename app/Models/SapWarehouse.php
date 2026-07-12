@@ -9,6 +9,7 @@ class SapWarehouse extends Model
     protected $fillable = [
         'code',
         'name',
+        'omniful_sync_enabled',
         'payload',
         'synced_at',
         'status',
@@ -19,6 +20,7 @@ class SapWarehouse extends Model
     ];
 
     protected $casts = [
+        'omniful_sync_enabled' => 'boolean',
         'payload' => 'array',
         'synced_at' => 'datetime',
         'omniful_synced_at' => 'datetime',
