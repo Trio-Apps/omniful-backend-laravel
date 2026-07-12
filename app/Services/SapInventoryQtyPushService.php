@@ -20,7 +20,7 @@ use Illuminate\Support\Str;
  */
 class SapInventoryQtyPushService
 {
-    private const SOURCE_TYPE = 'omniful_inventory_qty_push';
+    public const SOURCE_TYPE = 'omniful_inventory_qty_push';
 
     /**
      * Queue a run (single-flight: one active event at a time; a stale queued

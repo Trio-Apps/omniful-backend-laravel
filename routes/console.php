@@ -14,6 +14,11 @@ Artisan::command('inspire', function () {
 // `php artisan schedule:run` every minute.
 Schedule::command('omniful:auto-sync')->everyMinute()->withoutOverlapping(10);
 
+// SAP -> Omniful inventory quantity push. Runs every minute, but the command
+// self-gates on omniful.inventory_push.enabled and the configured cadence, so
+// it no-ops until a run is actually due (same pattern as omniful:auto-sync).
+Schedule::command('omniful:inventory-qty-push')->everyMinute()->withoutOverlapping(10);
+
 // DISABLED: scanning ~20k order last_payload blobs (2.7 GB) per run is far too
 // heavy — runs overran their withoutOverlapping window and stacked up, saturating
 // disk I/O (iowait ~48%, load ~9) and starving both the queue workers and the
