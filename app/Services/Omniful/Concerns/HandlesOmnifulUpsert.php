@@ -3,6 +3,7 @@
 namespace App\Services\Omniful\Concerns;
 
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 trait HandlesOmnifulUpsert
 {
@@ -23,9 +24,15 @@ trait HandlesOmnifulUpsert
             throw new \RuntimeException('Omniful endpoint is not configured for ' . $resource);
         }
 
-        $url = $this->baseUrl . '/' . ltrim($endpoint, '/');
+        $baseUrl = $this->baseUrl . '/' . ltrim($endpoint, '/');
+        $perPage = max(1, (int) config('omniful.sync_per_page', 100));
+        if (!isset($query['per_page'])) {
+            $query['per_page'] = $perPage;
+        }
+
+        $url = $baseUrl;
         $rows = [];
-        $maxPages = 20;
+        $maxPages = max(1, (int) config('omniful.sync_max_pages', 500));
         $page = 0;
 
         while ($url !== '' && $page < $maxPages) {
@@ -39,17 +46,42 @@ trait HandlesOmnifulUpsert
                 break;
             }
 
-            $pageRows = $this->extractRowsFromListResponse($json);
-            foreach ($pageRows as $row) {
+            foreach ($this->extractRowsFromListResponse($json) as $row) {
                 if (is_array($row)) {
                     $rows[] = $row;
                 }
             }
 
-            $next = $this->extractNextUrlFromListResponse($json, $url);
-            $url = $next ?? '';
-            $query = [];
             $page++;
+
+            // 1) Classic "next URL" pagination (data.next / links.next / …).
+            $next = $this->extractNextUrlFromListResponse($json, $url);
+            if (is_string($next) && trim($next) !== '') {
+                $url = $next;
+                $query = [];
+                continue;
+            }
+
+            // 2) Omniful V2 cursor pagination: re-request the SAME endpoint with
+            //    search_after = meta.end_cursor while meta.has_next_page is true.
+            //    (Without this the list stopped after the first ~page.)
+            $hasNext = filter_var(data_get($json, 'meta.has_next_page'), FILTER_VALIDATE_BOOLEAN);
+            $endCursor = data_get($json, 'meta.end_cursor');
+            if ($hasNext && is_string($endCursor) && trim($endCursor) !== '') {
+                $url = $baseUrl;
+                $query = ['per_page' => $perPage, 'search_after' => $endCursor];
+                continue;
+            }
+
+            break; // no further pages
+        }
+
+        if ($page >= $maxPages) {
+            Log::warning('Omniful fetchList hit the page cap; result may be truncated', [
+                'resource' => $resource,
+                'rows' => count($rows),
+                'max_pages' => $maxPages,
+            ]);
         }
 
         return $rows;
