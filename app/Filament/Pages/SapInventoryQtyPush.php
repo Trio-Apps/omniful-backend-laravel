@@ -112,10 +112,11 @@ class SapInventoryQtyPush extends Page
      */
     public function getPanel(): array
     {
+        $service = app(SapInventoryQtyPushService::class);
         $config = [
-            'enabled' => (bool) config('omniful.inventory_push.enabled', false),
-            'mode' => (string) config('omniful.inventory_push.mode', 'delta'),
-            'cadence_minutes' => (int) config('omniful.inventory_push.cadence_minutes', 30),
+            'enabled' => $service->isEnabled(),
+            'mode' => $service->defaultMode(),
+            'cadence_minutes' => $service->cadenceMinutes(),
             'quantity_source' => (string) config('omniful.inventory_push.quantity_source', 'available'),
         ];
 

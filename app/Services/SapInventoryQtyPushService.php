@@ -50,13 +50,47 @@ class SapInventoryQtyPushService
             'payload' => [
                 'requested_at' => now()->toDateTimeString(),
                 'triggered_by' => $triggeredBy,
-                'mode' => $mode ?: (string) config('omniful.inventory_push.mode', 'delta'),
+                'mode' => $mode ?: $this->defaultMode(),
             ],
         ]);
 
         RunSapInventoryQtyPush::dispatch($event->id);
 
         return ['queued' => true, 'already_running' => false, 'event' => $event];
+    }
+
+    /**
+     * Whether the scheduled push is enabled. Managed from the Integration
+     * Settings page (DB); falls back to config when no settings row exists.
+     */
+    public function isEnabled(): bool
+    {
+        $setting = IntegrationSetting::active();
+        if ($setting !== null && $setting->inventory_push_enabled !== null) {
+            return (bool) $setting->inventory_push_enabled;
+        }
+
+        return (bool) config('omniful.inventory_push.enabled', false);
+    }
+
+    public function cadenceMinutes(): int
+    {
+        $minutes = (int) (IntegrationSetting::active()?->inventory_push_cadence_minutes ?: 0);
+        if ($minutes < 1) {
+            $minutes = (int) config('omniful.inventory_push.cadence_minutes', 30);
+        }
+
+        return max(1, $minutes);
+    }
+
+    public function defaultMode(): string
+    {
+        $mode = strtolower(trim((string) (IntegrationSetting::active()?->inventory_push_mode ?? '')));
+        if ($mode === '') {
+            $mode = strtolower((string) config('omniful.inventory_push.mode', 'delta'));
+        }
+
+        return in_array($mode, ['delta', 'full'], true) ? $mode : 'delta';
     }
 
     /**
@@ -68,7 +102,7 @@ class SapInventoryQtyPushService
      */
     public function preview(int $sampleSize = 25): array
     {
-        $mode = strtolower((string) config('omniful.inventory_push.mode', 'delta'));
+        $mode = $this->defaultMode();
         $plan = $this->buildPlan($mode);
 
         $sample = [];
@@ -102,7 +136,7 @@ class SapInventoryQtyPushService
      */
     public function pushToOmniful(OmnifulApiClient $client, SapSyncEvent $event): array
     {
-        $mode = strtolower((string) (data_get($event->payload, 'mode') ?: config('omniful.inventory_push.mode', 'delta')));
+        $mode = strtolower((string) (data_get($event->payload, 'mode') ?: $this->defaultMode()));
         $batchSize = max(1, (int) config('omniful.inventory_push.batch_size', 200));
 
         $plan = $this->buildPlan($mode);

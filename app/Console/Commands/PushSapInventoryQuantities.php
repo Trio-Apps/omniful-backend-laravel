@@ -48,12 +48,12 @@ class PushSapInventoryQuantities extends Command
         $force = (bool) $this->option('force');
 
         if (!$force) {
-            if (!(bool) config('omniful.inventory_push.enabled', false)) {
-                $this->info('Inventory push is disabled (omniful.inventory_push.enabled) — skipping.');
+            if (!$service->isEnabled()) {
+                $this->info('Inventory push is disabled (Integration Settings) — skipping.');
 
                 return self::SUCCESS;
             }
-            if (!$this->isDue()) {
+            if (!$this->isDue($service->cadenceMinutes())) {
                 $this->info('Inventory push not due yet — skipping.');
 
                 return self::SUCCESS;
@@ -78,9 +78,9 @@ class PushSapInventoryQuantities extends Command
      * Due when at least the configured cadence has elapsed since the last run
      * was queued (mirrors the auto-sync cadence gate).
      */
-    private function isDue(): bool
+    private function isDue(int $cadenceMinutes): bool
     {
-        $cadence = max(1, (int) config('omniful.inventory_push.cadence_minutes', 30));
+        $cadence = max(1, $cadenceMinutes);
 
         $last = SapSyncEvent::query()
             ->where('source_type', SapInventoryQtyPushService::SOURCE_TYPE)

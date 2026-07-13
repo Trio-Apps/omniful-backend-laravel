@@ -143,6 +143,27 @@ class IntegrationSettings extends Page implements HasForms
                             ->columnSpanFull(),
                     ])
                     ->columns(2),
+                Section::make('Inventory Quantity Push (SAP → Omniful)')
+                    ->description('Push on-hand Available quantities to the already-synced Omniful hubs. Disabled by default; when off, runs only when triggered manually.')
+                    ->schema([
+                        Toggle::make('inventory_push_enabled')
+                            ->label('Enable scheduled push')
+                            ->helperText('On = run automatically on the cadence below. Off = manual runs only.')
+                            ->default(false),
+                        Select::make('inventory_push_mode')
+                            ->label('Mode')
+                            ->options([
+                                'delta' => 'Delta (changed quantities only)',
+                                'full' => 'Full (every synced item × hub)',
+                            ])
+                            ->default('delta'),
+                        TextInput::make('inventory_push_cadence_minutes')
+                            ->label('Cadence (minutes)')
+                            ->numeric()
+                            ->minValue(1)
+                            ->default(30),
+                    ])
+                    ->columns(2),
             ])
             ->statePath('data');
     }
