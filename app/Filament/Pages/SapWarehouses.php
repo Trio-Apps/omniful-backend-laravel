@@ -40,8 +40,8 @@ class SapWarehouses extends Page implements HasTable
             TextColumn::make('code')->label('Code')->searchable(),
             TextColumn::make('name')->label('Name')->searchable(),
             ToggleColumn::make('omniful_sync_enabled')
-                ->label('Sync to Omniful')
-                ->tooltip('When off, this warehouse is excluded from the Omniful hub config sync.'),
+                ->label('Push Quantities')
+                ->tooltip('When off, inventory quantities are NOT pushed to Omniful for this warehouse. Does not affect the warehouse master-data sync.'),
             TextColumn::make('type')
                 ->label('Type')
                 ->badge()

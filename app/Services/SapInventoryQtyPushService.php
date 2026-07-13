@@ -141,7 +141,7 @@ class SapInventoryQtyPushService
 
         $plan = $this->buildPlan($mode);
         if (($plan['synced_hubs'] ?? 0) === 0) {
-            return ['ok' => 0, 'failed' => 0, 'skipped' => 0, 'note' => 'no synced warehouses'];
+            return ['ok' => 0, 'failed' => 0, 'skipped' => 0, 'note' => 'no warehouses enabled for quantity push'];
         }
 
         $byHub = $plan['by_hub'];
@@ -236,7 +236,7 @@ class SapInventoryQtyPushService
         // the warehouse code itself.
         $syncedHubs = $this->syncedWarehouseCodes();
         if ($syncedHubs === []) {
-            return ['by_hub' => [], 'considered' => 0, 'skipped_unmapped' => 0, 'seller_code' => $sellerCode, 'synced_hubs' => 0, 'total' => 0, 'note' => 'no synced warehouses'];
+            return ['by_hub' => [], 'considered' => 0, 'skipped_unmapped' => 0, 'seller_code' => $sellerCode, 'synced_hubs' => 0, 'total' => 0, 'note' => 'no warehouses enabled for quantity push'];
         }
 
         // m1: read Available per synced item x warehouse (restricted to synced hubs).
@@ -317,7 +317,10 @@ class SapInventoryQtyPushService
     }
 
     /**
-     * Warehouse codes whose hub is already synced in Omniful (hub_code == code).
+     * Warehouse codes toggled ON for quantity push on the SAP Warehouses page.
+     * Warehouses come from Omniful (Omniful -> SAP), so every SapWarehouse.code
+     * is already an Omniful hub_code; the "Push Quantities" toggle is the only
+     * gate for which hubs receive quantity updates.
      *
      * @return array<string,true>
      */
@@ -325,7 +328,7 @@ class SapInventoryQtyPushService
     {
         $set = [];
         SapWarehouse::query()
-            ->whereNotNull('omniful_synced_at')
+            ->where('omniful_sync_enabled', true)
             ->select(['code'])
             ->chunk(1000, function ($chunk) use (&$set) {
                 foreach ($chunk as $warehouse) {

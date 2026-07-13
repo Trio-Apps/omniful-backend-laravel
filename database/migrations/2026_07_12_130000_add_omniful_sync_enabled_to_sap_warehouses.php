@@ -7,9 +7,10 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration
 {
     /**
-     * Portal-managed switch for whether a SAP warehouse's config is pushed to
-     * Omniful (hub sync). Defaults true so existing behaviour is unchanged; the
-     * SAP Warehouses page lets you exclude specific warehouses.
+     * Portal-managed switch (SAP Warehouses page "Push Quantities" toggle) for
+     * whether inventory quantities are pushed to Omniful for a warehouse.
+     * Defaults true; turn a warehouse off to exclude it from the quantity push.
+     * Does not affect the warehouse master-data sync.
      */
     public function up(): void
     {
