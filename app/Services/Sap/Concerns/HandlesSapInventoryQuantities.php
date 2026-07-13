@@ -4,10 +4,12 @@ namespace App\Services\Sap\Concerns;
 
 /**
  * Reads on-hand stock quantities from SAP for the SAP -> Omniful Inventory
- * Quantity Push. Pulls every item flagged for the Omniful integration (config
- * omniful.item_integration.item_udf_field, e.g. U_OmnifulSync) together with its
- * per-warehouse figures, and reports InStock, Committed and Available
- * (= InStock - Committed) per item x warehouse.
+ * Quantity Push. Pulls every item already integrated in Omniful (the flag SAP
+ * sets after the SKU is created — config omniful.item_integration
+ * .integrated_udf_field = integrated_value, e.g. U_omInt = 'Y') together with
+ * its per-warehouse figures, and reports InStock, Committed and Available
+ * (= InStock - Committed) per item x warehouse. SAP-only items (no Omniful SKU)
+ * are excluded, so the push never fails on "SKU not found".
  *
  * READ-ONLY. This never mutates SAP and is entirely independent of the
  * warehouse master-data sync — it only needs the HTTP + pagination helpers.
@@ -21,22 +23,23 @@ trait HandlesSapInventoryQuantities
      */
     public function fetchSyncedItemQuantities(?array $warehouseCodes = null): array
     {
-        // Field that flags an item as part of the Omniful integration scope.
-        // Sanitised because it is interpolated into the OData path.
-        $udf = (string) config('omniful.item_integration.item_udf_field', 'U_OmnifulSync');
-        $udf = preg_replace('/[^A-Za-z0-9_]/', '', $udf) ?: 'U_OmnifulSync';
+        // Only items ACTUALLY integrated in Omniful (a SKU exists there), using
+        // the flag SAP sets after the SKU is created (U_omInt = 'Y'). This
+        // deliberately excludes SAP-only items that have no Omniful SKU, so the
+        // push never generates "SKU not found" failures for them. Field/value are
+        // sanitised because they are interpolated into the OData path.
+        $field = (string) config('omniful.item_integration.integrated_udf_field', 'U_omInt');
+        $field = preg_replace('/[^A-Za-z0-9_]/', '', $field) ?: 'U_omInt';
+        $value = str_replace("'", "''", (string) config('omniful.item_integration.integrated_value', 'Y'));
 
-        // Alphanumeric UDFs default to '' (not null) in SAP, and some companies
-        // reject `ne null` on a UDF — so an "is set" filter of `ne ''` is both
-        // correct and the most portable.
-        $filter = "{$udf} ne ''";
+        $filter = "{$field} eq '{$value}'";
 
         // Prefer a narrow nested $select on the expanded warehouse collection;
         // fall back to broader shapes when a SAP company rejects the nested
         // $select or $expand (fetchAllWithFallback swallows 404/invalid-property).
         $rows = $this->fetchAllWithFallback([
-            "/Items?\$select=ItemCode,{$udf}&\$expand=ItemWarehouseInfoCollection(\$select=WarehouseCode,InStock,Committed)&\$filter={$filter}",
-            "/Items?\$select=ItemCode,{$udf}&\$expand=ItemWarehouseInfoCollection&\$filter={$filter}",
+            "/Items?\$select=ItemCode,{$field}&\$expand=ItemWarehouseInfoCollection(\$select=WarehouseCode,InStock,Committed)&\$filter={$filter}",
+            "/Items?\$select=ItemCode,{$field}&\$expand=ItemWarehouseInfoCollection&\$filter={$filter}",
             "/Items?\$expand=ItemWarehouseInfoCollection&\$filter={$filter}",
         ]);
 
