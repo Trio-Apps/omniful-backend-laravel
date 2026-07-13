@@ -73,6 +73,17 @@ trait HandlesOmnifulUpsert
                 continue;
             }
 
+            // 3) Classic page/offset pagination (Omniful hubs & most V1 lists:
+            //    meta.current_page / meta.last_page / meta.total). Request the
+            //    next page number until the last page is reached.
+            $currentPage = (int) data_get($json, 'meta.current_page', 0);
+            $lastPage = (int) data_get($json, 'meta.last_page', 0);
+            if ($currentPage > 0 && $lastPage > $currentPage) {
+                $url = $baseUrl;
+                $query = ['per_page' => $perPage, 'page' => $currentPage + 1];
+                continue;
+            }
+
             break; // no further pages
         }
 
