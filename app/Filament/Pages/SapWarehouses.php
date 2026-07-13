@@ -10,6 +10,7 @@ use Filament\Actions\Action;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Columns\ToggleColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Illuminate\Database\Eloquent\Builder;
@@ -38,6 +39,9 @@ class SapWarehouses extends Page implements HasTable
         return [
             TextColumn::make('code')->label('Code')->searchable(),
             TextColumn::make('name')->label('Name')->searchable(),
+            ToggleColumn::make('omniful_sync_enabled')
+                ->label('Sync to Omniful')
+                ->tooltip('When off, this warehouse is excluded from the Omniful hub config sync.'),
             TextColumn::make('type')
                 ->label('Type')
                 ->badge()
