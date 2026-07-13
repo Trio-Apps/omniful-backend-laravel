@@ -95,6 +95,29 @@ class IntegrationControlSettings extends Page implements HasForms
                                             ->helperText('Pull pending SAP suppliers and push them to Omniful.'),
                                     ])
                                     ->columns(2),
+                                Section::make('Inventory Quantity Push (SAP → Omniful)')
+                                    ->description('Push on-hand Available quantities per integrated item to the already-synced Omniful hubs. Disabled by default; when off it runs only when triggered manually from the Inventory Qty Push page.')
+                                    ->schema([
+                                        Toggle::make('inventory_push_enabled')
+                                            ->label('Enable scheduled push')
+                                            ->default(false)
+                                            ->helperText('Master switch for the automatic quantity push. Off = manual runs only.'),
+                                        TextInput::make('inventory_push_cadence_minutes')
+                                            ->label('Run every (minutes)')
+                                            ->numeric()
+                                            ->minValue(1)
+                                            ->default(30)
+                                            ->helperText('How often to push quantities to Omniful.'),
+                                        Select::make('inventory_push_mode')
+                                            ->label('Mode')
+                                            ->options([
+                                                'delta' => 'Delta (changed quantities only)',
+                                                'full' => 'Full (every integrated item × hub)',
+                                            ])
+                                            ->default('delta')
+                                            ->helperText('Delta pushes only what changed since the last run; Full re-pushes everything.'),
+                                    ])
+                                    ->columns(2),
                             ]),
                         Tab::make('Sales Orders')
                             ->icon('heroicon-o-shopping-cart')
@@ -295,6 +318,9 @@ class IntegrationControlSettings extends Page implements HasForms
                 'auto_sync_items_enabled' => (bool) ($state['auto_sync_items_enabled'] ?? false),
                 'auto_sync_suppliers_enabled' => (bool) ($state['auto_sync_suppliers_enabled'] ?? false),
                 'auto_sync_interval_minutes' => max(1, (int) ($state['auto_sync_interval_minutes'] ?? 15)),
+                'inventory_push_enabled' => (bool) ($state['inventory_push_enabled'] ?? false),
+                'inventory_push_cadence_minutes' => max(1, (int) ($state['inventory_push_cadence_minutes'] ?? 30)),
+                'inventory_push_mode' => in_array(($state['inventory_push_mode'] ?? 'delta'), ['delta', 'full'], true) ? $state['inventory_push_mode'] : 'delta',
                 'po_ignored_supplier_codes' => $state['po_ignored_supplier_codes'] ?? null,
                 'order_numeric_id_only' => (bool) ($state['order_numeric_id_only'] ?? false),
                 'order_cutoff_date' => ($state['order_cutoff_date'] ?? null) ?: null,
