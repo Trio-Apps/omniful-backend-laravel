@@ -442,10 +442,21 @@ trait HandlesSapPurchaseAndProducts
             }
         }
 
-        foreach ($references as $reference) {
-            $invoice = $this->findArInvoiceByPayloadScan((string) $reference);
-            if ($invoice !== null) {
-                return $invoice;
+        // The full-invoice payload scan (findArInvoiceByPayloadScan) is a linear
+        // scan of SAP with NO server-side filter — each page of 100 invoices
+        // costs ~14s on this tenant. The targeted UDF / NumAtCard / Comments
+        // filters above already cover every field we stamp the order reference
+        // into, so for a normal new order (no SAP duplicate error) reaching here
+        // means there is genuinely no existing invoice. Running the scan on every
+        // order taxed each one ~14s and stalled the queue. Only fall back to it
+        // when SAP has ALREADY told us a duplicate exists ($duplicateErrorBody
+        // set) — then the collision is recent and worth the scan to locate.
+        if (trim($duplicateErrorBody) !== '') {
+            foreach ($references as $reference) {
+                $invoice = $this->findArInvoiceByPayloadScan((string) $reference);
+                if ($invoice !== null) {
+                    return $invoice;
+                }
             }
         }
 
