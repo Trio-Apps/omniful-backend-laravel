@@ -2722,9 +2722,15 @@ trait HandlesSapPurchaseAndProducts
 
             $invoiceCancelled = (string) ($invoice['Cancelled'] ?? 'tNO') === 'tYES'
                 || in_array((string) ($invoice['CancelStatus'] ?? ''), ['csYes', 'csCancellation'], true);
-            $invoiceClosed = (string) ($invoice['DocumentStatus'] ?? '') === 'bost_Close';
+            // Only an OPEN invoice can be base-referenced (BaseType 13). A fully
+            // PAID/closed/delivered invoice (DocumentStatus bost_Paid, bost_Close,
+            // …) is rejected by SAP as a copy-from base with -5002 "base already
+            // closed", so it must be reversed with a STANDALONE (BaseType -1)
+            // credit memo. Checking only bost_Close missed bost_Paid (fully paid)
+            // invoices — the dominant -5002 case. Mirrors reverseArReserveInvoiceForResend().
+            $invoiceOpen = (string) ($invoice['DocumentStatus'] ?? '') === 'bost_Open';
 
-            if (!$invoiceCancelled && !$invoiceClosed) {
+            if (!$invoiceCancelled && $invoiceOpen) {
                 $documentLines = $this->buildCreditLinesFromInvoice($items, $invoice, $baseOrderDocEntry);
                 $baseReferenced = $documentLines !== [];
             }
@@ -2733,7 +2739,7 @@ trait HandlesSapPurchaseAndProducts
                 Log::warning('AR credit memo: not base-referencing invoice; using standalone (BaseType -1) credit memo', [
                     'external_id' => $externalId,
                     'invoice_doc_entry' => $baseOrderDocEntry,
-                    'invoice_closed' => $invoiceClosed,
+                    'invoice_status' => (string) ($invoice['DocumentStatus'] ?? ''),
                     'invoice_cancelled' => $invoiceCancelled,
                     'return_item_codes' => array_values(array_filter(array_map(
                         fn ($i) => $this->extractCreditMemoItemCode((array) $i),
@@ -2798,6 +2804,25 @@ trait HandlesSapPurchaseAndProducts
         );
 
         $response = $this->post('/CreditNotes', $body);
+
+        // Safety net: a base-referenced (BaseType 13) credit memo can still hit
+        // -5002 "base document already closed" when an individual invoice line
+        // was drawn down/closed while the header still looked open. Rebuild the
+        // lines as a STANDALONE (BaseType -1) credit memo and retry once — same
+        // fallback as reverseArReserveInvoiceForResend().
+        if (!$response->successful() && $baseReferenced
+            && $this->isSapDeliveryBaseAlreadyClosedError((string) $response->body())) {
+            $standaloneLines = $this->normalizeSapDocumentLines(
+                $this->applyDefaultCostCentersToLines(
+                    $this->buildDirectCreditLines($items, $hubCode, $data)
+                )
+            );
+            if ($standaloneLines !== []) {
+                $body['DocumentLines'] = $standaloneLines;
+                $response = $this->post('/CreditNotes', $body);
+            }
+        }
+
         if (!$response->successful()) {
             throw new SapRequestException(
                 'SAP AR credit memo create failed: ' . $response->status() . ' ' . $response->body(),
@@ -9158,6 +9183,7 @@ trait HandlesSapPurchaseAndProducts
     {
         $lines = [];
         $lineIndex = 0;
+        $uomByItem = [];
         foreach ($items as $item) {
             $lineIndex++;
             $item = (array) $item;
@@ -9178,6 +9204,25 @@ trait HandlesSapPurchaseAndProducts
                 'Quantity' => $this->roundSapQuantity($qty),
                 'UnitPrice' => $this->roundSapAmount($unitPrice),
             ];
+
+            // Standalone (BaseType -1) lines don't inherit a UoM from a base
+            // invoice line, so SAP rejects UoM-managed items with -5002 "specify
+            // a UoM code". Resolve the item's preferred UoM (same helpers as
+            // retryArOrderWithResolvedUom) and stamp it on the line.
+            if (!array_key_exists($itemCode, $uomByItem)) {
+                $uom = $this->getPreferredSalesUomForItem($itemCode);
+                if ($uom === []) {
+                    $uom = $this->getPreferredPurchaseUomForItem($itemCode);
+                }
+                $uomByItem[$itemCode] = $uom;
+            }
+            $resolvedUom = $uomByItem[$itemCode];
+            if (isset($resolvedUom['UoMEntry'])) {
+                $line['UoMEntry'] = (int) $resolvedUom['UoMEntry'];
+            }
+            if (isset($resolvedUom['UoMCode']) && (string) $resolvedUom['UoMCode'] !== '') {
+                $line['UoMCode'] = (string) $resolvedUom['UoMCode'];
+            }
 
             $taxCode = $this->resolveSapTaxCodeForOrderLine($data, [
                 'sku_code' => $itemCode,
