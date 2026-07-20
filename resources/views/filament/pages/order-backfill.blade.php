@@ -18,22 +18,16 @@
         .obf-tbl th:first-child, .obf-tbl td:first-child { text-align:left; }
         .obf-tbl td:first-child { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
         .obf-miss { color:#d97706; font-weight:700; }
-        @media (prefers-color-scheme: dark) {
-            .obf-stat { background:rgba(255,255,255,.05); border-color:rgba(255,255,255,.1); box-shadow:none; }
-            .obf-stat-num { color:#f9fafb; }
-            .obf-stat-label, .obf-meta { color:#9ca3af; }
-            .obf-meta b { color:#e5e7eb; }
-            .obf-tbl th { color:#9ca3af; border-color:rgba(255,255,255,.12); }
-            .obf-tbl td { color:#d1d5db; border-color:rgba(255,255,255,.06); }
-            .obf-miss { color:#fbbf24; }
-        }
-        :root[data-theme="dark"] .obf-stat { background:rgba(255,255,255,.05); border-color:rgba(255,255,255,.1); box-shadow:none; }
-        :root[data-theme="dark"] .obf-stat-num { color:#f9fafb; }
-        :root[data-theme="dark"] .obf-stat-label, :root[data-theme="dark"] .obf-meta { color:#9ca3af; }
-        :root[data-theme="dark"] .obf-meta b { color:#e5e7eb; }
-        :root[data-theme="dark"] .obf-tbl th { color:#9ca3af; border-color:rgba(255,255,255,.12); }
-        :root[data-theme="dark"] .obf-tbl td { color:#d1d5db; border-color:rgba(255,255,255,.06); }
-        :root[data-theme="dark"] .obf-miss { color:#fbbf24; }
+        /* Filament toggles dark mode via the `dark` class on <html> — key off THAT,
+           not prefers-color-scheme (which follows the OS and washed the text out
+           to near-white on a light panel when the OS was in dark mode). */
+        .dark .obf-stat { background:rgba(255,255,255,.05); border-color:rgba(255,255,255,.1); box-shadow:none; }
+        .dark .obf-stat-num { color:#f8fafc; }
+        .dark .obf-stat-label, .dark .obf-meta { color:#94a3b8; }
+        .dark .obf-meta b { color:#e2e8f0; }
+        .dark .obf-tbl th { color:#94a3b8; border-color:rgba(255,255,255,.12); }
+        .dark .obf-tbl td { color:#cbd5e1; border-color:rgba(255,255,255,.06); }
+        .dark .obf-miss { color:#fbbf24; }
     </style>
 
     {{-- Start form --}}
