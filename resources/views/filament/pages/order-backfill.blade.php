@@ -1,6 +1,41 @@
 <x-filament-panels::page>
     @php($panel = $this->getPanel())
 
+    {{-- Custom bits (stat grid + table) are styled with a scoped <style> block,
+         NOT Tailwind utilities — the compiled panel CSS purges any utility class
+         not already used elsewhere, so new arbitrary utilities render unstyled. --}}
+    <style>
+        .obf-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:.75rem; }
+        .obf-stat { border-radius:.75rem; padding:.85rem .75rem; text-align:center; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.05); border:1px solid rgba(17,24,39,.07); }
+        .obf-stat-num { font-size:1.6rem; font-weight:700; line-height:1.1; color:#111827; font-variant-numeric:tabular-nums; }
+        .obf-stat-label { margin-top:.25rem; font-size:.72rem; font-weight:500; letter-spacing:.02em; color:#6b7280; }
+        .obf-meta { margin-top:1rem; display:flex; flex-wrap:wrap; gap:.35rem 1.5rem; font-size:.85rem; color:#6b7280; }
+        .obf-meta b { color:#374151; font-weight:600; }
+        .obf-err { margin-top:.85rem; border-radius:.6rem; padding:.6rem .8rem; font-size:.85rem; background:rgba(239,68,68,.1); color:#b91c1c; white-space:pre-wrap; word-break:break-word; }
+        .obf-tbl { width:100%; border-collapse:collapse; margin-top:1rem; font-size:.88rem; }
+        .obf-tbl th { padding:.5rem .7rem; font-size:.7rem; font-weight:600; letter-spacing:.03em; text-transform:uppercase; color:#6b7280; border-bottom:1px solid rgba(17,24,39,.1); text-align:right; }
+        .obf-tbl td { padding:.5rem .7rem; text-align:right; color:#374151; border-bottom:1px solid rgba(17,24,39,.06); font-variant-numeric:tabular-nums; }
+        .obf-tbl th:first-child, .obf-tbl td:first-child { text-align:left; }
+        .obf-tbl td:first-child { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+        .obf-miss { color:#d97706; font-weight:700; }
+        @media (prefers-color-scheme: dark) {
+            .obf-stat { background:rgba(255,255,255,.05); border-color:rgba(255,255,255,.1); box-shadow:none; }
+            .obf-stat-num { color:#f9fafb; }
+            .obf-stat-label, .obf-meta { color:#9ca3af; }
+            .obf-meta b { color:#e5e7eb; }
+            .obf-tbl th { color:#9ca3af; border-color:rgba(255,255,255,.12); }
+            .obf-tbl td { color:#d1d5db; border-color:rgba(255,255,255,.06); }
+            .obf-miss { color:#fbbf24; }
+        }
+        :root[data-theme="dark"] .obf-stat { background:rgba(255,255,255,.05); border-color:rgba(255,255,255,.1); box-shadow:none; }
+        :root[data-theme="dark"] .obf-stat-num { color:#f9fafb; }
+        :root[data-theme="dark"] .obf-stat-label, :root[data-theme="dark"] .obf-meta { color:#9ca3af; }
+        :root[data-theme="dark"] .obf-meta b { color:#e5e7eb; }
+        :root[data-theme="dark"] .obf-tbl th { color:#9ca3af; border-color:rgba(255,255,255,.12); }
+        :root[data-theme="dark"] .obf-tbl td { color:#d1d5db; border-color:rgba(255,255,255,.06); }
+        :root[data-theme="dark"] .obf-miss { color:#fbbf24; }
+    </style>
+
     {{-- Start form --}}
     <x-filament::section>
         <x-slot name="heading">Start a backfill</x-slot>
@@ -10,37 +45,27 @@
             Rate-limited &amp; resumable — safe over long ranges.
         </x-slot>
 
-        <div class="flex flex-wrap items-end gap-4">
-            <div class="flex flex-col gap-1">
-                <label class="text-xs font-medium text-gray-500 dark:text-gray-400">From (created date)</label>
+        <div style="display:flex; flex-wrap:wrap; align-items:flex-end; gap:1rem;">
+            <div style="display:flex; flex-direction:column; gap:.3rem;">
+                <label style="font-size:.72rem; font-weight:500; color:#6b7280;">From (created date)</label>
                 <x-filament::input.wrapper>
                     <x-filament::input type="date" wire:model="dateFrom" />
                 </x-filament::input.wrapper>
             </div>
 
-            <div class="flex flex-col gap-1">
-                <label class="text-xs font-medium text-gray-500 dark:text-gray-400">To (created date)</label>
+            <div style="display:flex; flex-direction:column; gap:.3rem;">
+                <label style="font-size:.72rem; font-weight:500; color:#6b7280;">To (created date)</label>
                 <x-filament::input.wrapper>
                     <x-filament::input type="date" wire:model="dateTo" />
                 </x-filament::input.wrapper>
             </div>
 
-            <x-filament::button
-                wire:click="start"
-                wire:target="start"
-                wire:loading.attr="disabled"
-                icon="heroicon-o-cloud-arrow-down"
-            >
+            <x-filament::button wire:click="start" wire:target="start" wire:loading.attr="disabled" icon="heroicon-o-cloud-arrow-down">
                 Start Backfill
             </x-filament::button>
 
             @if (($panel['has_run'] ?? false) && ($panel['is_active'] ?? false))
-                <x-filament::button
-                    color="danger"
-                    icon="heroicon-o-stop-circle"
-                    wire:click="cancelRun"
-                    wire:confirm="Stop the running backfill?"
-                >
+                <x-filament::button color="danger" icon="heroicon-o-stop-circle" wire:click="cancelRun" wire:confirm="Stop the running backfill?">
                     Stop
                 </x-filament::button>
             @endif
@@ -52,21 +77,17 @@
         <x-filament::section>
             <x-slot name="heading">
                 @if ($panel['has_run'] ?? false)
-                    <div class="flex flex-wrap items-center gap-3">
+                    <span style="display:inline-flex; align-items:center; gap:.6rem; flex-wrap:wrap;">
                         <x-filament::badge :color="$panel['tone']">{{ $panel['status_label'] }}</x-filament::badge>
-                        <span class="text-sm font-normal text-gray-500 dark:text-gray-400">
-                            Run #{{ $panel['id'] }} &middot; {{ $panel['range'] }}
-                        </span>
-                    </div>
+                        <span style="font-size:.85rem; font-weight:400; color:#6b7280;">Run #{{ $panel['id'] }} &middot; {{ $panel['range'] }}</span>
+                    </span>
                 @else
                     Live monitor
                 @endif
             </x-slot>
 
             @if (! ($panel['has_run'] ?? false))
-                <p class="text-sm text-gray-500 dark:text-gray-400">
-                    No backfill has run yet. Pick a date range above and press <span class="font-semibold">Start Backfill</span>.
-                </p>
+                <p style="font-size:.9rem; color:#6b7280;">No backfill has run yet. Pick a date range above and press <b>Start Backfill</b>.</p>
             @else
                 @php($stats = [
                     ['label' => 'Scanned', 'value' => $panel['scanned']],
@@ -78,49 +99,39 @@
                     ['label' => '429 Hits', 'value' => $panel['rate_limit_hits']],
                 ])
 
-                <div class="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+                <div class="obf-grid">
                     @foreach ($stats as $stat)
-                        <div class="rounded-xl bg-white p-3 text-center shadow-sm ring-1 ring-gray-950/5 dark:bg-white/5 dark:ring-white/10">
-                            <div class="text-2xl font-semibold tabular-nums text-gray-950 dark:text-white">
-                                {{ number_format((int) $stat['value']) }}
-                            </div>
-                            <div class="mt-1 text-xs font-medium text-gray-500 dark:text-gray-400">{{ $stat['label'] }}</div>
+                        <div class="obf-stat">
+                            <div class="obf-stat-num">{{ number_format((int) $stat['value']) }}</div>
+                            <div class="obf-stat-label">{{ $stat['label'] }}</div>
                         </div>
                     @endforeach
                 </div>
 
-                <div class="mt-4 flex flex-wrap gap-x-6 gap-y-1 text-sm text-gray-500 dark:text-gray-400">
-                    @if ($panel['last_activity'])<span>Activity: <span class="text-gray-700 dark:text-gray-300">{{ $panel['last_activity'] }}</span></span>@endif
+                <div class="obf-meta">
+                    @if ($panel['last_activity'])<span>Activity: <b>{{ $panel['last_activity'] }}</b></span>@endif
                     @if ($panel['started_at'])<span>Started: {{ $panel['started_at'] }}</span>@endif
                     @if ($panel['finished_at'])<span>Finished: {{ $panel['finished_at'] }}</span>@endif
                 </div>
 
                 @if ($panel['last_error'])
-                    <div class="mt-3 rounded-lg bg-danger-50 p-3 text-sm text-danger-700 dark:bg-danger-400/10 dark:text-danger-400">
-                        {{ $panel['last_error'] }}
-                    </div>
+                    <div class="obf-err">{{ $panel['last_error'] }}</div>
                 @endif
 
                 @if (! empty($panel['days']))
-                    <div class="mt-4 overflow-x-auto">
-                        <table class="w-full text-sm">
+                    <div style="overflow-x:auto;">
+                        <table class="obf-tbl">
                             <thead>
-                                <tr class="border-b border-gray-200 text-xs uppercase tracking-wide text-gray-500 dark:border-white/10 dark:text-gray-400">
-                                    <th class="py-2 pr-3 text-left font-medium">Date</th>
-                                    <th class="px-3 py-2 text-right font-medium">Orders</th>
-                                    <th class="px-3 py-2 text-right font-medium">Already Have</th>
-                                    <th class="px-3 py-2 text-right font-medium">Missing</th>
-                                    <th class="py-2 pl-3 text-right font-medium">Enqueued</th>
-                                </tr>
+                                <tr><th>Date</th><th>Orders</th><th>Already Have</th><th>Missing</th><th>Enqueued</th></tr>
                             </thead>
-                            <tbody class="divide-y divide-gray-100 dark:divide-white/5">
+                            <tbody>
                                 @foreach ($panel['days'] as $d)
                                     <tr>
-                                        <td class="py-2 pr-3 text-left font-mono text-gray-700 dark:text-gray-300">{{ $d['day'] }}</td>
-                                        <td class="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-300">{{ number_format($d['total']) }}</td>
-                                        <td class="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-300">{{ number_format($d['existing']) }}</td>
-                                        <td class="px-3 py-2 text-right tabular-nums {{ $d['missing'] > 0 ? 'font-semibold text-warning-600 dark:text-warning-400' : 'text-gray-700 dark:text-gray-300' }}">{{ number_format($d['missing']) }}</td>
-                                        <td class="py-2 pl-3 text-right tabular-nums text-gray-700 dark:text-gray-300">{{ number_format($d['enqueued']) }}</td>
+                                        <td>{{ $d['day'] }}</td>
+                                        <td>{{ number_format($d['total']) }}</td>
+                                        <td>{{ number_format($d['existing']) }}</td>
+                                        <td class="{{ $d['missing'] > 0 ? 'obf-miss' : '' }}">{{ number_format($d['missing']) }}</td>
+                                        <td>{{ number_format($d['enqueued']) }}</td>
                                     </tr>
                                 @endforeach
                             </tbody>
