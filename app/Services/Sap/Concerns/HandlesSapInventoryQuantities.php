@@ -34,12 +34,21 @@ trait HandlesSapInventoryQuantities
 
         $filter = "{$field} eq '{$value}'";
 
-        // Prefer a narrow nested $select on the expanded warehouse collection;
-        // fall back to broader shapes when a SAP company rejects the nested
-        // $select or $expand (fetchAllWithFallback swallows 404/invalid-property).
+        // This SAP Service Layer rejects $expand on ItemWarehouseInfoCollection
+        // (HTTP 400 code 201 "Cannot expand invalid navigation property") even
+        // though the collection IS accessible — the plain item list already
+        // returns it INLINE. So read it WITHOUT $expand/$select first; the
+        // (lighter) nested-select expand shapes stay as fallbacks for SAP
+        // companies that do support them. fetchAllWithFallback swallows a
+        // 404/invalid-property and moves to the next shape.
         $rows = $this->fetchAllWithFallback([
+            // $select=ItemCode,ItemWarehouseInfoCollection returns the warehouse
+            // collection inline while EXCLUDING the item's other heavy child
+            // collections (prices, vendors, …) — a plain "/Items?$filter" pulls
+            // them all and times out. The nested-select expand shapes stay as
+            // fallbacks for SAP companies that support $expand on the collection.
+            "/Items?\$select=ItemCode,ItemWarehouseInfoCollection&\$filter={$filter}",
             "/Items?\$select=ItemCode,{$field}&\$expand=ItemWarehouseInfoCollection(\$select=WarehouseCode,InStock,Committed)&\$filter={$filter}",
-            "/Items?\$select=ItemCode,{$field}&\$expand=ItemWarehouseInfoCollection&\$filter={$filter}",
             "/Items?\$expand=ItemWarehouseInfoCollection&\$filter={$filter}",
         ]);
 
