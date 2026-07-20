@@ -87,6 +87,7 @@
                     ['label' => 'Scanned', 'value' => $panel['scanned']],
                     ['label' => 'Already Have', 'value' => $panel['existing']],
                     ['label' => 'Missing', 'value' => $panel['missing']],
+                    ['label' => 'Skipped', 'value' => $panel['skipped']],
                     ['label' => 'Enqueued', 'value' => $panel['enqueued']],
                     ['label' => 'Pages', 'value' => $panel['pages']],
                     ['label' => 'Queue Pending', 'value' => $panel['queue_pending']],
@@ -116,7 +117,7 @@
                     <div style="overflow-x:auto;">
                         <table class="obf-tbl">
                             <thead>
-                                <tr><th>Date</th><th>Orders</th><th>Already Have</th><th>Missing</th><th>Enqueued</th></tr>
+                                <tr><th>Date</th><th>Orders</th><th>Already Have</th><th>Missing</th><th>Skipped</th><th>Enqueued</th></tr>
                             </thead>
                             <tbody>
                                 @foreach ($panel['days'] as $d)
@@ -125,6 +126,7 @@
                                         <td>{{ number_format($d['total']) }}</td>
                                         <td>{{ number_format($d['existing']) }}</td>
                                         <td class="{{ $d['missing'] > 0 ? 'obf-miss' : '' }}">{{ number_format($d['missing']) }}</td>
+                                        <td>{{ number_format($d['skipped']) }}</td>
                                         <td>{{ number_format($d['enqueued']) }}</td>
                                     </tr>
                                 @endforeach

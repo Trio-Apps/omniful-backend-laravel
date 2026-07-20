@@ -15,6 +15,7 @@ class OmnifulOrderBackfillRun extends Model
         'scanned',
         'existing',
         'missing',
+        'skipped',
         'enqueued',
         'pages',
         'rate_limit_hits',

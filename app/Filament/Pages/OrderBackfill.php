@@ -110,6 +110,7 @@ class OrderBackfill extends Page
             'total' => (int) $d->total,
             'existing' => (int) $d->existing,
             'missing' => (int) $d->missing,
+            'skipped' => (int) $d->skipped,
             'enqueued' => (int) $d->enqueued,
         ])->all();
 
@@ -124,6 +125,7 @@ class OrderBackfill extends Page
             'scanned' => (int) $run->scanned,
             'existing' => (int) $run->existing,
             'missing' => (int) $run->missing,
+            'skipped' => (int) $run->skipped,
             'enqueued' => (int) $run->enqueued,
             'pages' => (int) $run->pages,
             'rate_limit_hits' => (int) $run->rate_limit_hits,

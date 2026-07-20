@@ -141,17 +141,27 @@ class OmnifulOrderBackfillService
      */
     private function ingestPage(OmnifulOrderBackfillRun $run, array $rows): void
     {
-        $runDelta = ['scanned' => 0, 'existing' => 0, 'missing' => 0, 'enqueued' => 0];
+        $runDelta = ['scanned' => 0, 'existing' => 0, 'missing' => 0, 'skipped' => 0, 'enqueued' => 0];
         $dayDelta = [];
 
         foreach ($rows as $row) {
             $data = (array) $row;
-            $externalId = $this->externalIdFor($data);
             $day = $this->createdDay($run, $data);
 
             $runDelta['scanned']++;
             $dayDelta[$day]['total'] = ($dayDelta[$day]['total'] ?? 0) + 1;
 
+            // No-op statuses (on_hold / picked / packed) never produce a SAP
+            // document, so skip them entirely — no detail fetch, no enqueue, and
+            // NOT counted as "missing" (that would be misleading + wasted work).
+            if ($this->isSkippableStatus((string) ($data['status_code'] ?? $data['status'] ?? ''))) {
+                $runDelta['skipped']++;
+                $dayDelta[$day]['skipped'] = ($dayDelta[$day]['skipped'] ?? 0) + 1;
+
+                continue;
+            }
+
+            $externalId = $this->externalIdFor($data);
             if ($externalId === '') {
                 continue; // nothing to key on — counted as scanned only
             }
@@ -255,6 +265,21 @@ class OmnifulOrderBackfillService
     }
 
     /**
+     * True for statuses the webhook pipeline treats as no-op (on_hold / picked /
+     * packed) — the backfill skips them rather than pull + enqueue for nothing.
+     * Configurable via omniful.order_backfill.skip_statuses.
+     */
+    private function isSkippableStatus(string $status): bool
+    {
+        $s = strtolower(trim($status));
+        if ($s === '') {
+            return false;
+        }
+
+        return in_array($s, (array) config('omniful.order_backfill.skip_statuses', []), true);
+    }
+
+    /**
      * @param array<string,mixed> $data
      */
     private function externalIdFor(array $data): string
@@ -302,7 +327,7 @@ class OmnifulOrderBackfillService
     private function applyRunDelta(OmnifulOrderBackfillRun $run, array $delta): void
     {
         $set = [];
-        foreach (['scanned', 'existing', 'missing', 'enqueued'] as $col) {
+        foreach (['scanned', 'existing', 'missing', 'skipped', 'enqueued'] as $col) {
             if (($delta[$col] ?? 0) > 0) {
                 $set[$col] = DB::raw($col . ' + ' . (int) $delta[$col]);
             }
@@ -319,7 +344,7 @@ class OmnifulOrderBackfillService
     private function applyDayDelta(OmnifulOrderBackfillRun $run, string $day, array $delta): void
     {
         $set = [];
-        foreach (['total', 'existing', 'missing', 'enqueued'] as $col) {
+        foreach (['total', 'existing', 'missing', 'skipped', 'enqueued'] as $col) {
             if (($delta[$col] ?? 0) > 0) {
                 $set[$col] = DB::raw($col . ' + ' . (int) $delta[$col]);
             }

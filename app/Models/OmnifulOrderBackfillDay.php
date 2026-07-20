@@ -13,6 +13,7 @@ class OmnifulOrderBackfillDay extends Model
         'total',
         'existing',
         'missing',
+        'skipped',
         'enqueued',
     ];
 

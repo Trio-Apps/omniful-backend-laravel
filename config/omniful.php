@@ -88,6 +88,15 @@ return [
         'pages_per_batch' => (int) env('OMNIFUL_BACKFILL_PAGES_PER_BATCH', 5),
         // Dispatch enqueued orders with force=true (skip the no-op gate).
         'force' => (bool) env('OMNIFUL_BACKFILL_FORCE', false),
+        // Statuses the backfill skips entirely — they produce no SAP document
+        // (the webhook pipeline ignores them), so pulling/enqueuing them is
+        // wasted work + wasted Omniful calls. Mirrors OrderWebhookService's
+        // isNoOpOrderStatus. Skipped orders are counted (Skipped) but never
+        // fetched-in-detail or enqueued, and never counted as "missing".
+        'skip_statuses' => array_values(array_filter(array_map(
+            fn ($s) => strtolower(trim((string) $s)),
+            explode(',', (string) env('OMNIFUL_BACKFILL_SKIP_STATUSES', 'on_hold,on hold,onhold,picked,packed'))
+        ))),
     ],
     // SAP -> Omniful item/bundle integration driven by item-master UDF flags.
     // We read OITM items whose integrated flag = "not integrated" and:
