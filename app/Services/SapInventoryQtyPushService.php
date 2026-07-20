@@ -161,8 +161,15 @@ class SapInventoryQtyPushService
         $failed = 0;
         $cancelled = false;
         $failedSamples = [];
+        $hubResults = [];
+
+        // Omniful rate-limits bulk inventory pushes; pace + back off on 429.
+        $throttleMs = max(0, (int) config('omniful.inventory_push.throttle_ms', 300));
+        $maxRlRetries = max(0, (int) config('omniful.inventory_push.rate_limit_max_retries', 5));
+        $rlCap = max(1, (int) config('omniful.inventory_push.rate_limit_backoff_cap_s', 30));
 
         foreach ($byHub as $hubCode => $skus) {
+            $hubResults[(string) $hubCode] = ['pushed' => 0, 'failed' => 0, 'reason' => null];
             foreach (array_chunk($skus, $batchSize) as $chunk) {
                 if ($this->isCancelled($event)) {
                     $cancelled = true;
@@ -176,19 +183,31 @@ class SapInventoryQtyPushService
 
                 $result = $client->pushHubInventory((string) $hubCode, $sellerCode, $skuDetail);
 
+                // HTTP 429 = rate limited: back off (2^n s, capped) and retry the
+                // same batch before counting it as failed.
+                $rlAttempt = 0;
+                while ((int) ($result['status'] ?? 0) === 429 && $rlAttempt < $maxRlRetries) {
+                    $rlAttempt++;
+                    sleep((int) min($rlCap, 2 ** $rlAttempt));
+                    $result = $client->pushHubInventory((string) $hubCode, $sellerCode, $skuDetail);
+                }
+
                 if (!($result['ok'] ?? false)) {
                     // Whole batch rejected — count as failed, keep snapshots as-is
                     // so the next run retries them.
                     $failed += count($chunk);
+                    $hubResults[(string) $hubCode]['failed'] += count($chunk);
+                    $hubResults[(string) $hubCode]['reason'] = $this->shortOmnifulError($result);
                     if (count($failedSamples) < 10) {
-                        $failedSamples[] = ['hub' => $hubCode, 'status' => $result['status'] ?? 0, 'body' => substr((string) ($result['body'] ?? ''), 0, 200)];
+                        $failedSamples[] = ['hub' => $hubCode, 'status' => $result['status'] ?? 0, 'body' => substr((string) ($result['body'] ?? ''), 0, 700)];
                     }
-                    Log::warning('Inventory push batch failed', ['hub' => $hubCode, 'status' => $result['status'] ?? 0, 'count' => count($chunk)]);
+                    Log::warning('Inventory push batch failed', ['hub' => $hubCode, 'status' => $result['status'] ?? 0, 'count' => count($chunk), 'body' => substr((string) ($result['body'] ?? ''), 0, 500)]);
                 } else {
                     $failedSet = $this->failedSkuSet($result['failed_skus'] ?? []);
                     foreach ($chunk as $s) {
                         if (isset($failedSet[$s['sku_code']])) {
                             $failed++;
+                            $hubResults[(string) $hubCode]['failed']++;
                             if (count($failedSamples) < 10) {
                                 $failedSamples[] = ['hub' => $hubCode, 'sku' => $s['sku_code']];
                             }
@@ -196,7 +215,13 @@ class SapInventoryQtyPushService
                         }
                         $this->upsertSnapshot($s['warehouse_code'], $s['item_code'], (string) $hubCode, $s['quantity']);
                         $pushed++;
+                        $hubResults[(string) $hubCode]['pushed']++;
                     }
+                }
+
+                // Proactive pace between batches to stay under the rate limit.
+                if ($throttleMs > 0) {
+                    usleep($throttleMs * 1000);
                 }
 
                 $this->progress($event, ['pushed' => $pushed, 'failed' => $failed]);
@@ -212,7 +237,28 @@ class SapInventoryQtyPushService
             'mode' => $mode,
             'seller_code' => $sellerCode,
             'failed_samples' => $failedSamples,
+            'hub_results' => $hubResults,
         ];
+    }
+
+    /**
+     * Short human-readable reason from an Omniful push response, e.g.
+     * "[400] Invalid hub code." or "[429] Too many requests…".
+     *
+     * @param array<string,mixed> $result
+     */
+    private function shortOmnifulError(array $result): string
+    {
+        $status = (int) ($result['status'] ?? 0);
+        $body = (string) ($result['body'] ?? '');
+        $msg = '';
+        if (preg_match('/"message"\s*:\s*"([^"]+)"/', $body, $m)) {
+            $msg = $m[1];
+        } elseif (preg_match('/"code"\s*:\s*"([^"]+)"/', $body, $m)) {
+            $msg = $m[1];
+        }
+
+        return trim(($status ? '[' . $status . '] ' : '') . ($msg !== '' ? $msg : 'failed'));
     }
 
     /**

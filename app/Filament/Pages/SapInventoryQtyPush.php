@@ -118,6 +118,9 @@ class SapInventoryQtyPush extends Page
             'mode' => $service->defaultMode(),
             'cadence_minutes' => $service->cadenceMinutes(),
             'quantity_source' => (string) config('omniful.inventory_push.quantity_source', 'available'),
+            'seller_code' => (string) (\App\Models\IntegrationSetting::active()?->omniful_seller_code ?? config('omniful.inventory_push.seller_code', '')),
+            'endpoint' => (string) config('omniful.inventory_push.endpoint_template', ''),
+            'throttle_ms' => (int) config('omniful.inventory_push.throttle_ms', 300),
         ];
 
         $event = SapSyncEvent::query()
@@ -136,6 +139,8 @@ class SapInventoryQtyPush extends Page
                 'requested_at' => null,
                 'updated_at' => null,
                 'progress' => [],
+                'hub_results' => [],
+                'failed_samples' => [],
                 'summary_lines' => [],
                 'error' => null,
                 'config' => $config,
@@ -149,6 +154,19 @@ class SapInventoryQtyPush extends Page
             $summaryLines[] = ucwords(str_replace('_', ' ', (string) $key)) . ': ' . $value;
         }
 
+        $details = (array) ($payload['details'] ?? []);
+        $hubRows = [];
+        foreach ((array) ($details['hub_results'] ?? []) as $hub => $r) {
+            $hubRows[] = [
+                'hub' => (string) $hub,
+                'pushed' => (int) ($r['pushed'] ?? 0),
+                'failed' => (int) ($r['failed'] ?? 0),
+                'reason' => (string) ($r['reason'] ?? ''),
+            ];
+        }
+        // Worst (most-failed) hubs first so problems surface at the top.
+        usort($hubRows, fn ($a, $b) => [$b['failed'], $b['pushed']] <=> [$a['failed'], $a['pushed']]);
+
         $status = (string) ($event->sap_status ?? 'unknown');
 
         return [
@@ -161,6 +179,8 @@ class SapInventoryQtyPush extends Page
             'requested_at' => $event->created_at?->toDateTimeString(),
             'updated_at' => $event->updated_at?->toDateTimeString(),
             'progress' => (array) ($payload['progress'] ?? []),
+            'hub_results' => $hubRows,
+            'failed_samples' => array_values((array) ($details['failed_samples'] ?? [])),
             'summary_lines' => $summaryLines,
             'error' => $event->sap_error,
             'config' => $config,

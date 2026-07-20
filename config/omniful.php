@@ -65,6 +65,11 @@ return [
         // The Items-entity route is unusable here (SAP rejects $expand on the
         // warehouse collection; a plain fetch is ~3GB). See HandlesSapInventoryQuantities.
         'sql_query_code' => env('OMNIFUL_INVENTORY_PUSH_SQL_QUERY', 'OMNIFUL_QtyPush'),
+        // Rate-limit control for the per-hub push to Omniful (429 "Too many
+        // requests"): pace between batches + exponential backoff-retry on 429.
+        'throttle_ms' => (int) env('OMNIFUL_INVENTORY_PUSH_THROTTLE_MS', 300),
+        'rate_limit_max_retries' => (int) env('OMNIFUL_INVENTORY_PUSH_RL_RETRIES', 5),
+        'rate_limit_backoff_cap_s' => (int) env('OMNIFUL_INVENTORY_PUSH_RL_CAP_S', 30),
     ],
     // Backfill: pull orders from Omniful by created-date range and enqueue any
     // that are MISSING from our DB (dedup by external_id = Omniful order_id).
