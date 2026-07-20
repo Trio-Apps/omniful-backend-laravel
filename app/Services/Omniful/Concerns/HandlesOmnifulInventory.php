@@ -51,6 +51,10 @@ trait HandlesOmnifulInventory
         ]);
         $url = $this->baseUrl . '/' . ltrim($path, '/');
 
+        // Shared global pacing: inventory push + order backfill share the seller
+        // token / Omniful rate-limit bucket, so they can't 429 each other.
+        \App\Support\OmnifulRateLimiter::throttle();
+
         $response = $this->request('post', $url, ['sku_detail' => array_values($skuDetail)]);
 
         // failed_skus = null on full success; otherwise the SKUs Omniful rejected.

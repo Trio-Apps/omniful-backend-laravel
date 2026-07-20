@@ -71,6 +71,13 @@ return [
         'rate_limit_max_retries' => (int) env('OMNIFUL_INVENTORY_PUSH_RL_RETRIES', 5),
         'rate_limit_backoff_cap_s' => (int) env('OMNIFUL_INVENTORY_PUSH_RL_CAP_S', 30),
     ],
+    // GLOBAL, cross-process pacing for ALL outbound Omniful calls (order backfill
+    // GETs + inventory push POSTs share the seller token = one Omniful rate-limit
+    // bucket). At most one Omniful call per min-interval across every worker, so
+    // running both at once can't sum past the limit and 429 each other. 0 = off.
+    'rate_limit' => [
+        'min_interval_ms' => (int) env('OMNIFUL_RATE_LIMIT_MIN_INTERVAL_MS', 600),
+    ],
     // Backfill: pull orders from Omniful by created-date range and enqueue any
     // that are MISSING from our DB (dedup by external_id = Omniful order_id).
     // Long-running & rate-limit-aware. The ORCHESTRATION runs on its own queue

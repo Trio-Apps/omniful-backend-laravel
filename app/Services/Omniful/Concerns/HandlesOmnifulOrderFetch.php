@@ -100,6 +100,10 @@ trait HandlesOmnifulOrderFetch
         $hits = 0;
 
         for ($attempt = 1; ; $attempt++) {
+            // Shared global pacing: order backfill + inventory push share the
+            // seller token / Omniful rate-limit bucket.
+            \App\Support\OmnifulRateLimiter::throttle();
+
             $res = $this->request('get', $url, []);
             $status = (int) ($res['status'] ?? 0);
 
