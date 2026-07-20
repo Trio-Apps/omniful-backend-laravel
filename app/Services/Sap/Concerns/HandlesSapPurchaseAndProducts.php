@@ -648,6 +648,29 @@ trait HandlesSapPurchaseAndProducts
         return null;
     }
 
+    /**
+     * True when an order-reference value (U_omo / NumAtCard) carries a
+     * reversal/cancellation marker, meaning the invoice it belongs to was
+     * reversed and its refs freed — so it must never be rebound as a live
+     * invoice, and a fresh one must be created instead.
+     *
+     * Covers every suffix style the flow (or the SAP team) has produced:
+     *   "<id>-reversed", "<id>-0reversed", "<id>-1reversed" (indexed variants),
+     *   "<id>-reversed-3" (collision), "<id>-Reverse", "<id>-Cancel".
+     * Omniful order ids / NumAtCard are numeric, so the words "reverse"/"cancel"
+     * never appear on a live invoice — matching them WITHOUT requiring an
+     * immediately-preceding dash is safe and is what catches the "-0reversed"
+     * variant that the old "-reverse" check missed (a digit sits between the
+     * dash and "reverse", so "-reverse" never matched — that blind spot left 62
+     * reversed invoices rebindable, blocking their rebuild).
+     */
+    private function sapOrderRefIndicatesReversed(string $value): bool
+    {
+        $value = strtolower($value);
+
+        return str_contains($value, 'reverse') || str_contains($value, 'cancel');
+    }
+
     private function normalizeFoundArInvoice(array $invoice): ?array
     {
         // Never reuse a CANCELLED invoice OR a CANCELLATION (reversing) document —
@@ -665,16 +688,13 @@ trait HandlesSapPurchaseAndProducts
             $orderUdf = 'U_omo';
         }
         // Also skip invoices that were reversed/cancelled by renaming the order
-        // reference with a suffix — our flow uses "-reversed", the SAP team uses
-        // "-Cancel". A Comments/payload lookup can still surface them, so never
-        // rebind one (match either suffix on U_omo or NumAtCard, case-insensitive).
-        // Match every reversal-suffix style: our flow uses "-reversed", the SAP
-        // team uses "-Reverse" (capital R, sometimes a leading space) or "-Cancel".
-        // "-reverse" matches both "-reverse" and "-reversed".
+        // reference with a suffix — a Comments/payload lookup can still surface
+        // them, so never rebind one (match on U_omo or NumAtCard). See
+        // sapOrderRefIndicatesReversed() for the suffix styles covered.
         $omoLower = strtolower((string) ($invoice[$orderUdf] ?? ''));
         $numLower = strtolower((string) ($invoice['NumAtCard'] ?? ''));
-        $isReversed = str_contains($omoLower, '-reverse') || str_contains($omoLower, '-cancel')
-            || str_contains($numLower, '-reverse') || str_contains($numLower, '-cancel');
+        $isReversed = $this->sapOrderRefIndicatesReversed($omoLower)
+            || $this->sapOrderRefIndicatesReversed($numLower);
         if ((string) ($invoice['Cancelled'] ?? 'tNO') === 'tYES'
             || $cancelStatus === 'csYes'
             || $cancelStatus === 'csCancellation'
@@ -5259,8 +5279,8 @@ trait HandlesSapPurchaseAndProducts
 
         $omoVal = (string) ($invoice[$orderUdf] ?? '');
         $numAtCard = (string) ($invoice['NumAtCard'] ?? '');
-        $omoFreed = str_contains(strtolower($omoVal), '-reverse') || str_contains(strtolower($omoVal), '-cancel');
-        $numFreed = str_contains(strtolower($numAtCard), '-reverse') || str_contains(strtolower($numAtCard), '-cancel');
+        $omoFreed = $this->sapOrderRefIndicatesReversed($omoVal);
+        $numFreed = $this->sapOrderRefIndicatesReversed($numAtCard);
 
         // Already freed (both order references already carry a reversal suffix) —
         // nothing left to free. ("-reversed" = our flow, "-Cancel" = SAP team.)
