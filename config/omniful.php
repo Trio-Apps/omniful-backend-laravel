@@ -60,6 +60,35 @@ return [
         // then IntegrationSetting.omniful_seller_code so it stays in lock-step.
         'seller_code' => env('OMNIFUL_INVENTORY_PUSH_SELLER_CODE', ''),
     ],
+    // Backfill: pull orders from Omniful by created-date range and enqueue any
+    // that are MISSING from our DB (dedup by external_id = Omniful order_id).
+    // Long-running & rate-limit-aware. The ORCHESTRATION runs on its own queue
+    // (order_backfill.queue) so it never competes with live webhook processing;
+    // the missing orders it finds are enqueued onto the normal order queue and
+    // flow through the identical ProcessOmnifulOrderEvent pipeline.
+    'order_backfill' => [
+        // V2 list endpoint (cursor pagination, supports created_from/created_to).
+        'list_endpoint' => env('OMNIFUL_BACKFILL_LIST_ENDPOINT', '/sales-channel/public/v2/seller/orders'),
+        // Per-order DETAIL endpoint that returns order_items (V1 — deprecates
+        // 2026-07-30; swap here when a V2 detail exists). {id} = Omniful hash id.
+        'detail_endpoint' => env('OMNIFUL_BACKFILL_DETAIL_ENDPOINT', '/sales-channel/public/v1/seller/orders/{id}'),
+        'per_page' => (int) env('OMNIFUL_BACKFILL_PER_PAGE', 100),
+        // Queue the orchestration job runs on (separate from live order processing).
+        'queue' => env('OMNIFUL_BACKFILL_QUEUE', 'omniful-backfill'),
+        // Queue discovered missing orders are dispatched to (the live order queue).
+        'target_queue' => env('OMNIFUL_BACKFILL_TARGET_QUEUE', 'omniful-orders'),
+        // Proactive throttle between EVERY Omniful API call (ms). The API exposes
+        // no rate-limit headers, so we self-pace to stay well under the limit.
+        'throttle_ms' => (int) env('OMNIFUL_BACKFILL_THROTTLE_MS', 400),
+        // On HTTP 429: exponential backoff (2^attempt s, capped) up to N retries.
+        'rate_limit_max_retries' => (int) env('OMNIFUL_BACKFILL_RATE_LIMIT_RETRIES', 8),
+        'rate_limit_backoff_cap_s' => (int) env('OMNIFUL_BACKFILL_BACKOFF_CAP_S', 120),
+        // List pages processed per orchestration job before it re-dispatches a
+        // continuation (keeps each job short for a month-long run + safe restart).
+        'pages_per_batch' => (int) env('OMNIFUL_BACKFILL_PAGES_PER_BATCH', 5),
+        // Dispatch enqueued orders with force=true (skip the no-op gate).
+        'force' => (bool) env('OMNIFUL_BACKFILL_FORCE', false),
+    ],
     // SAP -> Omniful item/bundle integration driven by item-master UDF flags.
     // We read OITM items whose integrated flag = "not integrated" and:
     //   * sales-only items (SalesItem=tYES, InventoryItem=tNO) are bundles:
