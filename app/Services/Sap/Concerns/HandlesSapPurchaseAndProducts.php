@@ -2924,7 +2924,12 @@ trait HandlesSapPurchaseAndProducts
         }
 
         $referenceDate = $this->formatDate((string) (($creditMemo['DocDate'] ?? null) ?: now()->format('Y-m-d')));
-        $reference = trim((string) ($data['reference'] ?? ($creditMemo['NumAtCard'] ?? '')));
+        // The forward COGS journal already carries the order ref on Reference /
+        // Reference3 (and "COGS-<order>" on Reference2); reusing it on the
+        // reversal trips SAP's custom "(1000) JE already integrated" guard (root
+        // cause of the -1116 "Cancel COGS Reversal" failures). Give the reversal
+        // its own distinct, locatable "COGSREV-<order>" tag instead.
+        $reversalTag = $orderReference !== '' ? 'COGSREV-' . $orderReference : '';
         $memo = trim((string) ($data['memo'] ?? ('COGS reversal for Credit Memo ' . ($creditMemo['DocNum'] ?? $creditMemoDocEntry))));
 
         $journalLines = $this->applyDefaultCostCentersToJournalLines([
@@ -2946,10 +2951,10 @@ trait HandlesSapPurchaseAndProducts
             'JournalEntryLines' => $journalLines,
         ];
 
-        if ($reference !== '') {
-            $body['Reference'] = $reference;
-            $body['Reference2'] = (string) ($creditMemo['DocNum'] ?? $reference);
-            $body['Reference3'] = $reference;
+        if ($reversalTag !== '') {
+            $body['Reference'] = $reversalTag;
+            $body['Reference2'] = $reversalTag;
+            $body['Reference3'] = (string) ($creditMemo['DocNum'] ?? $reversalTag);
         }
 
         $response = $this->post('/JournalEntries', $body);
@@ -3009,12 +3014,16 @@ trait HandlesSapPurchaseAndProducts
         }
 
         $clauses = [];
-        if ($creditMemoDocNum > 0) {
-            $clauses[] = "Reference2 eq '" . str_replace("'", "''", (string) $creditMemoDocNum) . "'";
-        }
         if ($orderReference !== '') {
-            $escRef = str_replace("'", "''", $orderReference);
-            $clauses[] = "(Reference eq '{$escRef}' and contains(Memo,'reversal'))";
+            // The reversal carries a unique "COGSREV-<order>" tag on Reference /
+            // Reference2 — the clean, collision-free bind key.
+            $tag = str_replace("'", "''", 'COGSREV-' . $orderReference);
+            $clauses[] = "Reference2 eq '{$tag}'";
+            $clauses[] = "Reference eq '{$tag}'";
+        }
+        if ($creditMemoDocNum > 0) {
+            // Legacy fallback: pre-COGSREV reversals bound by credit-memo DocNum.
+            $clauses[] = "Reference2 eq '" . str_replace("'", "''", (string) $creditMemoDocNum) . "'";
         }
         if ($clauses === []) {
             return null;
@@ -3039,7 +3048,7 @@ trait HandlesSapPurchaseAndProducts
             // the Memo.
             $jeReference = trim((string) ($je['Reference'] ?? ''));
             $jeMemo = (string) ($je['Memo'] ?? '');
-            $belongsToOrder = ($orderReference !== '' && $jeReference === $orderReference)
+            $belongsToOrder = ($orderReference !== '' && ($jeReference === $orderReference || $jeReference === 'COGSREV-' . $orderReference))
                 || ($orderReference !== '' && str_contains($jeMemo, $orderReference))
                 || ($creditMemoDocNum > 0 && str_contains($jeMemo, (string) $creditMemoDocNum));
             if (!$belongsToOrder) {
