@@ -50,15 +50,21 @@ return [
         // Which SAP figure to push: 'available' (InStock - Committed) or 'in_stock'.
         'quantity_source' => env('OMNIFUL_INVENTORY_PUSH_QTY_SOURCE', 'available'),
         'clamp_negative_to_zero' => (bool) env('OMNIFUL_INVENTORY_PUSH_CLAMP_NEGATIVE', true),
-        // PUT {base}/sales-channel/public/v1/tenants/hubs/{hub_code}/sellers/{seller_code}/inventory
+        // POST {base}/sales-channel/public/v1/inventory/hubs/{hub_code} (SELLER token).
+        // Requires "inventory sync" enabled for the seller in Omniful.
         'endpoint_template' => env(
             'OMNIFUL_INVENTORY_PUSH_ENDPOINT',
-            '/sales-channel/public/v1/tenants/hubs/{hub_code}/sellers/{seller_code}/inventory'
+            '/sales-channel/public/v1/inventory/hubs/{hub_code}'
         ),
         // Seller the SKUs live under — MUST match the seller items are pushed to.
         // Left empty here; the service falls back to sap_item_defaults.seller_code
         // then IntegrationSetting.omniful_seller_code so it stays in lock-step.
         'seller_code' => env('OMNIFUL_INVENTORY_PUSH_SELLER_CODE', ''),
+        // SAP HANA SQLQuery (SqlCode) that returns integrated-item stock per
+        // warehouse (ItemCode/WhsCode/OnHand/IsCommited) — created once in SAP.
+        // The Items-entity route is unusable here (SAP rejects $expand on the
+        // warehouse collection; a plain fetch is ~3GB). See HandlesSapInventoryQuantities.
+        'sql_query_code' => env('OMNIFUL_INVENTORY_PUSH_SQL_QUERY', 'OMNIFUL_QtyPush'),
     ],
     // Backfill: pull orders from Omniful by created-date range and enqueue any
     // that are MISSING from our DB (dedup by external_id = Omniful order_id).

@@ -4,54 +4,33 @@ namespace App\Services\Sap\Concerns;
 
 /**
  * Reads on-hand stock quantities from SAP for the SAP -> Omniful Inventory
- * Quantity Push. Pulls every item already integrated in Omniful (the flag SAP
- * sets after the SKU is created — config omniful.item_integration
- * .integrated_udf_field = integrated_value, e.g. U_omInt = 'Y') together with
- * its per-warehouse figures, and reports InStock, Committed and Available
- * (= InStock - Committed) per item x warehouse. SAP-only items (no Omniful SKU)
- * are excluded, so the push never fails on "SKU not found".
+ * Quantity Push. Reports InStock (OnHand), Committed and Available
+ * (= InStock - Committed) per item x warehouse, for items already integrated in
+ * Omniful (a SKU exists there) and only warehouses that actually carry stock.
  *
- * READ-ONLY. This never mutates SAP and is entirely independent of the
- * warehouse master-data sync — it only needs the HTTP + pagination helpers.
+ * Stock is read through a SAP HANA **SQLQuery** on OITW (item-warehouse) joined
+ * to OITM, NOT through the Items entity: this SAP Service Layer rejects $expand
+ * and nested/path $select on ItemWarehouseInfoCollection, and a plain item fetch
+ * returns the full collection for ~4.5k items x ~250 warehouses (~3GB, times
+ * out). The SQLQuery returns just ItemCode/WhsCode/OnHand/IsCommited, filtered to
+ * integrated items with non-zero stock — a few MB, paginated. Create it once:
+ *
+ *   POST /SQLQueries {"SqlCode":"OMNIFUL_QtyPush","SqlName":"...","SqlText":
+ *     "SELECT T0.\"ItemCode\", T0.\"WhsCode\", T0.\"OnHand\", T0.\"IsCommited\"
+ *      FROM \"OITW\" T0 INNER JOIN \"OITM\" T1 ON T1.\"ItemCode\" = T0.\"ItemCode\"
+ *      WHERE T1.\"U_omInt\" = 'Y' AND (T0.\"OnHand\" <> 0 OR T0.\"IsCommited\" <> 0)"}
+ *
+ * READ-ONLY. Never mutates SAP.
  */
 trait HandlesSapInventoryQuantities
 {
     /**
      * @param array<int,string>|null $warehouseCodes Restrict to these SAP
-     *        warehouse codes (null = every warehouse the items carry).
+     *        warehouse codes (null = every warehouse the query returns).
      * @return array<int,array{item_code:string,warehouse_code:string,in_stock:float,committed:float,available:float}>
      */
     public function fetchSyncedItemQuantities(?array $warehouseCodes = null): array
     {
-        // Only items ACTUALLY integrated in Omniful (a SKU exists there), using
-        // the flag SAP sets after the SKU is created (U_omInt = 'Y'). This
-        // deliberately excludes SAP-only items that have no Omniful SKU, so the
-        // push never generates "SKU not found" failures for them. Field/value are
-        // sanitised because they are interpolated into the OData path.
-        $field = (string) config('omniful.item_integration.integrated_udf_field', 'U_omInt');
-        $field = preg_replace('/[^A-Za-z0-9_]/', '', $field) ?: 'U_omInt';
-        $value = str_replace("'", "''", (string) config('omniful.item_integration.integrated_value', 'Y'));
-
-        $filter = "{$field} eq '{$value}'";
-
-        // This SAP Service Layer rejects $expand on ItemWarehouseInfoCollection
-        // (HTTP 400 code 201 "Cannot expand invalid navigation property") even
-        // though the collection IS accessible — the plain item list already
-        // returns it INLINE. So read it WITHOUT $expand/$select first; the
-        // (lighter) nested-select expand shapes stay as fallbacks for SAP
-        // companies that do support them. fetchAllWithFallback swallows a
-        // 404/invalid-property and moves to the next shape.
-        $rows = $this->fetchAllWithFallback([
-            // $select=ItemCode,ItemWarehouseInfoCollection returns the warehouse
-            // collection inline while EXCLUDING the item's other heavy child
-            // collections (prices, vendors, …) — a plain "/Items?$filter" pulls
-            // them all and times out. The nested-select expand shapes stay as
-            // fallbacks for SAP companies that support $expand on the collection.
-            "/Items?\$select=ItemCode,ItemWarehouseInfoCollection&\$filter={$filter}",
-            "/Items?\$select=ItemCode,{$field}&\$expand=ItemWarehouseInfoCollection(\$select=WarehouseCode,InStock,Committed)&\$filter={$filter}",
-            "/Items?\$expand=ItemWarehouseInfoCollection&\$filter={$filter}",
-        ]);
-
         $allowed = null;
         if (is_array($warehouseCodes)) {
             $allowed = [];
@@ -63,39 +42,36 @@ trait HandlesSapInventoryQuantities
             }
         }
 
+        // SqlCode is sanitised because it is interpolated into the OData path.
+        $sqlCode = (string) config('omniful.inventory_push.sql_query_code', 'OMNIFUL_QtyPush');
+        $sqlCode = preg_replace('/[^A-Za-z0-9_]/', '', $sqlCode) ?: 'OMNIFUL_QtyPush';
+
+        $rows = $this->fetchAll("/SQLQueries('{$sqlCode}')/List");
+
         $out = [];
-        foreach ($rows as $item) {
-            if (!is_array($item)) {
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
                 continue;
             }
-            $itemCode = trim((string) ($item['ItemCode'] ?? ''));
-            if ($itemCode === '') {
+            $itemCode = trim((string) ($row['ItemCode'] ?? ''));
+            $warehouseCode = trim((string) ($row['WhsCode'] ?? ''));
+            if ($itemCode === '' || $warehouseCode === '') {
+                continue;
+            }
+            if ($allowed !== null && !isset($allowed[$warehouseCode])) {
                 continue;
             }
 
-            foreach ((array) ($item['ItemWarehouseInfoCollection'] ?? []) as $whs) {
-                if (!is_array($whs)) {
-                    continue;
-                }
-                $warehouseCode = trim((string) ($whs['WarehouseCode'] ?? ''));
-                if ($warehouseCode === '') {
-                    continue;
-                }
-                if ($allowed !== null && !isset($allowed[$warehouseCode])) {
-                    continue;
-                }
+            $inStock = (float) ($row['OnHand'] ?? 0);
+            $committed = (float) ($row['IsCommited'] ?? 0);
 
-                $inStock = (float) ($whs['InStock'] ?? 0);
-                $committed = (float) ($whs['Committed'] ?? 0);
-
-                $out[] = [
-                    'item_code' => $itemCode,
-                    'warehouse_code' => $warehouseCode,
-                    'in_stock' => $inStock,
-                    'committed' => $committed,
-                    'available' => $inStock - $committed,
-                ];
-            }
+            $out[] = [
+                'item_code' => $itemCode,
+                'warehouse_code' => $warehouseCode,
+                'in_stock' => $inStock,
+                'committed' => $committed,
+                'available' => $inStock - $committed,
+            ];
         }
 
         return $out;

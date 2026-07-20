@@ -3,15 +3,16 @@
 namespace App\Services\Omniful\Concerns;
 
 /**
- * Pushes stock quantities to Omniful's "Push Hub Inventory" endpoint for the
+ * Pushes stock quantities to Omniful's "Post Hub Inventory" endpoint for the
  * SAP -> Omniful Inventory Quantity Push. Hubs are already synced — this only
  * updates the available quantities of a seller's SKUs in a hub.
  *
- *   PUT {base}/sales-channel/public/v1/tenants/hubs/{hub_code}/sellers/{seller_code}/inventory
+ *   POST {base}/sales-channel/public/v1/inventory/hubs/{hub_code}   (SELLER token)
  *   body: { "sku_detail": [ { "sku_code": "...", "quantity": <int> }, ... ] }
  *
- * Tenant-scoped (same token as the hub sync). Relies on request() / baseUrl /
- * selectAuthContext() provided by the other OmnifulApiClient concerns.
+ * Seller-scoped: identified by the SELLER token (the tenant token gets 401, and
+ * the old /tenants/hubs/{hub}/sellers/{seller}/inventory PUT returns "Invalid hub
+ * code"). Requires "inventory sync" enabled for the seller in Omniful.
  */
 trait HandlesOmnifulInventory
 {
@@ -35,12 +36,14 @@ trait HandlesOmnifulInventory
             return ['ok' => true, 'status' => 0, 'body' => 'no skus to push', 'failed_skus' => []];
         }
 
-        // Tenant-scoped endpoint (path under /tenants/…), like the hub sync.
-        $this->selectAuthContext('hub_inventory');
+        // Seller-scoped endpoint — the SELLER token identifies the seller (the
+        // tenant token gets 401 here). {seller_code} is kept substitutable for
+        // any tenant-scoped variant, but the default path carries no seller.
+        $this->activeAuth = $this->sellerAuth;
 
         $template = (string) config(
             'omniful.inventory_push.endpoint_template',
-            '/sales-channel/public/v1/tenants/hubs/{hub_code}/sellers/{seller_code}/inventory'
+            '/sales-channel/public/v1/inventory/hubs/{hub_code}'
         );
         $path = strtr($template, [
             '{hub_code}' => rawurlencode($hubCode),
@@ -48,7 +51,7 @@ trait HandlesOmnifulInventory
         ]);
         $url = $this->baseUrl . '/' . ltrim($path, '/');
 
-        $response = $this->request('put', $url, ['sku_detail' => array_values($skuDetail)]);
+        $response = $this->request('post', $url, ['sku_detail' => array_values($skuDetail)]);
 
         // failed_skus = null on full success; otherwise the SKUs Omniful rejected.
         $failedSkus = data_get($response['json'] ?? [], 'data.failed_skus');
