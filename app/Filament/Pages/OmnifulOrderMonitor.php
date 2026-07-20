@@ -101,10 +101,16 @@ class OmnifulOrderMonitor extends Page implements HasTable
             TextColumn::make('external_id')
                 ->label('Order ID')
                 ->searchable(query: function (Builder $query, string $search): Builder {
-                    $like = '%' . $search . '%';
-
-                    return $query->where(function (Builder $query) use ($like) {
-                        $query->where('external_id', 'like', $like)
+                    $search = trim($search);
+                    // Order ids / SAP doc numbers are the search targets. NEVER
+                    // search last_payload — LIKE over the ~4KB JSON blob on every
+                    // row is a full ~376MB scan per keystroke (search was ~10x
+                    // slower). A leading-anchored LIKE on external_id also lets
+                    // the unique index help for the common "starts-with" case.
+                    return $query->where(function (Builder $query) use ($search) {
+                        $like = '%' . $search . '%';
+                        $query->where('external_id', 'like', $search . '%')
+                            ->orWhere('external_id', 'like', $like)
                             ->orWhere('sap_doc_num', 'like', $like)
                             ->orWhere('sap_doc_entry', 'like', $like)
                             ->orWhere('sap_payment_doc_num', 'like', $like)
@@ -115,8 +121,7 @@ class OmnifulOrderMonitor extends Page implements HasTable
                             ->orWhere('sap_credit_note_doc_entry', 'like', $like)
                             ->orWhere('sap_card_fee_journal_num', 'like', $like)
                             ->orWhere('sap_cogs_journal_num', 'like', $like)
-                            ->orWhere('sap_cancel_cogs_journal_num', 'like', $like)
-                            ->orWhere('last_payload', 'like', $like);
+                            ->orWhere('sap_cancel_cogs_journal_num', 'like', $like);
                     });
                 }),
             TextColumn::make('omniful_status')
