@@ -37,8 +37,13 @@ trait HandlesOmnifulOrderFetch
             $query['search_after'] = $searchAfter;
         }
 
-        $url = $this->baseUrl . $endpoint . '?' . http_build_query($query);
-        $res = $this->getSellerOrdersJson($url);
+        // Query params MUST be passed as the request array, NOT embedded in the
+        // URL string: the shared request() calls Http::get($url, $payload), and
+        // Guzzle's `query` option (even an empty []) OVERWRITES any query string
+        // already in the URL — so a URL-embedded ?created_from=… was silently
+        // wiped and every list came back unfiltered (newest-first).
+        $url = $this->baseUrl . $endpoint;
+        $res = $this->getSellerOrdersJson($url, $query);
         $json = is_array($res['json'] ?? null) ? $res['json'] : [];
 
         return [
@@ -47,6 +52,49 @@ trait HandlesOmnifulOrderFetch
             'rows' => array_values(array_filter((array) data_get($json, 'data', []), 'is_array')),
             'end_cursor' => (string) (data_get($json, 'meta.end_cursor') ?? ''),
             'has_next' => (bool) data_get($json, 'meta.has_next_page', false),
+            'rl_hits' => (int) ($res['rl_hits'] ?? 0),
+            'body' => (string) ($res['body'] ?? ''),
+        ];
+    }
+
+    /**
+     * Look up a single seller order by its NUMERIC Omniful order_id (the business
+     * order number, e.g. "71009580" — not the hash). The list endpoint's
+     * `order_id` filter returns exactly that order but WITHOUT order_items, so the
+     * caller still fetches full detail by the returned hash (data.id) for line
+     * items. Returns the summary row (which carries `id` = hash) or null.
+     *
+     * @return array{ok:bool,status:int,order:?array<string,mixed>,rl_hits:int,body:string}
+     */
+    public function fetchSellerOrderByNumericId(string $orderId): array
+    {
+        $orderId = trim($orderId);
+        if ($orderId === '') {
+            return ['ok' => false, 'status' => 0, 'order' => null, 'rl_hits' => 0, 'body' => ''];
+        }
+
+        $endpoint = (string) config('omniful.order_backfill.list_endpoint', '/sales-channel/public/v2/seller/orders');
+        $res = $this->getSellerOrdersJson($this->baseUrl . $endpoint, [
+            'order_id' => $orderId,
+            'per_page' => 5,
+        ]);
+
+        $rows = array_values(array_filter((array) data_get($res['json'] ?? [], 'data', []), 'is_array'));
+        // Guard: only accept a row whose order_id actually equals what we asked
+        // for. If the filter is ever ignored (returns the newest-first list), this
+        // prevents binding the wrong order.
+        $order = null;
+        foreach ($rows as $row) {
+            if ((string) (data_get($row, 'order_id') ?? '') === $orderId) {
+                $order = $row;
+                break;
+            }
+        }
+
+        return [
+            'ok' => ((bool) ($res['ok'] ?? false)) && is_array($order),
+            'status' => (int) ($res['status'] ?? 0),
+            'order' => is_array($order) ? $order : null,
             'rl_hits' => (int) ($res['rl_hits'] ?? 0),
             'body' => (string) ($res['body'] ?? ''),
         ];
@@ -89,7 +137,7 @@ trait HandlesOmnifulOrderFetch
      *
      * @return array<string,mixed>
      */
-    private function getSellerOrdersJson(string $url): array
+    private function getSellerOrdersJson(string $url, array $query = []): array
     {
         // Force the seller token — orders are seller-scoped (tenant → 401).
         $this->activeAuth = $this->sellerAuth;
@@ -104,7 +152,10 @@ trait HandlesOmnifulOrderFetch
             // seller token / Omniful rate-limit bucket.
             \App\Support\OmnifulRateLimiter::throttle();
 
-            $res = $this->request('get', $url, []);
+            // Pass the filters as the request array (query), never in $url — see
+            // the note in fetchSellerOrdersPage(): an empty array here would let
+            // Guzzle wipe a URL-embedded query string.
+            $res = $this->request('get', $url, $query);
             $status = (int) ($res['status'] ?? 0);
 
             if ($status !== 429) {
