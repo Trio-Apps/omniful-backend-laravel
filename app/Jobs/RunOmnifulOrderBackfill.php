@@ -43,7 +43,11 @@ class RunOmnifulOrderBackfill implements ShouldQueue
             return;
         }
 
-        $service->runBatch($run);
+        if ((string) $run->source_type === 'id_list') {
+            $service->runIdBatch($run);
+        } else {
+            $service->runBatch($run);
+        }
 
         $run->refresh();
         if (in_array($run->status, ['running', 'queued'], true)) {

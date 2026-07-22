@@ -8,9 +8,12 @@ use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Livewire\WithFileUploads;
 
 class OrderBackfill extends Page
 {
+    use WithFileUploads;
+
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-cloud-arrow-down';
 
     protected static ?string $navigationLabel = 'Order Backfill';
@@ -24,6 +27,9 @@ class OrderBackfill extends Page
     public ?string $dateFrom = null;
 
     public ?string $dateTo = null;
+
+    /** Uploaded order-id list (xlsx / csv / txt) for an id_list backfill. */
+    public $idFile = null;
 
     public function mount(): void
     {
@@ -74,6 +80,95 @@ class OrderBackfill extends Page
             ->send();
     }
 
+    public function startIdList(): void
+    {
+        if (!$this->idFile) {
+            Notification::make()->title('Upload an order-id file first')->warning()->send();
+
+            return;
+        }
+
+        if (OmnifulOrderBackfillRun::whereIn('status', ['queued', 'running', 'cancel_requested'])->exists()) {
+            Notification::make()
+                ->title('A backfill is already running')
+                ->body('Wait for it to finish or cancel it first.')
+                ->warning()
+                ->send();
+
+            return;
+        }
+
+        try {
+            $ids = $this->extractOrderIds(
+                $this->idFile->getRealPath(),
+                (string) $this->idFile->getClientOriginalName()
+            );
+        } catch (\Throwable $e) {
+            Notification::make()->title('Could not read the file')->body($e->getMessage())->danger()->send();
+
+            return;
+        }
+
+        if ($ids === []) {
+            Notification::make()
+                ->title('No order ids found')
+                ->body('Expected numeric order ids (6+ digits) in the file.')
+                ->warning()
+                ->send();
+
+            return;
+        }
+
+        $run = app(OmnifulOrderBackfillService::class)
+            ->startIdListRun($ids, (string) $this->idFile->getClientOriginalName());
+        $this->idFile = null;
+
+        Notification::make()
+            ->title('ID backfill started')
+            ->body(number_format(count($ids)) . ' distinct order ids queued for pull (already-present + no-op are skipped).')
+            ->success()
+            ->send();
+    }
+
+    /**
+     * Extract distinct numeric order ids (6+ digits) from an uploaded xlsx / csv /
+     * txt file. For xlsx it streams every cell of every sheet (handles the 5-column
+     * "pending orders" export without hard-coding columns); csv/txt is regex-scanned.
+     *
+     * @return array<int,string>
+     */
+    private function extractOrderIds(string $path, string $name): array
+    {
+        @set_time_limit(300);
+        $ids = [];
+        $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+
+        if (in_array($ext, ['xlsx', 'xlsm'], true)) {
+            $reader = new \OpenSpout\Reader\XLSX\Reader();
+            $reader->open($path);
+            foreach ($reader->getSheetIterator() as $sheet) {
+                foreach ($sheet->getRowIterator() as $row) {
+                    foreach ($row->getCells() as $cell) {
+                        $v = trim((string) $cell->getValue());
+                        if (strlen($v) >= 6 && ctype_digit($v)) {
+                            $ids[$v] = true;
+                        }
+                    }
+                }
+            }
+            $reader->close();
+        } else {
+            $content = (string) file_get_contents($path);
+            if (preg_match_all('/\b\d{6,}\b/', $content, $m)) {
+                foreach ($m[0] as $v) {
+                    $ids[$v] = true;
+                }
+            }
+        }
+
+        return array_keys($ids);
+    }
+
     public function cancelRun(): void
     {
         $run = OmnifulOrderBackfillRun::whereIn('status', ['queued', 'running', 'cancel_requested'])
@@ -121,7 +216,11 @@ class OrderBackfill extends Page
             'status_label' => ucwords(str_replace('_', ' ', (string) $run->status)),
             'tone' => $this->tone((string) $run->status),
             'is_active' => $run->isActive(),
-            'range' => $run->date_from->format('Y-m-d') . ' → ' . $run->date_to->format('Y-m-d'),
+            'source_type' => (string) ($run->source_type ?? 'date_range'),
+            'source_label' => $run->source_label,
+            'range' => (string) ($run->source_type ?? 'date_range') === 'id_list'
+                ? (string) ($run->source_label ?? 'Order id list')
+                : $run->date_from->format('Y-m-d') . ' → ' . $run->date_to->format('Y-m-d'),
             'scanned' => (int) $run->scanned,
             'existing' => (int) $run->existing,
             'missing' => (int) $run->missing,

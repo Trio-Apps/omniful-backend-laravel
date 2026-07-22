@@ -66,6 +66,31 @@
         </div>
     </x-filament::section>
 
+    {{-- Start from an uploaded order-id list --}}
+    <x-filament::section>
+        <x-slot name="heading">Or backfill from an order-id list</x-slot>
+        <x-slot name="description">
+            Upload a file of Omniful order ids (xlsx / csv / txt — every numeric id in any column is read).
+            Each id is pulled from Omniful directly by its order id; ids we already have, and no-op
+            statuses (on_hold / picked / packed), are skipped. No date scan needed.
+        </x-slot>
+
+        <div style="display:flex; flex-wrap:wrap; align-items:flex-end; gap:1rem;">
+            <div style="display:flex; flex-direction:column; gap:.3rem;">
+                <label style="font-size:.72rem; font-weight:500; color:#6b7280;">Order-id file (.xlsx / .csv / .txt)</label>
+                <input type="file" wire:model="idFile" accept=".xlsx,.xlsm,.csv,.txt"
+                       style="font-size:.85rem; padding:.4rem; border:1px solid rgba(17,24,39,.15); border-radius:.5rem; background:#fff;" />
+                <span wire:loading wire:target="idFile" style="font-size:.72rem; color:#6b7280;">Uploading…</span>
+            </div>
+
+            <x-filament::button color="success" icon="heroicon-o-arrow-up-tray"
+                                wire:click="startIdList" wire:target="startIdList,idFile" wire:loading.attr="disabled">
+                Start ID Backfill
+            </x-filament::button>
+            <span wire:loading wire:target="startIdList" style="font-size:.8rem; color:#6b7280;">Reading file &amp; queueing…</span>
+        </div>
+    </x-filament::section>
+
     {{-- Live monitor --}}
     <div wire:poll.5s>
         <x-filament::section>

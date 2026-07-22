@@ -10,6 +10,7 @@ use App\Models\OmnifulOrderBackfillRun;
 use App\Models\OmnifulOrderEvent;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * Pulls orders from Omniful by created-date range and enqueues the ones that are
@@ -55,6 +56,167 @@ class OmnifulOrderBackfillService
             ->onQueue((string) config('omniful.order_backfill.queue', 'omniful-backfill'));
 
         return $run;
+    }
+
+    /**
+     * Start a backfill from an explicit LIST OF NUMERIC ORDER IDS (e.g. an
+     * uploaded "pending orders" export). Each id is pulled from Omniful directly
+     * by its order_id — no date paging — and enqueued if it is missing from our
+     * DB and its status is not a no-op. The id list is stored to disk so the run
+     * survives worker restarts and resumes from `cursor` (the processed offset).
+     *
+     * @param array<int,string> $ids
+     */
+    public function startIdListRun(array $ids, string $label): OmnifulOrderBackfillRun
+    {
+        $ids = array_values(array_unique(array_filter(
+            array_map(fn ($v) => trim((string) $v), $ids),
+            fn ($v) => $v !== ''
+        )));
+
+        $today = now()->format('Y-m-d');
+        $run = OmnifulOrderBackfillRun::create([
+            'source_type' => 'id_list',
+            'source_label' => trim($label) . ' — ' . count($ids) . ' ids',
+            'date_from' => $today,
+            'date_to' => $today,
+            'status' => 'queued',
+            'last_activity' => 'queued',
+            'cursor' => '0',
+        ]);
+
+        Storage::disk('local')->put($this->idListPath($run), implode("\n", $ids));
+
+        RunOmnifulOrderBackfill::dispatch($run->id)
+            ->onQueue((string) config('omniful.order_backfill.queue', 'omniful-backfill'));
+
+        return $run;
+    }
+
+    private function idListPath(OmnifulOrderBackfillRun $run): string
+    {
+        return 'backfill/run_' . $run->id . '_ids.txt';
+    }
+
+    /**
+     * Process one batch of an id_list run: for each numeric order id, skip if we
+     * already have it, else pull it from Omniful by order_id and enqueue it (the
+     * SAME ProcessOmnifulOrderEvent pipeline the webhook + date backfill use).
+     * Advances `cursor` by the number of ids handled; the job re-dispatches until
+     * the whole list is done (or a cancel is honored).
+     */
+    public function runIdBatch(OmnifulOrderBackfillRun $run): void
+    {
+        $run->refresh();
+        if ($run->status === 'cancel_requested') {
+            $this->finish($run, 'cancelled');
+
+            return;
+        }
+        if (!in_array($run->status, ['queued', 'running'], true)) {
+            return;
+        }
+        if ($run->status === 'queued' || $run->started_at === null) {
+            $run->update(['status' => 'running', 'started_at' => $run->started_at ?? now()]);
+        }
+
+        $path = $this->idListPath($run);
+        if (!Storage::disk('local')->exists($path)) {
+            $run->update(['last_error' => 'ID list file missing for run ' . $run->id]);
+            $this->finish($run, 'failed');
+
+            return;
+        }
+
+        $all = array_values(array_filter(
+            array_map('trim', explode("\n", (string) Storage::disk('local')->get($path))),
+            fn ($v) => $v !== ''
+        ));
+        $total = count($all);
+        $offset = (int) ($run->cursor ?: 0);
+        $batchSize = max(1, (int) config('omniful.order_backfill.id_batch_size', 60));
+        $client = app(OmnifulApiClient::class);
+
+        $runDelta = ['scanned' => 0, 'existing' => 0, 'missing' => 0, 'skipped' => 0, 'enqueued' => 0];
+        $dayDelta = [];
+
+        $i = 0;
+        for (; $i < $batchSize && ($offset + $i) < $total; $i++) {
+            if (OmnifulOrderBackfillRun::whereKey($run->id)->value('status') === 'cancel_requested') {
+                $this->applyRunDelta($run, $runDelta);
+                foreach ($dayDelta as $day => $d) {
+                    $this->applyDayDelta($run, (string) $day, $d);
+                }
+                OmnifulOrderBackfillRun::whereKey($run->id)->update(['cursor' => (string) ($offset + $i)]);
+                $this->finish($run, 'cancelled');
+
+                return;
+            }
+
+            $id = trim($all[$offset + $i]);
+            $runDelta['scanned']++;
+            if ($id === '') {
+                continue;
+            }
+
+            if (OmnifulOrder::where('external_id', $id)->exists()) {
+                $runDelta['existing']++;
+
+                continue;
+            }
+
+            $lookup = $client->fetchSellerOrderByNumericId($id);
+            if (($lookup['rl_hits'] ?? 0) > 0) {
+                OmnifulOrderBackfillRun::whereKey($run->id)->increment('rate_limit_hits', $lookup['rl_hits']);
+            }
+
+            // Not found in Omniful (or the lookup failed): count as missing but not
+            // enqueued — the missing-vs-enqueued gap surfaces unpullable ids.
+            if (!($lookup['ok'] ?? false) || !is_array($lookup['order'] ?? null)) {
+                $runDelta['missing']++;
+
+                continue;
+            }
+
+            $row = (array) $lookup['order'];
+            $day = $this->createdDay($run, $row);
+            $dayDelta[$day]['total'] = ($dayDelta[$day]['total'] ?? 0) + 1;
+
+            if ($this->isSkippableStatus((string) ($row['status_code'] ?? $row['status'] ?? ''))) {
+                $runDelta['skipped']++;
+                $dayDelta[$day]['skipped'] = ($dayDelta[$day]['skipped'] ?? 0) + 1;
+
+                continue;
+            }
+
+            $runDelta['missing']++;
+            $dayDelta[$day]['missing'] = ($dayDelta[$day]['missing'] ?? 0) + 1;
+
+            // $row carries `id` (hash) → enqueueMissingOrder detail-fetches it for
+            // order_items, upserts the order, and dispatches the SAP job.
+            if ($this->enqueueMissingOrder($run, $row, $id)) {
+                $runDelta['enqueued']++;
+                $dayDelta[$day]['enqueued'] = ($dayDelta[$day]['enqueued'] ?? 0) + 1;
+            }
+        }
+
+        $this->applyRunDelta($run, $runDelta);
+        foreach ($dayDelta as $day => $d) {
+            $this->applyDayDelta($run, (string) $day, $d);
+        }
+        OmnifulOrderBackfillRun::whereKey($run->id)->increment('pages');
+
+        $newOffset = $offset + $i;
+        $run->refresh();
+        $run->update([
+            'cursor' => (string) $newOffset,
+            'last_error' => null,
+            'last_activity' => 'processed ' . $newOffset . ' / ' . $total . ' ids',
+        ]);
+
+        if ($newOffset >= $total) {
+            $this->finish($run, 'completed');
+        }
     }
 
     public function requestCancel(OmnifulOrderBackfillRun $run): void

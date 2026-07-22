@@ -8,6 +8,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class OmnifulOrderBackfillRun extends Model
 {
     protected $fillable = [
+        'source_type',
+        'source_label',
         'date_from',
         'date_to',
         'status',
