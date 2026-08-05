@@ -59,6 +59,21 @@ class CancelCogsJournals extends Command
             $rows = array_slice($rows, 0, $limit);
         }
 
+        // Retry transient SAP failures (the Service Layer intermittently resets
+        // TLS → cURL 35, or times out). Never let one bad call kill the run.
+        $retry = function (callable $fn, int $tries = 5) {
+            for ($a = 1; ; $a++) {
+                try {
+                    return $fn();
+                } catch (\Throwable $e) {
+                    if ($a >= $tries) {
+                        throw $e;
+                    }
+                    sleep(min(15, 2 ** $a));
+                }
+            }
+        };
+
         $stats = ['seen' => 0, 'cancelled' => 0, 'already_reversed' => 0, 'skipped_marked' => 0, 'not_found' => 0, 'error' => 0];
         $row = $offset;
 
@@ -71,56 +86,65 @@ class CancelCogsJournals extends Command
             }
             $stats['seen']++;
 
-            $je = (array) data_get(
-                $get->invoke($client, "/JournalEntries?{$S}filter=Number eq {$origin}&{$S}select=JdtNum,Number,Reference2&{$S}top=1")->json(),
-                'value.0',
-                []
-            );
-            if ($je === [] || empty($je['JdtNum'])) {
-                $stats['not_found']++;
+            try {
+                $je = (array) data_get(
+                    $retry(fn () => $get->invoke($client, "/JournalEntries?{$S}filter=Number eq {$origin}&{$S}select=JdtNum,Number,Reference2&{$S}top=1"))->json(),
+                    'value.0',
+                    []
+                );
+                if ($je === [] || empty($je['JdtNum'])) {
+                    $stats['not_found']++;
 
-                continue;
-            }
-            $jdt = (int) $je['JdtNum'];
-            $ref2 = (string) ($je['Reference2'] ?? '');
+                    continue;
+                }
+                $jdt = (int) $je['JdtNum'];
+                $ref2 = (string) ($je['Reference2'] ?? '');
 
-            // Already reversed by us (marker present) → skip.
-            if (stripos($ref2, 'reversed') !== false || stripos($ref2, '-rev') !== false) {
-                $stats['skipped_marked']++;
+                // Already reversed by us (marker present) → skip.
+                if (stripos($ref2, 'reversed') !== false || stripos($ref2, '-rev') !== false) {
+                    $stats['skipped_marked']++;
 
-                continue;
-            }
+                    continue;
+                }
 
-            if ($dry) {
-                $stats['cancelled']++;
+                if ($dry) {
+                    $stats['cancelled']++;
 
-                continue;
-            }
+                    continue;
+                }
 
-            // Reverse: SAP Cancel posts an exact storno (nets 1105002 to zero).
-            $cancel = $post->invoke($client, "/JournalEntries({$jdt})/Cancel", (object) []);
-            $body = strtolower((string) $cancel->body());
-            if ($cancel->successful() || $cancel->status() === 204) {
-                $stats['cancelled']++;
-            } elseif (str_contains($body, 'already been cancel')) {
-                // An older reversal already offsets it — treat as done + mark it.
-                $stats['already_reversed']++;
-            } else {
+                // Reverse: SAP Cancel posts an exact storno (nets 1105002 to zero).
+                $cancel = $retry(fn () => $post->invoke($client, "/JournalEntries({$jdt})/Cancel", (object) []));
+                $body = strtolower((string) $cancel->body());
+                if ($cancel->successful() || $cancel->status() === 204) {
+                    $stats['cancelled']++;
+                } elseif (str_contains($body, 'already been cancel')) {
+                    // An older reversal already offsets it — treat as done + mark it.
+                    $stats['already_reversed']++;
+                } else {
+                    $stats['error']++;
+                    Log::warning('COGS JE cancel failed', ['jdt' => $jdt, 'number' => $origin, 'status' => $cancel->status(), 'body' => substr((string) $cancel->body(), 0, 300)]);
+
+                    continue; // do NOT mark — it wasn't reversed
+                }
+
+                // Stamp the "-reversed" marker (best-effort; the storno is the real state).
+                $mark = $retry(fn () => $patch->invoke($client, "/JournalEntries({$jdt})", ['Reference2' => $ref2 . '-reversed']));
+                if (!$mark->successful() && $mark->status() !== 204) {
+                    Log::info('COGS JE mark-reversed non-204', ['jdt' => $jdt, 'status' => $mark->status()]);
+                }
+            } catch (\Throwable $e) {
                 $stats['error']++;
-                Log::warning('COGS JE cancel failed', ['jdt' => $jdt, 'number' => $origin, 'status' => $cancel->status(), 'body' => substr((string) $cancel->body(), 0, 300)]);
+                Log::warning('COGS JE row failed (skipped)', ['number' => $origin, 'error' => substr($e->getMessage(), 0, 200)]);
+                usleep(500000);
 
-                continue; // do NOT mark — it wasn't reversed
-            }
-
-            // Stamp the "-reversed" marker (best-effort; the storno is the real state).
-            $mark = $patch->invoke($client, "/JournalEntries({$jdt})", ['Reference2' => $ref2 . '-reversed']);
-            if (!$mark->successful() && $mark->status() !== 204) {
-                Log::info('COGS JE mark-reversed non-204', ['jdt' => $jdt, 'status' => $mark->status()]);
+                continue;
             }
 
             if ($stats['seen'] % 25 === 0) {
                 $this->info('progress @row ' . $row . ': ' . json_encode($stats, JSON_UNESCAPED_SLASHES));
             }
+            usleep(120000); // gentle pacing on the SAP Service Layer
         }
 
         $this->info(($dry ? '[DRY RUN] ' : '') . 'DONE @row ' . $row . ': ' . json_encode($stats, JSON_UNESCAPED_SLASHES));
