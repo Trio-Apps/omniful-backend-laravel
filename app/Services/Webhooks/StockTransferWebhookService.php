@@ -223,6 +223,13 @@ class StockTransferWebhookService
      */
     private function extractTransferLines(array $data, array $payload): array
     {
+        // The STO REQUEST webhook only carries the APPROVED quantity, never the
+        // quantity that physically moved. The actual moved qty (picked/packed =
+        // received) lives on the matching STO order pulled by the normal order
+        // webhook. Prefer that per SKU; fall back to the request webhook's
+        // approved qty only when the order (or its packed qty) is unavailable.
+        $actualBySku = $this->resolveOrderActualQuantities($data, $payload);
+
         $sources = [
             data_get($data, 'stock_transfer_items', []),
             data_get($data, 'transfer_items', []),
@@ -241,18 +248,24 @@ class StockTransferWebhookService
                     continue;
                 }
 
-                $qty = data_get($item, 'transfer_quantity');
-                if ($qty === null) {
-                    $qty = data_get($item, 'approved_quantity');
-                }
-                if ($qty === null) {
-                    $qty = data_get($item, 'received_quantity');
-                }
-                if ($qty === null) {
-                    $qty = data_get($item, 'requested_quantity');
-                }
-                if ($qty === null) {
-                    $qty = data_get($item, 'quantity');
+                // Actual moved quantity from the matching STO order.
+                $qty = $actualBySku[(string) $itemCode] ?? null;
+
+                // Fallback: the request webhook's own quantity fields.
+                if ($qty === null || (float) $qty <= 0) {
+                    $qty = data_get($item, 'transfer_quantity');
+                    if ($qty === null) {
+                        $qty = data_get($item, 'approved_quantity');
+                    }
+                    if ($qty === null) {
+                        $qty = data_get($item, 'received_quantity');
+                    }
+                    if ($qty === null) {
+                        $qty = data_get($item, 'requested_quantity');
+                    }
+                    if ($qty === null) {
+                        $qty = data_get($item, 'quantity');
+                    }
                 }
 
                 $qty = (float) ($qty ?? 0);
@@ -272,6 +285,56 @@ class StockTransferWebhookService
         }
 
         return [];
+    }
+
+    /**
+     * The physically-moved quantity per SKU (packed, else picked) from the STO
+     * ORDER that the normal order webhook pulled — keyed by SKU code. Unlike the
+     * STO request webhook, the order carries the real quantity, not the approved
+     * one. Empty when the order is not (yet) in our DB, so the caller safely
+     * falls back to the request webhook's approved quantity.
+     *
+     * The order's packed_quantity is the CUMULATIVE total for the transfer, so a
+     * single transfer of that quantity is correct even when the request is
+     * received across several GRNs (and the per-STO idempotency prevents any
+     * double post).
+     *
+     * @return array<string,float>
+     */
+    private function resolveOrderActualQuantities(array $data, array $payload): array
+    {
+        $stoId = trim((string) ($this->extractStockTransferRequestId($data, $payload) ?? ''));
+        if ($stoId === '') {
+            return [];
+        }
+
+        $order = \App\Models\OmnifulOrder::where('external_id', $stoId)->first();
+        if ($order === null) {
+            return [];
+        }
+
+        $op = is_array($order->last_payload)
+            ? $order->last_payload
+            : (array) json_decode((string) $order->last_payload, true);
+        $od = (array) data_get($op, 'data', $op);
+        $items = data_get($od, 'order_items') ?? data_get($od, 'items') ?? [];
+
+        $map = [];
+        foreach ((array) $items as $it) {
+            $sku = trim((string) (data_get($it, 'sku_code') ?? data_get($it, 'seller_sku_code') ?? ''));
+            if ($sku === '') {
+                continue;
+            }
+            $actual = data_get($it, 'packed_quantity');
+            if ($actual === null || (float) $actual <= 0) {
+                $actual = data_get($it, 'picked_quantity');
+            }
+            if ($actual !== null && (float) $actual > 0) {
+                $map[$sku] = ((float) ($map[$sku] ?? 0)) + (float) $actual;
+            }
+        }
+
+        return $map;
     }
 
     private function isActionableStockTransferEvent(string $eventName, string $status): bool
