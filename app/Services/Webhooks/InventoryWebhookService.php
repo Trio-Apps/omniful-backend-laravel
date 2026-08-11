@@ -205,6 +205,21 @@ class InventoryWebhookService
                 $items = is_array($items) ? $items : [];
                 $client = app(SapServiceLayerClient::class);
                 $isDirectDispose = $this->isDirectDisposeAdjustment($payload);
+
+                // Business decision: every NON-dispose inventory adjustment tagged
+                // "Omniful manual edit" (manual_edit AND conversion — conversion is
+                // mislabelled with this remark) must NOT sync to SAP. Ignore it
+                // here so no Goods Receipt / Goods Issue is posted. Only a direct
+                // DISPOSE still posts (as a Goods Issue tagged "Omniful inventory
+                // dispose").
+                if (!$isDirectDispose) {
+                    $event->sap_status = 'ignored';
+                    $event->sap_error = 'Ignored: Omniful manual edit / conversion adjustment is not synced to SAP';
+                    $event->save();
+
+                    return;
+                }
+
                 $adjustmentRemarks = $isDirectDispose ? 'Omniful inventory dispose' : 'Omniful manual edit';
                 // Disposal-only: carry the reason (-> line UDF U_Reason) and the
                 // Omniful adjustment id (-> header UDF U_omo) onto the Goods Issue.
