@@ -289,6 +289,38 @@ trait HandlesSapInventoryDocs
     /**
      * @param array<int,array{seller_sku_code:string,quantity:float}> $items
      */
+    /**
+     * Stamp the default distribution rule (dimension 1) on stock-transfer lines.
+     * A StockTransferLine uses `DistributionRule` (dim1) / DistributionRule2..5 —
+     * NOT `CostingCode`, which SAP rejects as an invalid property on this entity
+     * (that is why applyDefaultCostCentersToLines cannot be reused here). Only
+     * dimension 1 is stamped: the price-difference G/L account that enforces it
+     * (e.g. 5101005 "needs DR for dimension 1") is dim-1-relevant, and stamping a
+     * dimension the account does not use re-triggers a generic -5002.
+     *
+     * @param array<int,array<string,mixed>> $lines
+     * @return array<int,array<string,mixed>>
+     */
+    private function applyStockTransferDistributionRules(array $lines): array
+    {
+        foreach ($lines as $idx => $line) {
+            if (!is_array($line)) {
+                continue;
+            }
+            // Use the SOURCE (FROM) warehouse's cost center — the transfer's price
+            // difference is borne by the sending warehouse (business decision).
+            $warehouseCode = trim((string) ($line['FromWarehouseCode'] ?? $line['WarehouseCode'] ?? ''));
+            $fields = $this->getDefaultCostCenterFields($warehouseCode !== '' ? $warehouseCode : null);
+            $dim1 = trim((string) ($fields['CostingCode'] ?? ''));
+            if ($dim1 !== '' && trim((string) ($line['DistributionRule'] ?? '')) === '') {
+                $line['DistributionRule'] = $dim1;
+            }
+            $lines[$idx] = $line;
+        }
+
+        return $lines;
+    }
+
     public function createStockTransfer(array $items, string $fromWarehouse, string $toWarehouse, string $remarks = '', string $reference = '', string $channel = ''): array
     {
         $fromWarehouse = trim($fromWarehouse);
@@ -343,7 +375,7 @@ trait HandlesSapInventoryDocs
             ?? config('omniful.sap_cost_centers.apply_to_stock_transfer', false)
         );
         if ($applyToStockTransfer) {
-            $lines = $this->applyDefaultCostCentersToLines($lines);
+            $lines = $this->applyStockTransferDistributionRules($lines);
         }
 
         $docDate = now()->format('Y-m-d');
