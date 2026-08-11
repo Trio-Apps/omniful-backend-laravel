@@ -2917,6 +2917,16 @@ trait HandlesSapPurchaseAndProducts
             $amount = $this->fetchCogsAmountByOrderReference($cogsOrderReference);
         }
 
+        // Last resort — the dominant case for STANDALONE credit memos (closed
+        // reserve invoice): the line carries the SELLING price, not stock cost, so
+        // extractCreditMemoCogsAmount yields 0; and the whole-order CogsSP can miss
+        // or (for a PARTIAL return) OVER-count. Compute the COGS of exactly the
+        // RETURNED items from their average inventory cost — the same per-item
+        // (bundle-aware) source the forward order COGS uses.
+        if ($amount <= 0) {
+            $amount = $this->computeCogsAmountFromReturnedCreditMemoLines($creditMemo);
+        }
+
         // Idempotency: a prior attempt may have already posted this reversal in
         // SAP (the JE response has no TransId, so the local link is easily lost,
         // and a re-run would be rejected with "(1000) JE Cogs Debit already
@@ -9005,6 +9015,34 @@ trait HandlesSapPurchaseAndProducts
         }
 
         return mb_substr($value, 0, $limit);
+    }
+
+    /**
+     * COGS of exactly the items on a credit memo, from their average inventory
+     * cost (bundle-aware) — the same source the forward order COGS uses. Reverses
+     * only what was RETURNED, so a partial return reverses the partial COGS, and a
+     * standalone credit memo (whose lines carry selling price, not stock cost)
+     * still gets a correct reversal amount.
+     *
+     * @param array<string,mixed> $creditMemo
+     */
+    private function computeCogsAmountFromReturnedCreditMemoLines(array $creditMemo): float
+    {
+        $items = [];
+        foreach ((array) ($creditMemo['DocumentLines'] ?? []) as $line) {
+            $itemCode = trim((string) ($line['ItemCode'] ?? ''));
+            $qty = (float) ($line['Quantity'] ?? 0);
+            if ($itemCode === '' || $qty <= 0) {
+                continue;
+            }
+            $items[] = ['sku_code' => $itemCode, 'quantity' => $qty];
+        }
+
+        if ($items === []) {
+            return 0.0;
+        }
+
+        return $this->computeCogsAmountFromOrderItems(['order_items' => $items]);
     }
 
     private function extractCreditMemoCogsAmount(array $creditMemo): float
