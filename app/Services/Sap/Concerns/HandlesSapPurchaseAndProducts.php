@@ -2737,6 +2737,7 @@ trait HandlesSapPurchaseAndProducts
         $cardCode = '';
         $documentLines = [];
         $baseReferenced = false;
+        $reopenedInvoiceDocEntry = 0;
 
         // A credit memo must base-reference the A/R Invoice (the reserve invoice,
         // SAP object type 13). SAP rejects a Delivery Note (15) as a credit-memo
@@ -2760,6 +2761,18 @@ trait HandlesSapPurchaseAndProducts
             // credit memo. Checking only bost_Close missed bost_Paid (fully paid)
             // invoices — the dominant -5002 case. Mirrors reverseArReserveInvoiceForResend().
             $invoiceOpen = (string) ($invoice['DocumentStatus'] ?? '') === 'bost_Open';
+
+            // A CLOSED (fully paid/delivered) reserve invoice cannot be
+            // base-referenced directly — but, per the SAP team, REOPENING it first
+            // lets the credit memo link to it (BaseType 13) so the return shows in
+            // the relationship map. Reopen here, base-reference below, then re-close
+            // after the credit memo is posted (restores the invoice's state).
+            // Cancelled invoices are never reopened.
+            if (!$invoiceCancelled && !$invoiceOpen && $this->reopenArInvoice($baseOrderDocEntry)) {
+                $reopenedInvoiceDocEntry = $baseOrderDocEntry;
+                $invoice = (array) $this->getArReserveInvoice($baseOrderDocEntry);
+                $invoiceOpen = (string) ($invoice['DocumentStatus'] ?? '') === 'bost_Open';
+            }
 
             if (!$invoiceCancelled && $invoiceOpen) {
                 $documentLines = $this->buildCreditLinesFromInvoice($items, $invoice, $baseOrderDocEntry);
@@ -2854,6 +2867,14 @@ trait HandlesSapPurchaseAndProducts
             }
         }
 
+        // If we reopened a closed invoice to base-reference the credit memo, close
+        // it again now (best-effort). Runs before the throw so a failed post still
+        // restores the invoice's closed state; a 400 "already closed" is fine (the
+        // credit memo may have re-closed it).
+        if ($reopenedInvoiceDocEntry > 0) {
+            $this->closeArInvoice($reopenedInvoiceDocEntry);
+        }
+
         if (!$response->successful()) {
             throw new SapRequestException(
                 'SAP AR credit memo create failed: ' . $response->status() . ' ' . $response->body(),
@@ -2867,6 +2888,50 @@ trait HandlesSapPurchaseAndProducts
         $payload['ignored'] = false;
         $payload['request_body'] = $body;
         return $payload;
+    }
+
+    /**
+     * Reopen a closed A/R (reserve) invoice via the Service Layer so a return
+     * credit memo can base-reference it (BaseType 13) — the SAP-team-approved way
+     * to make the return show linked in the relationship map. Best-effort.
+     */
+    private function reopenArInvoice(int $docEntry): bool
+    {
+        if ($docEntry <= 0) {
+            return false;
+        }
+
+        $response = $this->post('/Invoices(' . $docEntry . ')/Reopen', (object) []);
+        if ($response->successful() || $response->status() === 204) {
+            return true;
+        }
+
+        Log::warning('AR invoice reopen failed (return will fall back to standalone credit memo)', [
+            'doc_entry' => $docEntry,
+            'status' => $response->status(),
+            'body' => substr((string) $response->body(), 0, 200),
+        ]);
+
+        return false;
+    }
+
+    /**
+     * Re-close an invoice we reopened for base-referencing. Best-effort — a 400
+     * ("already closed") is expected when the credit memo already re-closed it.
+     */
+    private function closeArInvoice(int $docEntry): void
+    {
+        if ($docEntry <= 0) {
+            return;
+        }
+
+        $response = $this->post('/Invoices(' . $docEntry . ')/Close', (object) []);
+        if (!$response->successful() && $response->status() !== 204) {
+            Log::info('AR invoice re-close after return credit memo returned non-204 (likely already closed)', [
+                'doc_entry' => $docEntry,
+                'status' => $response->status(),
+            ]);
+        }
     }
 
     public function createCogsReversalJournalForCreditMemo(array $data): array
@@ -9208,16 +9273,48 @@ trait HandlesSapPurchaseAndProducts
                 continue;
             }
 
+            // Only the OPEN portion of a line can be base-referenced. A fully
+            // delivered/closed line (RemainingOpenQuantity 0 — e.g. a bundle's
+            // inventory component, which was issued by the delivery) must instead
+            // be restocked with a STANDALONE (BaseType -1) line below.
+            $openQty = array_key_exists('RemainingOpenQuantity', $line)
+                ? (float) $line['RemainingOpenQuantity']
+                : $lineQty;
+
             $invoiceByItem[$itemCode][] = [
                 'line_num' => (int) $lineNum,
-                'open_qty' => $lineQty,
+                'open_qty' => max(0.0, $openQty),
+                'warehouse' => (string) ($line['WarehouseCode'] ?? ''),
+                'unit_price' => (float) ($line['UnitPrice'] ?? $line['Price'] ?? 0),
             ];
         }
 
-        $creditLines = [];
+        // Expand each returned item into itself PLUS its bundle components. A
+        // bundle parent (InventoryItem=tNO) carries the revenue while its child
+        // items carry the inventory, and BOTH are separate lines on the invoice.
+        // A return that lists only the parent must still credit the child lines so
+        // the components are restocked (SAP-team requirement).
+        $expanded = [];
         foreach ($items as $item) {
             $itemCode = $this->extractCreditMemoItemCode((array) $item);
-            $remaining = (float) ($item['quantity'] ?? $item['return_quantity'] ?? $item['returned_quantity'] ?? 0);
+            $qty = (float) ($item['quantity'] ?? $item['return_quantity'] ?? $item['returned_quantity'] ?? 0);
+            if ($itemCode === '' || $qty <= 0) {
+                continue;
+            }
+            $expanded[$itemCode] = ($expanded[$itemCode] ?? 0) + $qty;
+            foreach ($this->fetchComboLinesFromUdo($itemCode) as $combo) {
+                $childCode = trim((string) ($combo['item_code'] ?? ''));
+                $childQty = (float) ($combo['quantity'] ?? 0) * $qty;
+                if ($childCode === '' || $childQty <= 0) {
+                    continue;
+                }
+                $expanded[$childCode] = ($expanded[$childCode] ?? 0) + $childQty;
+            }
+        }
+
+        $creditLines = [];
+        foreach ($expanded as $itemCode => $remaining) {
+            $itemCode = (string) $itemCode;
             if (!isset($invoiceByItem[$itemCode]) || $remaining <= 0) {
                 continue;
             }
@@ -9248,9 +9345,64 @@ trait HandlesSapPurchaseAndProducts
                 $remaining -= $applyQty;
             }
             unset($invoiceLine);
+
+            // Anything not covered by an OPEN invoice line — a delivered bundle
+            // COMPONENT (RemainingOpenQuantity 0) — is restocked with a STANDALONE
+            // (BaseType -1) line. SAP accepts mixing base-referenced + standalone
+            // lines in one credit memo, and this is the only way to return a fully
+            // delivered line; the base-referenced parent still links the document.
+            if ($remaining > 0.0001) {
+                $first = $invoiceByItem[$itemCode][0] ?? [];
+                $creditLines[] = $this->buildStandaloneRestockCreditLine(
+                    $itemCode,
+                    $remaining,
+                    (float) ($first['unit_price'] ?? 0),
+                    (string) ($first['warehouse'] ?? '')
+                );
+            }
         }
 
         return $creditLines;
+    }
+
+    /**
+     * A STANDALONE (BaseType -1) credit-memo line that restocks a delivered
+     * inventory item (typically a bundle component the base-referenced parent line
+     * cannot carry). Stamps UoM (standalone lines don't inherit one) and the dim1
+     * distribution rule for the inventory posting.
+     *
+     * @return array<string,mixed>
+     */
+    private function buildStandaloneRestockCreditLine(string $itemCode, float $qty, float $unitPrice, string $warehouseCode): array
+    {
+        $line = [
+            'ItemCode' => $itemCode,
+            'Quantity' => $this->roundSapQuantity($qty),
+            'UnitPrice' => $this->roundSapAmount($unitPrice),
+        ];
+
+        $uom = $this->getPreferredSalesUomForItem($itemCode);
+        if ($uom === []) {
+            $uom = $this->getPreferredPurchaseUomForItem($itemCode);
+        }
+        if (isset($uom['UoMEntry'])) {
+            $line['UoMEntry'] = (int) $uom['UoMEntry'];
+        }
+        if (isset($uom['UoMCode']) && (string) $uom['UoMCode'] !== '') {
+            $line['UoMCode'] = (string) $uom['UoMCode'];
+        }
+
+        if ($warehouseCode !== '') {
+            $line['WarehouseCode'] = $warehouseCode;
+        }
+
+        // Dimension 1 only (the P&L account enforcing it is dim-1-relevant).
+        $dim1 = trim((string) ($this->getDefaultCostCenterFields($warehouseCode !== '' ? $warehouseCode : null)['CostingCode'] ?? ''));
+        if ($dim1 !== '') {
+            $line['CostingCode'] = $dim1;
+        }
+
+        return $line;
     }
 
     /**
