@@ -119,13 +119,23 @@ class LinkStandaloneCreditNotes extends Command
                         // The order reference is not always on U_omo: older
                         // invoices carry it on U_ZidId or NumAtCard, and reversed
                         // ones on a "<id>-…" suffixed U_omo. Try each in turn.
+                        // Some references are decorated: a return ships as
+                        // "RS-<order>" and a collision-renamed one as "<order>-N".
+                        // Search the raw value first, then the bare order id.
+                        $base = preg_replace('/-\d+$/', '', preg_replace('/^RS-/i', '', $order));
                         $escaped = str_replace("'", "''", $order);
-                        foreach ([
+                        $escapedBase = str_replace("'", "''", (string) $base);
+                        $filters = [
                             "U_omo eq '{$escaped}'",
                             "U_ZidId eq '{$escaped}'",
                             "NumAtCard eq '{$escaped}'",
                             "startswith(U_omo,'{$escaped}')",
-                        ] as $filter) {
+                        ];
+                        if ($escapedBase !== '' && $escapedBase !== $escaped) {
+                            $filters[] = "U_omo eq '{$escapedBase}'";
+                            $filters[] = "U_ZidId eq '{$escapedBase}'";
+                        }
+                        foreach ($filters as $filter) {
                             $inv = (array) data_get(
                                 $retry(fn () => $get->invoke($client, "/Invoices?{$S}filter=" . rawurlencode($filter) . "&{$S}select=DocEntry&{$S}orderby=DocEntry desc&{$S}top=1"))->json(),
                                 'value.0',
