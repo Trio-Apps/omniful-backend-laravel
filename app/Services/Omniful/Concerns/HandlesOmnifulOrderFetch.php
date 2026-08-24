@@ -131,6 +131,55 @@ trait HandlesOmnifulOrderFetch
         ];
     }
 
+
+    /**
+     * Per-SKU RECEIVED quantities for a stock transfer order, from Omniful's
+     * dedicated STO endpoint `GET /orders/sto/{sto_id}`.
+     *
+     * This is the ONLY source that carries `received_quantity`: the STO request
+     * webhook only sends `quantity`/`approved_quantity`, and the normal order
+     * webhook/API only `quantity`/`picked_quantity`/`packed_quantity`. SAP must
+     * move what was actually RECEIVED, not what was approved or shipped.
+     *
+     * @return array{ok:bool,status:int,quantities:array<string,float>,rl_hits:int}
+     */
+    public function fetchStockTransferReceivedQuantities(string $stoId): array
+    {
+        $stoId = trim($stoId);
+        if ($stoId === '') {
+            return ['ok' => false, 'status' => 0, 'quantities' => [], 'rl_hits' => 0];
+        }
+
+        $template = (string) config(
+            'omniful.stock_transfer.detail_endpoint',
+            '/sales-channel/public/v1/orders/sto/{id}'
+        );
+        $url = $this->baseUrl . str_replace('{id}', rawurlencode($stoId), $template);
+
+        $res = $this->getSellerOrdersJson($url);
+        $quantities = [];
+        foreach ((array) data_get($res['json'] ?? [], 'data.stock_transfer_order_items', []) as $item) {
+            $sku = trim((string) (
+                data_get($item, 'sku.seller_sku_code')
+                ?? data_get($item, 'sku.sku_code')
+                ?? data_get($item, 'sku_code')
+                ?? ''
+            ));
+            $received = data_get($item, 'received_quantity');
+            if ($sku === '' || $received === null) {
+                continue;
+            }
+            $quantities[$sku] = ((float) ($quantities[$sku] ?? 0)) + (float) $received;
+        }
+
+        return [
+            'ok' => ((bool) ($res['ok'] ?? false)) && $quantities !== [],
+            'status' => (int) ($res['status'] ?? 0),
+            'quantities' => $quantities,
+            'rl_hits' => (int) ($res['rl_hits'] ?? 0),
+        ];
+    }
+
     /**
      * GET with the SELLER auth context, a proactive throttle between calls, and
      * exponential backoff on HTTP 429. Reuses the base request() token-refresh.

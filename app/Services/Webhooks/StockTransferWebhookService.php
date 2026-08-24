@@ -224,11 +224,14 @@ class StockTransferWebhookService
     private function extractTransferLines(array $data, array $payload): array
     {
         // The STO REQUEST webhook only carries the APPROVED quantity, never the
-        // quantity that physically moved. The actual moved qty (picked/packed =
-        // received) lives on the matching STO order pulled by the normal order
-        // webhook. Prefer that per SKU; fall back to the request webhook's
-        // approved qty only when the order (or its packed qty) is unavailable.
-        $actualBySku = $this->resolveOrderActualQuantities($data, $payload);
+        // quantity that physically moved. Resolve the real quantity per SKU:
+        // Omniful's dedicated STO endpoint (RECEIVED — what SAP must move), then
+        // the matching STO order's packed/picked qty (SHIPPED), and only then the
+        // request webhook's approved qty.
+        $actualBySku = $this->resolveReceivedQuantities($data, $payload);
+        if ($actualBySku === []) {
+            $actualBySku = $this->resolveOrderActualQuantities($data, $payload);
+        }
 
         $sources = [
             data_get($data, 'stock_transfer_items', []),
@@ -285,6 +288,45 @@ class StockTransferWebhookService
         }
 
         return [];
+    }
+
+    /**
+     * RECEIVED quantity per SKU from Omniful's dedicated STO endpoint — the only
+     * source that exposes `received_quantity`. SAP must move what the destination
+     * hub ACTUALLY RECEIVED, not what was approved (request webhook) or shipped
+     * (order packed qty): a short receipt (damage/loss in transit) would otherwise
+     * overstate the destination's stock.
+     *
+     * Returns [] when the STO id is unknown or the endpoint fails, so the caller
+     * falls back to the shipped quantity.
+     *
+     * @return array<string,float>
+     */
+    private function resolveReceivedQuantities(array $data, array $payload): array
+    {
+        $stoId = trim((string) ($this->extractStockTransferRequestId($data, $payload) ?? ''));
+        if ($stoId === '') {
+            return [];
+        }
+
+        try {
+            $res = app(\App\Services\OmnifulApiClient::class)->fetchStockTransferReceivedQuantities($stoId);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('STO received-qty lookup failed; falling back to shipped qty', [
+                'sto' => $stoId,
+                'error' => substr($e->getMessage(), 0, 200),
+            ]);
+
+            return [];
+        }
+
+        if (($res['ok'] ?? false) !== true) {
+            return [];
+        }
+
+        // Guard: an all-zero payload means the receipt is not booked yet — do not
+        // post a zero-quantity transfer, fall back instead.
+        return array_sum($res['quantities']) > 0 ? (array) $res['quantities'] : [];
     }
 
     /**
