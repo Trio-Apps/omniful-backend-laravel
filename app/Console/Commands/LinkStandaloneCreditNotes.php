@@ -27,7 +27,7 @@ use Illuminate\Support\Facades\Log;
  */
 class LinkStandaloneCreditNotes extends Command
 {
-    protected $signature = 'omniful:link-standalone-credit-notes {--file=cn_fix_list.csv} {--dry-run} {--limit=0} {--offset=0}';
+    protected $signature = 'omniful:link-standalone-credit-notes {--file=cn_fix_list.csv} {--since=} {--dry-run} {--limit=0} {--offset=0}';
 
     protected $description = 'Attach a DocumentReference (source A/R invoice) to standalone return credit notes so they show linked in SAP.';
 
@@ -37,8 +37,9 @@ class LinkStandaloneCreditNotes extends Command
         $limit = (int) $this->option('limit');
         $offset = (int) $this->option('offset');
 
+        $since = trim((string) $this->option('since'));
         $path = storage_path('app/' . $this->option('file'));
-        if (!is_file($path)) {
+        if ($since === '' && !is_file($path)) {
             $this->error('File not found: ' . $path);
 
             return self::FAILURE;
@@ -63,9 +64,34 @@ class LinkStandaloneCreditNotes extends Command
             }
         };
 
-        $rows = array_values(array_filter(array_map('trim', file($path)), fn ($l) => $l !== ''));
-        if ($rows && stripos($rows[0], 'docnum') === 0) {
-            array_shift($rows);
+        // Rows are "docnum,order". Either from the CSV, or — with --since — scanned
+        // straight from SAP: every non-cancelled credit note posted on/after that
+        // date that carries no Document Reference yet. The order id comes from the
+        // memo's own U_omo, so no CSV is needed for the ongoing gap.
+        if ($since !== '') {
+            $escSince = str_replace("'", "''", $since);
+            $scan = $retry(fn () => $get->invoke(
+                $client,
+                "/CreditNotes?{$S}filter=" . rawurlencode("DocDate ge '{$escSince}'")
+                . "&{$S}select=DocNum,DocumentReferences,Cancelled,U_omo&{$S}orderby=DocEntry desc&{$S}top=1000"
+            ));
+            $rows = [];
+            foreach ((array) ($scan->json('value') ?? []) as $cn) {
+                if ((string) ($cn['Cancelled'] ?? 'tNO') === 'tYES' || !empty($cn['DocumentReferences'])) {
+                    continue;
+                }
+                $order = trim((string) ($cn['U_omo'] ?? ''));
+                if ($order === '') {
+                    continue;
+                }
+                $rows[] = ((string) ($cn['DocNum'] ?? '')) . ',' . $order;
+            }
+            $this->info('Scanned SAP since ' . $since . ': ' . count($rows) . ' credit notes without a reference.');
+        } else {
+            $rows = array_values(array_filter(array_map('trim', file($path)), fn ($l) => $l !== ''));
+            if ($rows && stripos($rows[0], 'docnum') === 0) {
+                array_shift($rows);
+            }
         }
         if ($offset > 0) {
             $rows = array_slice($rows, $offset);

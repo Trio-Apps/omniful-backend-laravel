@@ -2885,9 +2885,61 @@ trait HandlesSapPurchaseAndProducts
         }
 
         $payload = $response->json() ?? [];
+
+        // Fallback linking: when NO line could be base-referenced (the invoice was
+        // closed and could not be reopened), the credit memo is standalone and
+        // would show unlinked. Attach a SAP Document Reference to the source
+        // invoice so the return still appears against it (relationship map ->
+        // "Referenced Documents"). One PATCH, no financial impact.
+        $this->linkCreditMemoToSourceInvoice($payload, $baseOrderDocEntry);
+
         $payload['ignored'] = false;
         $payload['request_body'] = $body;
         return $payload;
+    }
+
+    /**
+     * Attach a Document Reference (source A/R invoice) to a credit memo that could
+     * not be base-referenced, so it is still linked in SAP. No-op when the memo
+     * already carries a base-referenced line or a reference. Best-effort: a failure
+     * here must never fail the return itself.
+     *
+     * @param array<string,mixed> $creditMemo
+     */
+    private function linkCreditMemoToSourceInvoice(array $creditMemo, int $invoiceDocEntry): void
+    {
+        $docEntry = (int) ($creditMemo['DocEntry'] ?? 0);
+        if ($docEntry <= 0 || $invoiceDocEntry <= 0) {
+            return;
+        }
+
+        // Already linked through the document tree (BaseType 13) — nothing to add.
+        foreach ((array) ($creditMemo['DocumentLines'] ?? []) as $line) {
+            if ((int) ($line['BaseType'] ?? -1) === 13) {
+                return;
+            }
+        }
+
+        if (!empty($creditMemo['DocumentReferences'])) {
+            return;
+        }
+
+        // RefObjType must be the numeric "13" (A/R Invoice); "rot_Invoice" is
+        // rejected with -10 "Missing document type". SAP fills RefDocNum itself.
+        $response = $this->patch('/CreditNotes(' . $docEntry . ')', [
+            'DocumentReferences' => [
+                ['RefDocEntr' => $invoiceDocEntry, 'RefObjType' => '13'],
+            ],
+        ]);
+
+        if (!$response->successful() && $response->status() !== 204) {
+            Log::warning('Could not attach credit-memo document reference', [
+                'credit_memo' => $docEntry,
+                'invoice' => $invoiceDocEntry,
+                'status' => $response->status(),
+                'body' => substr((string) $response->body(), 0, 200),
+            ]);
+        }
     }
 
     /**
