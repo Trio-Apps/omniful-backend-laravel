@@ -73,11 +73,26 @@ class LinkStandaloneCreditNotes extends Command
             $scan = $retry(fn () => $get->invoke(
                 $client,
                 "/CreditNotes?{$S}filter=" . rawurlencode("DocDate ge '{$escSince}'")
-                . "&{$S}select=DocNum,DocumentReferences,Cancelled,U_omo&{$S}orderby=DocEntry desc&{$S}top=1000"
+                . "&{$S}select=DocNum,DocumentReferences,Cancelled,U_omo,DocumentLines&{$S}orderby=DocEntry desc&{$S}top=1000"
             ));
             $rows = [];
+            $baseLinked = 0;
             foreach ((array) ($scan->json('value') ?? []) as $cn) {
                 if ((string) ($cn['Cancelled'] ?? 'tNO') === 'tYES' || !empty($cn['DocumentReferences'])) {
+                    continue;
+                }
+                // Already linked through the document tree — adding a reference
+                // would only duplicate what SAP already shows.
+                $isBaseLinked = false;
+                foreach ((array) ($cn['DocumentLines'] ?? []) as $cnLine) {
+                    if ((int) ($cnLine['BaseType'] ?? -1) === 13) {
+                        $isBaseLinked = true;
+                        break;
+                    }
+                }
+                if ($isBaseLinked) {
+                    $baseLinked++;
+
                     continue;
                 }
                 $order = trim((string) ($cn['U_omo'] ?? ''));
@@ -86,6 +101,7 @@ class LinkStandaloneCreditNotes extends Command
                 }
                 $rows[] = ((string) ($cn['DocNum'] ?? '')) . ',' . $order;
             }
+            $this->info('Skipped ' . $baseLinked . ' already base-referenced credit notes.');
             $this->info('Scanned SAP since ' . $since . ': ' . count($rows) . ' credit notes without a reference.');
         } else {
             $rows = array_values(array_filter(array_map('trim', file($path)), fn ($l) => $l !== ''));
