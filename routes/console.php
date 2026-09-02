@@ -19,6 +19,12 @@ Schedule::command('omniful:auto-sync')->everyMinute()->withoutOverlapping(10);
 // it no-ops until a run is actually due (same pattern as omniful:auto-sync).
 Schedule::command('omniful:inventory-qty-push')->everyMinute()->withoutOverlapping(10);
 
+// Stock transfers whose received quantities Omniful had not booked yet when the
+// webhook arrived are parked as `pending_receipt` instead of being posted with the
+// approved quantity (which moved phantom stock into SAP). Retry them shortly
+// after, once the receipt is readable.
+Schedule::command('omniful:retry-pending-stock-transfers')->everyFiveMinutes()->withoutOverlapping(10);
+
 // DISABLED: scanning ~20k order last_payload blobs (2.7 GB) per run is far too
 // heavy — runs overran their withoutOverlapping window and stacked up, saturating
 // disk I/O (iowait ~48%, load ~9) and starving both the queue workers and the

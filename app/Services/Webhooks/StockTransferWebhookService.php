@@ -4,9 +4,19 @@ namespace App\Services\Webhooks;
 
 use App\Services\SapServiceLayerClient;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Log;
 
 class StockTransferWebhookService
 {
+    /**
+     * How extractTransferLines() resolved the quantities: 'ok', or 'unavailable'
+     * when neither the received nor the shipped quantity could be read. In the
+     * latter case the event is DEFERRED for retry rather than posted — the old
+     * behaviour (falling back to the approved qty) is what put phantom stock into
+     * SAP.
+     */
+    private string $quantityResolution = 'ok';
+
     public function process(Model $event): void
     {
         $payload = (array) ($event->payload ?? []);
@@ -107,8 +117,15 @@ class StockTransferWebhookService
 
         $lines = $this->extractTransferLines($data, $payload);
         if ($lines === []) {
-            $event->sap_status = 'ignored';
-            $event->sap_error = 'Ignored: no stock transfer lines found';
+            // Distinguish "nothing to transfer" from "we could not read the real
+            // quantities yet". The latter is DEFERRED (omniful:retry-pending-stock-transfers
+            // picks it up once Omniful has booked the receipt) — posting the
+            // approved qty instead is exactly the bug this guards against.
+            $deferred = $this->quantityResolution === 'unavailable';
+            $event->sap_status = $deferred ? 'pending_receipt' : 'ignored';
+            $event->sap_error = $deferred
+                ? 'Deferred: Omniful has not reported the received quantities yet; will retry (approved qty is never posted).'
+                : 'Ignored: no stock transfer lines found';
             $event->save();
             return;
         }
@@ -224,13 +241,50 @@ class StockTransferWebhookService
     private function extractTransferLines(array $data, array $payload): array
     {
         // The STO REQUEST webhook only carries the APPROVED quantity, never the
-        // quantity that physically moved. Resolve the real quantity per SKU:
-        // Omniful's dedicated STO endpoint (RECEIVED — what SAP must move), then
-        // the matching STO order's packed/picked qty (SHIPPED), and only then the
-        // request webhook's approved qty.
+        // quantity that physically moved. Resolve the real quantity per SKU from
+        // Omniful's dedicated STO endpoint (RECEIVED — what SAP must move), and
+        // fall back ONLY to the matching STO order's packed/picked qty (SHIPPED).
+        //
+        // The webhook's approved qty is NEVER used: it is precisely the wrong
+        // number (a 1000-approved / 101-received transfer once moved 899 phantom
+        // units into SAP). When neither real source is available the caller defers
+        // the event for retry instead of guessing.
+        $this->quantityResolution = 'ok';
+        $shippedBySku = $this->resolveOrderActualQuantities($data, $payload);
         $actualBySku = $this->resolveReceivedQuantities($data, $payload);
+
         if ($actualBySku === []) {
-            $actualBySku = $this->resolveOrderActualQuantities($data, $payload);
+            $actualBySku = $shippedBySku;
+            if ($actualBySku !== []) {
+                Log::warning('STO: received qty unavailable, falling back to the SHIPPED (packed) qty', [
+                    'sto' => $this->extractStockTransferRequestId($data, $payload),
+                ]);
+            }
+        }
+
+        if ($actualBySku === []) {
+            Log::warning('STO: neither received nor shipped qty available — deferring instead of posting the approved qty', [
+                'sto' => $this->extractStockTransferRequestId($data, $payload),
+            ]);
+            $this->quantityResolution = 'unavailable';
+
+            return [];
+        }
+
+        // Sanity guard: never move more than what was actually shipped. If the two
+        // sources disagree the smaller one wins — over-stating the destination is
+        // the failure mode we are protecting against.
+        foreach ($actualBySku as $sku => $qty) {
+            $shipped = $shippedBySku[$sku] ?? null;
+            if ($shipped !== null && (float) $qty > (float) $shipped + 0.001) {
+                Log::warning('STO: resolved qty exceeds the shipped qty; capping to shipped', [
+                    'sto' => $this->extractStockTransferRequestId($data, $payload),
+                    'sku' => $sku,
+                    'resolved' => $qty,
+                    'shipped' => $shipped,
+                ]);
+                $actualBySku[$sku] = (float) $shipped;
+            }
         }
 
         $sources = [
@@ -251,27 +305,11 @@ class StockTransferWebhookService
                     continue;
                 }
 
-                // Actual moved quantity from the matching STO order.
-                $qty = $actualBySku[(string) $itemCode] ?? null;
-
-                // Fallback: the request webhook's own quantity fields.
-                if ($qty === null || (float) $qty <= 0) {
-                    $qty = data_get($item, 'transfer_quantity');
-                    if ($qty === null) {
-                        $qty = data_get($item, 'approved_quantity');
-                    }
-                    if ($qty === null) {
-                        $qty = data_get($item, 'received_quantity');
-                    }
-                    if ($qty === null) {
-                        $qty = data_get($item, 'requested_quantity');
-                    }
-                    if ($qty === null) {
-                        $qty = data_get($item, 'quantity');
-                    }
-                }
-
-                $qty = (float) ($qty ?? 0);
+                // ONLY the real moved quantity (received, else shipped). An item
+                // missing from the map — or received as 0 — never physically
+                // arrived, so it must not be transferred in SAP. The webhook's
+                // approved/requested quantities are deliberately not consulted.
+                $qty = (float) ($actualBySku[(string) $itemCode] ?? 0);
                 if ($qty <= 0) {
                     continue;
                 }
@@ -321,12 +359,25 @@ class StockTransferWebhookService
         }
 
         if (($res['ok'] ?? false) !== true) {
+            // Silent until now — this is the path that let a transient API failure
+            // slip through to the approved quantity without leaving any trace.
+            Log::warning('STO received-qty endpoint returned no usable data', [
+                'sto' => $stoId,
+                'status' => $res['status'] ?? 0,
+            ]);
+
             return [];
         }
 
-        // Guard: an all-zero payload means the receipt is not booked yet — do not
-        // post a zero-quantity transfer, fall back instead.
-        return array_sum($res['quantities']) > 0 ? (array) $res['quantities'] : [];
+        // An all-zero payload means the receipt is not booked yet — never post a
+        // zero-quantity transfer.
+        if (array_sum($res['quantities']) <= 0) {
+            Log::warning('STO received-qty is all zero — receipt not booked yet', ['sto' => $stoId]);
+
+            return [];
+        }
+
+        return (array) $res['quantities'];
     }
 
     /**
